@@ -1,4 +1,4 @@
-# Cursor for Urban Planners — Architecture & Features
+# Disha — Architecture & Features
 
 A geospatial-first AI-driven IDE for urban planners. The user chats with an LLM that drives a live MapLibre map, runs OSM / Overture / Google / GIS queries, drafts zoning, imports real GIS files, styles layers, exports publication-ready figures, and saves planning artifacts — all inside an offline-capable Electron desktop app.
 
@@ -32,7 +32,7 @@ Open a folder via the title-bar button. The app:
 
 - Lists files in **Files**. Click a `.geojson` to load it; click a `.shp` / `.gpkg` / `.kml` / `.kmz` / `.gpx` / `.csv` to import it (converted to WGS84 GeoJSON inside the workspace, then loaded).
 - Auto-saves a `project.json` in the workspace folder containing map state, layers (with their styling), conversations, bookmarks, and basemap.
-- Materializes any chat-generated layers into `<workspace>/.cursor-urban/layers/<id>.geojson` so they survive a reload.
+- Materializes any chat-generated layers into `<workspace>/.disha/layers/<id>.geojson` so they survive a reload.
 - Remembers the last workspace and re-opens it on next launch.
 
 Without a workspace open, the app still works for ad-hoc exploration, but nothing persists.
@@ -391,10 +391,10 @@ App.tsx state:
 | What | Where | Format |
 |---|---|---|
 | Project state (layers + styleSpec, map view, conversations, bookmarks, basemap) | `<workspace>/project.json` | JSON, debounced 800ms after any change, also flushed on app quit |
-| Chat-generated layers | `<workspace>/.cursor-urban/layers/<id>.geojson` | Materialized when project saves |
+| Chat-generated layers | `<workspace>/.disha/layers/<id>.geojson` | Materialized when project saves |
 | Imported / clipped layers | `<workspace>/<name>.geojson` | Written by vector convert and the clip/region-save flows |
 | Last-opened workspace | `userData/last-workspace.json` (prod) or `.tmp/last-workspace.json` (dev) | Auto-restored on launch |
-| Artifacts | SQLite at `packages/backend/cursor_urban.db` (override with `CURSOR_URBAN_DB`); image/file artifacts also written under `artifacts_store/` | WAL-mode, migrations in `database.py` |
+| Artifacts | SQLite at `packages/backend/disha.db` (override with `DISHA_DB`); image/file artifacts also written under `artifacts_store/` | WAL-mode, migrations in `database.py` |
 | HTTP cache | SQLite `cache.db` (+ in-memory LRU) | TTL cache for upstream API responses |
 | Selected model | `packages/backend/model_config.json` (prod: `Resources/backend/`) | Read by both Electron and Python |
 
@@ -445,7 +445,7 @@ Model switching writes `model_config.json` (dev: `packages/backend/`; prod: `Res
 | `OPENAI_API_KEY` | `routers/chat.py` | Chat assistant + deep-research report generation |
 | `OPENAI_MODEL` | `tools/config.py` | Default model when `model_config.json` is absent (`gpt-4o-mini`) |
 | `GOOGLE_MAPS_API_KEY` | `tools/google.py` | All Google Maps Platform calls + Google-first geocoding (optional) |
-| `CURSOR_URBAN_DB` | `database.py` | Overrides the artifacts SQLite path |
+| `DISHA_DB` | `database.py` | Overrides the artifacts SQLite path |
 
 ## Run
 

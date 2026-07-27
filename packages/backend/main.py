@@ -33,7 +33,7 @@ async def lifespan(app: FastAPI):
     await http_client.aclose()
 
 
-app = FastAPI(title="Cursor Urban Planners API", lifespan=lifespan)
+app = FastAPI(title="Disha API", lifespan=lifespan)
 
 from fastapi import Request
 from tools.google import google_maps_key_var

@@ -1,5 +1,5 @@
-appId: com.cursor-urban.desktop
-productName: Cursor for Urban Planners
+appId: com.disha.desktop
+productName: Disha
 directories:
   buildResources: build
   output: release
@@ -9,12 +9,12 @@ mac:
   target:
     - zip
   category: public.app-category.developer-tools
-  artifactName: "Cursor-for-Urban-Planners-${version}-${arch}.${ext}"
+  artifactName: "Disha-${version}-${arch}.${ext}"
 win:
   target:
     - nsis
     - zip
-  artifactName: "Cursor-for-Urban-Planners-${version}-${arch}.${ext}"
+  artifactName: "Disha-${version}-${arch}.${ext}"
 extraResources:
   - from: ../../packages/backend/dist/backend
     to: backend
@@ -23,4 +23,5 @@ extraResources:
 publish:
   provider: github
   owner: Smriti-kinra
-  repo: Cursor-for-Urban-Planners
+  repo: disha
+

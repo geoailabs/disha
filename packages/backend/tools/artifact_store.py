@@ -14,7 +14,7 @@ ARTIFACTS_DIR.mkdir(exist_ok=True)
 
 def get_artifacts_dir(workspace: str | None = None) -> Path:
     if workspace:
-        ws_dir = Path(workspace) / ".cursor-urban" / "artifacts_store"
+        ws_dir = Path(workspace) / ".disha" / "artifacts_store"
         ws_dir.mkdir(parents=True, exist_ok=True)
         return ws_dir
     return ARTIFACTS_DIR

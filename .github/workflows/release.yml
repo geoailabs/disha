@@ -13,6 +13,8 @@ jobs:
   build-mac:
     name: Build & Release macOS
     runs-on: macos-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repository
@@ -38,9 +40,9 @@ jobs:
         run: |
           cd packages/backend
           python -m venv .buildenv
-          source .buildenv/bin/activate
+          echo "$PWD/.buildenv/bin" >> $GITHUB_PATH
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt pyinstaller
 
       - name: Install Node dependencies
         run: pnpm install
@@ -54,7 +56,9 @@ jobs:
   build-win:
     name: Build & Release Windows
     runs-on: windows-latest
-    needs: build-mac  # Run sequentially to prevent race conditions on delete-github-assets.js
+    needs: build-mac  # Run sequentially to attach both macOS and Windows assets to release
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repository
@@ -80,17 +84,15 @@ jobs:
         run: |
           cd packages/backend
           python -m venv .buildenv
-          .\.buildenv\Scripts\python.exe -m pip install --upgrade pip
-          .\.buildenv\Scripts\python.exe -m pip install -r requirements.txt
+          echo "$PWD\.buildenv\Scripts" >> $env:GITHUB_PATH
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
 
       - name: Install Node dependencies
         run: pnpm install
 
-      - name: Build Backend
-        run: pnpm run build:backend
-
-      - name: Publish Windows Release
-        run: pnpm --filter @cursor-urban/desktop release:win
+      - name: Build & Publish Windows Release
+        run: pnpm run release:win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

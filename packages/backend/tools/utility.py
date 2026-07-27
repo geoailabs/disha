@@ -776,7 +776,7 @@ class UtilityServer:
             ext = "gif"
         
         # Save target file inside workspace
-        layers_dir = Path(workspace) / ".cursor-urban" / "layers"
+        layers_dir = Path(workspace) / ".disha" / "layers"
         os.makedirs(layers_dir, exist_ok=True)
         
         # Determine name
@@ -1188,7 +1188,7 @@ class UtilityServer:
         elif "gif" in mime_type:
             ext = "gif"
         
-        layers_dir = Path(workspace) / ".cursor-urban" / "layers"
+        layers_dir = Path(workspace) / ".disha" / "layers"
         os.makedirs(layers_dir, exist_ok=True)
         layer_id = f"georef_{uuid.uuid4().hex[:8]}"
         target_filename = f"{layer_id}.{ext}"
@@ -1313,7 +1313,7 @@ class UtilityServer:
         if not workspace:
             return {"error": "No workspace folder is currently open."}
 
-        status_path = Path(workspace) / ".cursor-urban" / "layers" / "georeference_status.json"
+        status_path = Path(workspace) / ".disha" / "layers" / "georeference_status.json"
         if not os.path.exists(status_path):
             return {"error": "No active georeferencing transform found. Please georeference the map image first."}
 

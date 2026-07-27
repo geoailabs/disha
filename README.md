@@ -1,8 +1,8 @@
-# Cursor for Urban Planners
+# Disha
 
 A geospatial-first, AI-driven desktop IDE for urban planners. You chat with an LLM that drives a live MapLibre map — flying to places, fetching OpenStreetMap / Overture / Google data, drafting zoning, running GIS analysis, importing shapefiles, styling layers, opening 360° Street View, and saving publication-ready figures and planning artifacts. Built as an Electron desktop app over a Python FastAPI backend.
 
-> Think "Cursor, but the canvas is a map and the agent's tools are geospatial."
+> Think "Disha: the canvas is a map and the agent's tools are geospatial."
 
 ---
 
@@ -99,7 +99,7 @@ Open a folder via the title-bar button and the app:
 
 - Lists files in the **Files** pane (click a `.geojson` to load it; click a shapefile/GPKG/KML/KMZ/GPX/CSV to import it).
 - Auto-saves a `project.json` containing map state, layers (with styling), conversations, bookmarks, and basemap (debounced, also flushed on quit).
-- Materializes chat-generated layers into `<workspace>/.cursor-urban/layers/<id>.geojson` so they survive reloads.
+- Materializes chat-generated layers into `<workspace>/.disha/layers/<id>.geojson` so they survive reloads.
 - Remembers the last workspace and re-opens it on next launch.
 
 Without a workspace open, the app still works for ad-hoc exploration — nothing persists.
@@ -138,7 +138,7 @@ pip install -r requirements.txt
 | `OPENAI_API_KEY` | ✅ Yes | Powers the chat assistant and deep-research reports (OpenAI Chat Completions + Responses, streaming + tool calls). |
 | `OPENAI_MODEL` | No | Default model when `model_config.json` is absent (defaults to `gpt-4o-mini`). The in-app model picker writes `model_config.json`, which takes precedence. |
 | `GOOGLE_MAPS_API_KEY` | No | Enables Google Places, environment (elevation/air quality/solar), and Google-first geocoding. The app runs without it — those tools report `upstream_unavailable` and the assistant falls back to OSM/Overture. |
-| `CURSOR_URBAN_DB` | No | Override the SQLite artifacts DB path (defaults to `packages/backend/cursor_urban.db`). |
+| `DISHA_DB` | No | Override the SQLite artifacts DB path (defaults to `packages/backend/disha.db`). |
 
 ```bash
 export OPENAI_API_KEY=sk-...

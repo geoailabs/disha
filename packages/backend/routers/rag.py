@@ -70,7 +70,7 @@ def chunk_text(text: str, page_num: int, chunk_size: int = 1000, overlap: int = 
 
 async def query_rag_index_async(query: str, api_key: str, workspace: str, top_k: int = 4, threshold: float = 0.3) -> list[dict]:
     """Vector search over the workspace index using Cosine Similarity (Dot Product)."""
-    index_file = Path(workspace) / ".cursor-urban" / "rag_index.json"
+    index_file = Path(workspace) / ".disha" / "rag_index.json"
     if not index_file.exists():
         return []
 
@@ -128,7 +128,7 @@ async def rag_status(file_path: str, workspace: str):
     """Check whether a specific document path has already been indexed."""
     try:
         ws_dir = Path(workspace)
-        index_file = ws_dir / ".cursor-urban" / "rag_index.json"
+        index_file = ws_dir / ".disha" / "rag_index.json"
         if not index_file.exists():
             return {"indexed": False}
             
@@ -210,9 +210,9 @@ async def rag_index(body: dict):
     for idx, emb in enumerate(all_embeddings):
         chunks[idx]["embedding"] = emb
 
-    # Write back to RAG index under .cursor-urban/rag_index.json
+    # Write back to RAG index under .disha/rag_index.json
     ws_dir = Path(workspace)
-    index_file = ws_dir / ".cursor-urban" / "rag_index.json"
+    index_file = ws_dir / ".disha" / "rag_index.json"
     
     index_data = {"documents": {}}
     if index_file.exists():

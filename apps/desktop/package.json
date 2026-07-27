@@ -1,11 +1,13 @@
 {
-  "name": "@cursor-urban/desktop",
+  "name": "@disha/desktop",
   "version": "0.1.0",
+  "description": "Geospatial AI-driven IDE for urban planners",
+  "author": "Smriti Kinra",
   "private": true,
   "main": "./out/main/index.js",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Smriti-kinra/Cursor-for-Urban-Planners.git"
+    "url": "git+https://github.com/Smriti-kinra/disha.git"
   },
   "scripts": {
     "dev": "electron-vite dev",
