@@ -11,8 +11,22 @@ __pycache__/
 *.pyo
 *.spec.bak
 .DS_Store
+
+# User & Runtime Workspace Data (Keep Repo Clean & Open-Source)
+.disha/
+**/.disha/
+artifacts_store/
+**/artifacts_store/
+model_config.json
+**/model_config.json
+
+# Credentials & Environment Configs
 .env
+.env.*
+!.env.example
 .claude/settings.local.json
+ee-*.json
+
+# User project artifacts
 project.json
 chandigarh_plan.pdf
-ee-*.json

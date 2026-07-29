@@ -1,0 +1,112 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- Background Gradient -->
+    <radialGradient id="bgGrad" cx="50%" cy="35%" r="65%">
+      <stop offset="0%" stop-color="#2a2d43"/>
+      <stop offset="60%" stop-color="#181926"/>
+      <stop offset="100%" stop-color="#11111b"/>
+    </radialGradient>
+
+    <!-- Border Glow Gradient -->
+    <linearGradient id="borderGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#89ebd9" stop-opacity="0.6"/>
+      <stop offset="50%" stop-color="#89b4fa" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#cba6f7" stop-opacity="0.5"/>
+    </linearGradient>
+
+    <!-- Compass North Needle Gradient (Cyan to Sapphire) -->
+    <linearGradient id="needleNorth" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#74c7ec"/>
+      <stop offset="50%" stop-color="#89b4fa"/>
+      <stop offset="100%" stop-color="#89ebd9"/>
+    </linearGradient>
+
+    <!-- Compass South Needle Gradient (Mauve to Pink) -->
+    <linearGradient id="needleSouth" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#313244"/>
+      <stop offset="60%" stop-color="#585b70"/>
+      <stop offset="100%" stop-color="#cba6f7"/>
+    </linearGradient>
+
+    <!-- Glowing Core Accent -->
+    <radialGradient id="coreGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#89ebd9" stop-opacity="0.9"/>
+      <stop offset="40%" stop-color="#89b4fa" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#89b4fa" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Drop Shadow Filter -->
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.5"/>
+    </filter>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- Main Squircle Badge (macOS style padding inside 512x512 canvas) -->
+  <rect x="56" y="56" width="400" height="400" rx="90" ry="90" 
+        fill="url(#bgGrad)" 
+        stroke="url(#borderGrad)" 
+        stroke-width="3" 
+        filter="url(#shadow)" />
+
+  <!-- Subtle Spatial Grid Lines (GIS theme) -->
+  <g stroke="#89b4fa" stroke-opacity="0.12" stroke-width="1.5" fill="none">
+    <!-- Concentric radar/spatial rings -->
+    <circle cx="256" cy="256" r="60" stroke-dasharray="4 4" />
+    <circle cx="256" cy="256" r="110" />
+    <circle cx="256" cy="256" r="150" stroke-dasharray="6 6" />
+
+    <!-- Latitude/Longitude axes -->
+    <line x1="256" y1="96" x2="256" y2="416" stroke-dasharray="3 3" />
+    <line x1="96" y1="256" x2="416" y2="256" stroke-dasharray="3 3" />
+    
+    <!-- Diagonal grid lines -->
+    <line x1="142" y1="142" x2="370" y2="370" stroke-opacity="0.08" />
+    <line x1="370" y1="142" x2="142" y2="370" stroke-opacity="0.08" />
+  </g>
+
+  <!-- GIS Node Dots on Grid -->
+  <g fill="#89b4fa" fill-opacity="0.4">
+    <circle cx="256" cy="146" r="3" />
+    <circle cx="256" cy="366" r="3" />
+    <circle cx="146" cy="256" r="3" />
+    <circle cx="366" cy="256" r="3" />
+    <circle cx="178" cy="178" r="2.5" />
+    <circle cx="334" cy="334" r="2.5" />
+  </g>
+
+  <!-- Glowing Needle Aura -->
+  <circle cx="256" cy="256" r="90" fill="url(#coreGlow)" />
+
+  <!-- Dynamic Compass Pointer (Disha = Direction, pointing North-East) -->
+  <g transform="rotate(-45 256 256)" filter="url(#shadow)">
+    <!-- North Needle Facet 1 (Right/Bright) -->
+    <polygon points="256,106 256,256 288,256" fill="url(#needleNorth)" />
+    
+    <!-- North Needle Facet 2 (Left/Shaded) -->
+    <polygon points="256,106 224,256 256,256" fill="#89ebd9" fill-opacity="0.85" />
+
+    <!-- South Needle Facet 1 (Left/Dark) -->
+    <polygon points="256,406 224,256 256,256" fill="url(#needleSouth)" />
+
+    <!-- South Needle Facet 2 (Right/Accent) -->
+    <polygon points="256,406 256,256 288,256" fill="#cba6f7" fill-opacity="0.75" />
+
+    <!-- Center Pivot Ring & Hub -->
+    <circle cx="256" cy="256" r="14" fill="#181926" stroke="#89ebd9" stroke-width="3" />
+    <circle cx="256" cy="256" r="5" fill="#89ebd9" />
+  </g>
+
+  <!-- Stylized Monogram "D" orbital ring around compass -->
+  <path d="M 230 166 C 320 166, 350 210, 350 256 C 350 302, 320 346, 230 346" 
+        fill="none" 
+        stroke="url(#borderGrad)" 
+        stroke-width="3.5" 
+        stroke-linecap="round"
+        stroke-dasharray="120 15 30 15"
+        fill-opacity="0" />
+
+</svg>

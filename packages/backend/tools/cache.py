@@ -30,8 +30,11 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-_BACKEND_DIR = Path(__file__).parent.parent
-_CACHE_DB = _BACKEND_DIR / "cache.db"
+import os
+
+_DEFAULT_CACHE_DIR = Path.home() / ".disha"
+_DEFAULT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+_CACHE_DB = Path(os.environ.get("DISHA_CACHE_DB", str(_DEFAULT_CACHE_DIR / "cache.db")))
 
 _MEM_MAX = 500
 _DISK_MAX_ROWS = 5_000

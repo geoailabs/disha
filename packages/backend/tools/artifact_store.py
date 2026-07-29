@@ -8,9 +8,9 @@ from typing import Optional
 
 from database import get_connection
 
-_BACKEND_DIR = Path(__file__).parent.parent  # packages/backend/
-ARTIFACTS_DIR = _BACKEND_DIR / "artifacts_store"
-ARTIFACTS_DIR.mkdir(exist_ok=True)
+_DEFAULT_ART_DIR = Path.home() / ".disha" / "artifacts_store"
+ARTIFACTS_DIR = Path(os.environ.get("DISHA_ARTIFACTS_DIR", str(_DEFAULT_ART_DIR)))
+ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 
 def get_artifacts_dir(workspace: str | None = None) -> Path:
     if workspace:

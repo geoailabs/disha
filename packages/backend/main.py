@@ -4,7 +4,25 @@ import os
 
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parent / ".env")
+# Load .env files from multiple locations (root repo dir, packages/backend dir, ~/.disha/.env)
+_backend_dir = Path(__file__).resolve().parent
+_root_dir = _backend_dir.parent.parent
+_home_env = Path.home() / ".disha" / ".env"
+
+for env_path in [_root_dir / ".env", _backend_dir / ".env", _home_env]:
+    if env_path.is_file():
+        load_dotenv(env_path, override=False)
+
+# If GEE_CREDENTIALS points to a file, read its content into GOOGLE_EARTH_ENGINE_CREDS
+gee_env = os.environ.get("GEE_CREDENTIALS", "") or os.environ.get("GOOGLE_EARTH_ENGINE_CREDS", "")
+if gee_env and os.path.isfile(gee_env):
+    try:
+        with open(gee_env, "r", encoding="utf-8") as _f:
+            os.environ["GOOGLE_EARTH_ENGINE_CREDS"] = _f.read().strip()
+    except Exception as _e:
+        pass
+elif gee_env and "GOOGLE_EARTH_ENGINE_CREDS" not in os.environ:
+    os.environ["GOOGLE_EARTH_ENGINE_CREDS"] = gee_env
 
 # Initialize logging configuration based on LOG_LEVEL or DEBUG env vars
 log_level_str = os.environ.get("LOG_LEVEL", "DEBUG" if os.environ.get("DEBUG") else "INFO").upper()

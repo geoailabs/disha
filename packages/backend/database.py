@@ -11,8 +11,9 @@ import os
 import sqlite3
 from pathlib import Path
 
-_BACKEND_DIR = Path(__file__).parent
-DB_PATH = Path(os.environ.get("DISHA_DB", str(_BACKEND_DIR / "disha.db")))
+_DEFAULT_DB_DIR = Path.home() / ".disha"
+_DEFAULT_DB_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH = Path(os.environ.get("DISHA_DB", str(_DEFAULT_DB_DIR / "disha.db")))
 
 
 def get_connection(workspace: str | None = None) -> sqlite3.Connection:

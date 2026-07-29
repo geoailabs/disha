@@ -21,6 +21,7 @@ import ScenarioBuilderPanel from './components/ScenarioBuilderPanel'
 
 import DocumentView, { type DocumentImage, type OpenDocument } from './components/DocumentView'
 import ErrorBoundary from './components/ErrorBoundary'
+import appIcon from './assets/icon.png'
 import {
   GeoJSONLayer,
   MapViewState,
@@ -2895,9 +2896,10 @@ function App() {
         <div className="titlebar-left">
           {/* Traffic-light drag spacer: collapses in fullscreen where buttons are hidden */}
           <div className="titlebar-drag" style={{ width: isFullscreen ? 0 : undefined }} />
-          <span className="titlebar-text">
-            Disha
-          </span>
+          <div className="titlebar-brand">
+            <img src={appIcon} className="titlebar-logo" alt="Disha Logo" />
+            <span className="titlebar-text">Disha</span>
+          </div>
           <div className="workspace-container">
             <button
               className="workspace-btn"
