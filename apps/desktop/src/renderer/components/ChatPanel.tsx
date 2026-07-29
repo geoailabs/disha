@@ -316,6 +316,7 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
   const [keyError, setKeyError] = useState<string | null>(null)
   const [keySuccess, setKeySuccess] = useState(false)
   const [isKeyLoaded, setIsKeyLoaded] = useState(false)
+  const [hasEnvApiKey, setHasEnvApiKey] = useState(false)
 
   // Conversation renaming state
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null)
@@ -323,6 +324,7 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
 
   // Google Maps API Key State
   const [googleKey, setGoogleKey] = useState('')
+  const [hasEnvGoogleKey, setHasEnvGoogleKey] = useState(false)
   const [isSavingGoogleKey, setIsSavingGoogleKey] = useState(false)
   const [googleKeyError, setGoogleKeyError] = useState<string | null>(null)
   const [googleKeySuccess, setGoogleKeySuccess] = useState(false)
@@ -392,41 +394,82 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
   const historySentRef = useRef(false)
 
   const messages = activeConversation?.messages ?? []
+  const hasOpenAIKey = apiKey.trim().length > 0 || hasEnvApiKey
+  const hasGoogleMapsKey = googleKey.trim().length > 0 || hasEnvGoogleKey
   const onMessagesChangeRef = useRef(onMessagesChange)
   onMessagesChangeRef.current = onMessagesChange
   const onMapActionRef = useRef(onMapAction)
   onMapActionRef.current = onMapAction
 
   useEffect(() => {
-    window.electronAPI.getAPIKey()
-      .then((key) => {
-        setApiKey(key || '')
-        setIsKeyLoaded(true)
-        if (!key) {
-          setShowApiKeyInput(true)
-        }
-      })
-      .catch((err) => {
-        console.error('Failed to load API key from secure storage:', err)
-        setIsKeyLoaded(true)
-        setShowApiKeyInput(true)
-      })
+    let cancelled = false
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
 
-    window.electronAPI.getGoogleMapsKey()
-      .then((key) => {
-        setGoogleKey(key || '')
-      })
-      .catch((err) => {
+    const loadKeys = async (attempt = 0) => {
+      let storedApiKey = ''
+      let storedGoogleKey = ''
+      let envOpenAI = false
+      let envGoogle = false
+      let envStatusLoaded = false
+
+      try {
+        storedApiKey = await window.electronAPI.getAPIKey()
+      } catch (err) {
+        console.error('Failed to load API key from secure storage:', err)
+      }
+
+      try {
+        storedGoogleKey = await window.electronAPI.getGoogleMapsKey()
+      } catch (err) {
         console.error('Failed to load Google Maps API key:', err)
-      })
+      }
+
+      try {
+        const status = await window.electronAPI.getKeyStatus()
+        envOpenAI = envOpenAI || !!status.openai
+        envGoogle = envGoogle || !!status.google_maps
+      } catch (err) {
+        console.error('Failed to detect Electron environment API keys:', err)
+      }
+
+      try {
+        const res = await fetch('http://localhost:8765/api/chat/key-status')
+        const status = await res.json()
+        envOpenAI = envOpenAI || !!status.openai
+        envGoogle = envGoogle || !!status.google_maps
+        envStatusLoaded = true
+      } catch (err) {
+        console.error('Failed to detect backend environment API keys:', err)
+      }
+
+      if (!cancelled) {
+        setApiKey(storedApiKey || '')
+        setGoogleKey(storedGoogleKey || '')
+        setHasEnvApiKey(envOpenAI)
+        setHasEnvGoogleKey(envGoogle)
+        setIsKeyLoaded(true)
+        setShowApiKeyInput(!(storedApiKey || envOpenAI))
+      }
+
+      if (!cancelled && !storedApiKey && !envStatusLoaded && attempt < 20) {
+        retryTimer = setTimeout(() => loadKeys(attempt + 1), 500)
+      }
+    }
+
+    loadKeys()
 
     window.electronAPI.getGEEKey()
       .then((key) => {
-        setGeeKey(key || '')
+        if (!cancelled) setGeeKey(key || '')
       })
       .catch((err) => {
         console.error('Failed to load GEE credentials:', err)
       })
+
+    return () => {
+      cancelled = true
+      if (retryTimer) clearTimeout(retryTimer)
+    }
   }, [])
 
   useEffect(() => {
@@ -947,7 +990,7 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
     const ok = await window.electronAPI.setAPIKey('')
     if (ok) {
       setApiKey('')
-      setShowApiKeyInput(true)
+      setShowApiKeyInput(!hasEnvApiKey)
       setChatError(null)
     }
   }
@@ -1290,7 +1333,7 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
   const sendMessage = async (): Promise<void> => {
     if ((!input.trim() && attachments.length === 0) || isStreaming) return
 
-    if (!apiKey.trim()) {
+    if (!hasOpenAIKey) {
       setShowApiKeyInput(true)
       setChatError({
         code: 'auth',
@@ -1438,10 +1481,12 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
           <div className="api-key-status-row">
             <div className="api-key-status-header">
               <div className="api-key-status-indicators">
-                {apiKey ? (
+                {hasOpenAIKey ? (
                   <div className="api-key-status success">
                     <span className="api-key-indicator green">●</span>
-                    <span className="api-key-label">OpenAI API Key active</span>
+                    <span className="api-key-label">
+                      OpenAI API Key active{!apiKey.trim() && hasEnvApiKey ? ' (env)' : ''}
+                    </span>
                   </div>
                 ) : (
                   <div className="api-key-status warning">
@@ -1450,10 +1495,12 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
                   </div>
                 )}
 
-                {googleKey ? (
+                {hasGoogleMapsKey ? (
                   <div className="api-key-status success">
                     <span className="api-key-indicator green">●</span>
-                    <span className="api-key-label">Google Maps Key active</span>
+                    <span className="api-key-label">
+                      Google Maps Key active{!googleKey.trim() && hasEnvGoogleKey ? ' (env)' : ''}
+                    </span>
                   </div>
                 ) : (
                   <div className="api-key-status info">
@@ -2009,7 +2056,7 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
             type="button"
             className="chat-attach-btn"
             onClick={handleAttachClick}
-            disabled={!apiKey.trim() || !!activeQuestion}
+            disabled={!hasOpenAIKey || !!activeQuestion}
             title="Attach image or PDF"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -2024,7 +2071,7 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
             placeholder={
-              !apiKey.trim()
+              !hasOpenAIKey
                 ? 'Please configure your OpenAI API Key above to start...'
                 : activeQuestion
                 ? 'Please answer the clarifying question to continue...'
@@ -2032,7 +2079,7 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
                 ? 'Ask anything about your project...'
                 : 'Start a new conversation...'
             }
-            disabled={!apiKey.trim() || !!activeQuestion}
+            disabled={!hasOpenAIKey || !!activeQuestion}
             rows={1}
           />
           {isStreaming ? (

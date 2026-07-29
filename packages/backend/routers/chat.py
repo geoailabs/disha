@@ -80,7 +80,19 @@ async def _send_action_if_allowed(ws: WebSocket, action: str, payload: dict) -> 
     return True
 
 
-_env_key = os.environ.get("OPENAI_API_KEY", "")
+def _env_openai_api_key() -> str:
+    return (os.environ.get("OPENAI_API_KEY") or "").strip()
+
+
+def _env_google_maps_api_key() -> str:
+    return (
+        os.environ.get("GOOGLE_MAPS_API_KEY")
+        or os.environ.get("GOOGLE_API_KEY")
+        or ""
+    ).strip()
+
+
+_env_key = _env_openai_api_key()
 _client = AsyncOpenAI(api_key=_env_key) if _env_key else None
 
 _servers = {
@@ -1542,6 +1554,14 @@ async def validate_key(req: ValidateKeyRequest):
         return {"valid": False, "error": str(e)}
 
 
+@router.get("/key-status")
+async def key_status():
+    return {
+        "openai": bool(_env_openai_api_key()),
+        "google_maps": bool(_env_google_maps_api_key()),
+    }
+
+
 # ── WebSocket handler ─────────────────────────────────────────────────────────
 
 @router.websocket("/ws")
@@ -1636,13 +1656,14 @@ async def chat_websocket(websocket: WebSocket):
             image_data = payload.get("image")  # {base64, mime_type} or None
             chat_attachments = payload.get("chat_attachments", [])
             history_payload = payload.get("history")
-            api_key = payload.get("api_key")
-            google_maps_api_key = payload.get("google_maps_api_key", "")
+            api_key = payload.get("api_key") or ""
+            effective_api_key = str(api_key).strip() or _env_openai_api_key()
+            google_maps_api_key = str(payload.get("google_maps_api_key") or "")
 
             # Set the context-local variable for this WebSocket iteration
             google_maps_key_var.set(google_maps_api_key)
 
-            if not api_key or not api_key.strip():
+            if not effective_api_key:
                 await websocket.send_text(json.dumps({
                     "type": "error",
                     "code": "auth",
@@ -1651,7 +1672,7 @@ async def chat_websocket(websocket: WebSocket):
                 await websocket.send_text(json.dumps({"type": "end"}))
                 continue
 
-            client = AsyncOpenAI(api_key=api_key.strip())
+            client = AsyncOpenAI(api_key=effective_api_key)
 
             if not user_content.strip():
                 continue
@@ -1687,7 +1708,7 @@ async def chat_websocket(websocket: WebSocket):
                 try:
                     matched_chunks = await query_rag_index_async(
                         query=user_content,
-                        api_key=api_key.strip(),
+                        api_key=effective_api_key,
                         workspace=workspace
                     )
                     if matched_chunks:

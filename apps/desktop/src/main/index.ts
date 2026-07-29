@@ -7,6 +7,65 @@ import os from 'os'
 const BACKEND_PORT = 8765
 const isDev = !app.isPackaged
 
+function envFileCandidates(): string[] {
+  return Array.from(new Set([
+    path.resolve(process.cwd(), '.env'),
+    path.resolve(process.cwd(), 'packages/backend/.env'),
+    path.resolve(process.cwd(), '../../.env'),
+    path.resolve(process.cwd(), '../../packages/backend/.env'),
+    path.resolve(__dirname, '../../../.env'),
+    path.resolve(__dirname, '../../../packages/backend/.env'),
+    path.resolve(__dirname, '../../../../.env'),
+    path.resolve(__dirname, '../../../../packages/backend/.env'),
+  ]))
+}
+
+function readEnvFileValue(filePath: string, names: string[]): string {
+  try {
+    if (!fs.existsSync(filePath)) return ''
+    const lines = fs.readFileSync(filePath, 'utf-8').split(/\r?\n/)
+    for (const rawLine of lines) {
+      const line = rawLine.trim()
+      if (!line || line.startsWith('#')) continue
+      const cleaned = line.startsWith('export ') ? line.slice(7).trim() : line
+      const eq = cleaned.indexOf('=')
+      if (eq === -1) continue
+      const key = cleaned.slice(0, eq).trim()
+      if (!names.includes(key)) continue
+      let value = cleaned.slice(eq + 1).trim()
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1)
+      }
+      return value.trim()
+    }
+  } catch {
+    /* ignore malformed env files */
+  }
+  return ''
+}
+
+function readEnvValue(names: string[]): string {
+  for (const name of names) {
+    const value = (process.env[name] || '').trim()
+    if (value) return value
+  }
+  for (const filePath of envFileCandidates()) {
+    const value = readEnvFileValue(filePath, names)
+    if (value) return value
+  }
+  return ''
+}
+
+function getKeyStatus(): { openai: boolean; google_maps: boolean } {
+  return {
+    openai: !!readEnvValue(['OPENAI_API_KEY']),
+    google_maps: !!readEnvValue(['GOOGLE_MAPS_API_KEY', 'GOOGLE_API_KEY']),
+  }
+}
+
 // Must be called before app.whenReady()
 protocol.registerSchemesAsPrivileged([
   { scheme: 'localfile', privileges: { secure: true, bypassCSP: true, stream: true, supportFetchAPI: true } },
@@ -228,6 +287,9 @@ function startBackend(): void {
   const backendPath = path.join(process.resourcesPath, 'backend', backendBinary)
 
   const env = { ...process.env }
+  env['OPENAI_API_KEY'] = env['OPENAI_API_KEY'] || readEnvValue(['OPENAI_API_KEY'])
+  env['GOOGLE_MAPS_API_KEY'] = env['GOOGLE_MAPS_API_KEY'] || readEnvValue(['GOOGLE_MAPS_API_KEY', 'GOOGLE_API_KEY'])
+  env['MAPILLARY_ACCESS_TOKEN'] = env['MAPILLARY_ACCESS_TOKEN'] || readEnvValue(['MAPILLARY_ACCESS_TOKEN', 'MAPILLARY_CLIENT_TOKEN'])
   const geeCreds = readAndDecryptGEEKey()
   if (geeCreds) {
     env['GOOGLE_EARTH_ENGINE_CREDS'] = geeCreds
@@ -270,6 +332,7 @@ ipcMain.handle('get-last-workspace', () => readLastWorkspace())
 ipcMain.handle('set-last-workspace', (_e, p: string | null) => writeLastWorkspace(p))
 ipcMain.handle('get-api-key', () => readAndDecryptKey())
 ipcMain.handle('set-api-key', (_e, key: string) => encryptAndSaveKey(key))
+ipcMain.handle('get-key-status', () => getKeyStatus())
 ipcMain.handle('get-google-maps-key', () => readAndDecryptGoogleMapsKey())
 ipcMain.handle('set-google-maps-key', (_e, key: string) => encryptAndSaveGoogleMapsKey(key))
 ipcMain.handle('get-gee-key', () => readAndDecryptGEEKey())

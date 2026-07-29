@@ -1,4 +1,4 @@
-"""HTTP endpoints for the integrated Street View workspace."""
+"""HTTP endpoints for the integrated street-level imagery workspace."""
 
 from __future__ import annotations
 
@@ -51,6 +51,21 @@ async def streetview_meta(
         )
 
 
+@router.get("/token")
+async def streetview_token():
+    """Return the configured Mapillary client token and Google Maps key."""
+    import os
+    from streetview.downloader import get_mapillary_token
+
+    token = get_mapillary_token()
+    google_key = os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+    return {
+        "configured": bool(token),
+        "access_token": token,
+        "google_key": google_key,
+    }
+
+
 @router.get("/pano")
 async def streetview_pano(
     lat: float = Query(...),
@@ -58,13 +73,7 @@ async def streetview_pano(
     radius: int = Query(50, ge=1, le=500),
     zoom: int = Query(3, ge=0, le=5),
 ):
-    """Download the panorama nearest ``(lat, lng)`` as an equirectangular JPEG.
-
-    Takes lat/lng rather than a pano_id: ``find_panorama_by_id`` is unreliable
-    for current panoramas and does not populate the size metadata required to
-    download tiles (see module docstring). The frontend gets the coordinates
-    from ``/meta``, so it can pass them straight through.
-    """
+    """Download the nearest Mapillary image as a JPEG."""
     try:
         meta, image, _cache_hit = await run_in_threadpool(
             service.image_bytes, lat, lng, radius, zoom

@@ -39,7 +39,11 @@ def _api_key() -> str | None:
     """Read the API key fresh every call. Returns ``None`` if unset/blank."""
     key = google_maps_key_var.get().strip()
     if not key:
-        key = (os.environ.get("GOOGLE_MAPS_API_KEY") or "").strip()
+        key = (
+            os.environ.get("GOOGLE_MAPS_API_KEY")
+            or os.environ.get("GOOGLE_API_KEY")
+            or ""
+        ).strip()
     return key or None
 
 

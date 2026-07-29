@@ -1,16 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Geometry } from 'geojson'
-import 'pannellum/build/pannellum.css'
-import 'pannellum/build/pannellum.js'
+import { Viewer } from 'mapillary-js'
+import 'mapillary-js/dist/mapillary.css'
 import './StreetViewWorkspace.css'
-
-declare global {
-  interface Window {
-    pannellum?: {
-      viewer: (el: HTMLElement, config: Record<string, unknown>) => { destroy: () => void }
-    }
-  }
-}
 
 export interface StreetViewTarget {
   lng: number
@@ -31,7 +23,9 @@ interface StreetViewMeta {
   date?: string | null
   heading?: number | null
   address?: string | null
+  access_token?: string
   error?: string
+  is_pano?: boolean | null
 }
 
 interface RoadSamplePoint {
@@ -116,7 +110,9 @@ export default function StreetViewWorkspace({
   const [meta, setMeta] = useState<StreetViewMeta | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [googleKey, setGoogleKey] = useState<string | null>(null)
+  const [mapillaryToken, setMapillaryToken] = useState<string | null>(null)
+  const [googleApiKey, setGoogleApiKey] = useState<string>('')
+  const [viewProvider, setViewProvider] = useState<'google' | 'mapillary'>('google')
   const [saving, setSaving] = useState(false)
   const [lastArtifactId, setLastArtifactId] = useState<number | null>(null)
   const [reportStatus, setReportStatus] = useState<string | null>(null)
@@ -127,7 +123,7 @@ export default function StreetViewWorkspace({
   const [showInfo, setShowInfo] = useState(false)
   const [showActions, setShowActions] = useState(false)
   const viewerHostRef = useRef<HTMLDivElement>(null)
-  const viewerRef = useRef<{ destroy: () => void } | null>(null)
+  const viewerRef = useRef<Viewer | null>(null)
 
   useEffect(() => {
     setShowInfo(false)
@@ -135,9 +131,22 @@ export default function StreetViewWorkspace({
   }, [target, roadTarget])
 
   useEffect(() => {
-    window.electronAPI.getGoogleMapsKey().then((key) => {
-      setGoogleKey(key || '')
-    }).catch(() => setGoogleKey(''))
+    let cancelled = false
+    fetch(`${API}/token`)
+      .then((r) => r.json())
+      .then((data: { configured?: boolean; access_token?: string; google_key?: string }) => {
+        if (!cancelled) {
+          setMapillaryToken(data.access_token || '')
+          setGoogleApiKey(data.google_key || '')
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setMapillaryToken('')
+          setGoogleApiKey('')
+        }
+      })
+    return () => { cancelled = true }
   }, [])
 
   useEffect(() => {
@@ -157,13 +166,13 @@ export default function StreetViewWorkspace({
   }, [])
 
   useEffect(() => {
-    if (meta?.found && meta.lat !== null && meta.lon !== null) {
-      onLocationChange?.({ lat: meta.lat, lng: meta.lon })
+    if (meta?.found && Number.isFinite(meta.lat) && Number.isFinite(meta.lon)) {
+      onLocationChange?.({ lat: Number(meta.lat), lng: Number(meta.lon) })
     }
   }, [meta, onLocationChange])
 
   useEffect(() => {
-    if (!target || googleKey === null) {
+    if (!target) {
       setMeta(null)
       setError(null)
       setLastArtifactId(null)
@@ -174,81 +183,61 @@ export default function StreetViewWorkspace({
     setError(null)
     setMeta(null)
     setLastArtifactId(null)
-    const headers: Record<string, string> = {}
-    if (googleKey) headers['x-google-maps-key'] = googleKey
-    fetch(`${API}/meta?lat=${target.lat}&lng=${target.lng}`, { headers })
+    fetch(`${API}/meta?lat=${target.lat}&lng=${target.lng}`)
       .then((r) => r.json())
       .then((d: StreetViewMeta) => { if (!cancelled) setMeta(d) })
       .catch((e) => { if (!cancelled) setError(String(e)) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [target, googleKey])
+  }, [target])
 
   useEffect(() => {
-    if (!meta?.found || !target || !viewerHostRef.current || googleKey === null) return
-    if (!window.pannellum) {
-      setError('360 degree viewer failed to load.')
+    if (viewProvider !== 'mapillary') return
+    if (!meta?.found || !meta.pano_id || !target || !viewerHostRef.current || mapillaryToken === null) return
+    if (!mapillaryToken) {
+      setError('Mapillary access token is not configured. Set MAPILLARY_ACCESS_TOKEN to enable Mapillary viewer.')
       return
     }
     const host = viewerHostRef.current
-    const keyQuery = googleKey ? `&google_maps_api_key=${encodeURIComponent(googleKey)}` : ''
     let cancelled = false
 
-    const viewer = window.pannellum.viewer(host, {
-      type: 'equirectangular',
-      panorama: `${API}/pano?lat=${target.lat}&lng=${target.lng}&zoom=3${keyQuery}`,
-      autoLoad: true,
-      showControls: true,
-      compass: true,
-      showFullscreenCtrl: false,
-      crossOrigin: 'anonymous',
+    const viewer = new Viewer({
+      accessToken: mapillaryToken,
+      container: host,
+      component: {
+        cover: false,
+        sequence: { visible: true, playing: false },
+        zoom: true,
+        direction: true,
+        spatial: true,
+      },
+      imageId: meta.pano_id,
+      trackResize: true,
     })
     viewerRef.current = viewer
 
-    // Event delegation: Intercept click events in the capturing phase on the stable host container.
-    // This bypasses any internal stopPropagation / preventDefault calls inside Pannellum's control layers.
-    const handleHostClick = (e: MouseEvent) => {
-      const el = e.target as HTMLElement | null
-      const compass = el?.closest('.pnlm-compass')
-      if (compass) {
-        e.stopPropagation()
-        e.preventDefault()
-        if (!viewerRef.current) return
-        let targetYaw = -(meta?.heading || 0)
-        while (targetYaw > 180) targetYaw -= 360
-        while (targetYaw < -180) targetYaw += 360
-        // Smoothly rotate the panorama to point true North
-        viewerRef.current.setYaw(targetYaw, true)
-      }
-    }
-    host.addEventListener('click', handleHostClick, true)
-
-    const onViewerChange = () => {
+    const onViewerBearing = (event?: { bearing?: number }) => {
       if (cancelled || !viewerRef.current) return
-      const yaw = (viewer as any).getYaw()
-      const bearing = (((meta?.heading || 0) + yaw) % 360 + 360) % 360
+      const bearing = typeof event?.bearing === 'number' ? event.bearing : meta?.heading || 0
       onYawChange?.(bearing)
     }
 
-    viewer.on('change', onViewerChange)
-    
-    // Initial sync
-    const timer = setTimeout(onViewerChange, 500)
+    viewer.on('bearing', onViewerBearing)
+    const timer = setTimeout(() => onViewerBearing({ bearing: meta?.heading || 0 }), 500)
 
     return () => {
       cancelled = true
       clearTimeout(timer)
-      host.removeEventListener('click', handleHostClick, true)
-      try { viewer.destroy() } catch { /* ignore pannellum teardown noise */ }
+      try { viewer.off('bearing', onViewerBearing) } catch { /* ignore viewer teardown noise */ }
+      try { viewer.remove() } catch { /* ignore viewer teardown noise */ }
       viewerRef.current = null
     }
-  }, [meta, target, googleKey, onYawChange])
+  }, [meta, target, mapillaryToken, onYawChange, viewProvider])
 
   const headers = useMemo(() => {
     const h: Record<string, string> = { 'Content-Type': 'application/json' }
-    if (googleKey) h['x-google-maps-key'] = googleKey
     return h
-  }, [googleKey])
+  }, [])
 
   const saveCurrentImage = useCallback(async (): Promise<StreetViewArtifactResult | null> => {
     if (!target) return null
@@ -530,6 +519,22 @@ export default function StreetViewWorkspace({
           </div>
         </div>
         <div className="sv-header-actions">
+          <div className="sv-provider-toggle">
+            <button
+              className={`sv-provider-btn ${viewProvider === 'google' ? 'active' : ''}`}
+              onClick={() => setViewProvider('google')}
+              title="View with Free Google Street View Embed"
+            >
+              Google Street View
+            </button>
+            <button
+              className={`sv-provider-btn ${viewProvider === 'mapillary' ? 'active' : ''}`}
+              onClick={() => setViewProvider('mapillary')}
+              title="View with Mapillary 360° Viewer"
+            >
+              Mapillary
+            </button>
+          </div>
           {onLayoutChange && (
             <button
               className="sv-layout-toggle-btn"
@@ -554,14 +559,20 @@ export default function StreetViewWorkspace({
       {target && (
         <section className="sv-section">
           <div className="sv-viewer-shell">
-            {loading && <div className="sv-status">Loading Street View...</div>}
-            {!loading && error && <div className="sv-status">Street View lookup failed. {error}</div>}
-            {!loading && meta && !meta.found && (
-              <div className="sv-status">No Street View imagery is available near this location.</div>
-            )}
-            {!loading && meta?.found && (
+            {viewProvider === 'google' ? (
               <>
-                <div ref={viewerHostRef} className="sv-viewer" />
+                <iframe
+                  title="Google Street View Embed"
+                  className="sv-google-iframe"
+                  src={
+                    googleApiKey
+                      ? `https://www.google.com/maps/embed/v1/streetview?key=${encodeURIComponent(googleApiKey)}&location=${target.lat},${target.lng}`
+                      : `https://maps.google.com/maps?layer=c&cbll=${target.lat},${target.lng}&output=embed`
+                  }
+                  allowFullScreen
+                  loading="lazy"
+                  referrerPolicy="no-referrer-when-downgrade"
+                />
 
                 <div className="sv-overlay-top-right">
                   <div className="sv-overlay-button-group">
@@ -602,24 +613,107 @@ export default function StreetViewWorkspace({
                         <strong className="sv-info-val">{coordinateLabel(meta?.lat ?? target.lat, meta?.lon ?? target.lng)}</strong>
                       </div>
                       <div className="sv-info-row">
-                        <span className="sv-info-label">Capture Date</span>
-                        <strong className="sv-info-val">{meta?.date || 'Not available'}</strong>
+                        <span className="sv-info-label">Viewer</span>
+                        <strong className="sv-info-val">Google Street View Embed</strong>
                       </div>
+                      {meta?.date && (
+                        <div className="sv-info-row">
+                          <span className="sv-info-label">Mapillary Date</span>
+                          <strong className="sv-info-val">{meta.date}</strong>
+                        </div>
+                      )}
                     </div>
                   )}
 
                   {showActions && (
                     <div className="sv-actions-overlay-card">
                       <button className="sv-action-card-btn" onClick={downloadCurrentImage} disabled={saving}>
-                        Download Image
+                        Download Mapillary Image
                       </button>
                       <button className="sv-action-card-btn" onClick={saveCurrentImage} disabled={saving}>
-                        Save to Artifacts
+                        Save Mapillary Artifact
                       </button>
                       {lastArtifactId && <div className="sv-action-card-note">Saved as artifact #{lastArtifactId}.</div>}
                     </div>
                   )}
                 </div>
+              </>
+            ) : (
+              <>
+                {loading && <div className="sv-status">Loading Street View...</div>}
+                {!loading && error && <div className="sv-status">Street View lookup failed. {error}</div>}
+                {!loading && meta && !meta.found && (
+                  <div className="sv-status">No Mapillary imagery is available near this location.</div>
+                )}
+                {!loading && meta?.found && (
+                  <>
+                    <div ref={viewerHostRef} className="sv-viewer" />
+
+                    <div className="sv-overlay-top-right">
+                      <div className="sv-overlay-button-group">
+                        <button 
+                          className={`sv-overlay-btn ${showInfo ? 'active' : ''}`}
+                          onClick={() => {
+                            setShowInfo(!showInfo)
+                            setShowActions(false)
+                          }}
+                          title="Location Details"
+                        >
+                          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="12" cy="12" r="10" />
+                            <line x1="12" y1="16" x2="12" y2="12" />
+                            <line x1="12" y1="8" x2="12.01" y2="8" />
+                          </svg>
+                        </button>
+                        <button 
+                          className={`sv-overlay-btn ${showActions ? 'active' : ''}`}
+                          onClick={() => {
+                            setShowActions(!showActions)
+                            setShowInfo(false)
+                          }}
+                          title="Save Options"
+                        >
+                          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                            <polyline points="17 21 17 13 7 13 7 21" />
+                            <polyline points="7 3 7 8 15 8" />
+                          </svg>
+                        </button>
+                      </div>
+
+                      {showInfo && (
+                        <div className="sv-info-overlay-card">
+                          <div className="sv-info-row">
+                            <span className="sv-info-label">Coordinates</span>
+                            <strong className="sv-info-val">{coordinateLabel(meta?.lat ?? target.lat, meta?.lon ?? target.lng)}</strong>
+                          </div>
+                          <div className="sv-info-row">
+                            <span className="sv-info-label">Capture Date</span>
+                            <strong className="sv-info-val">{meta?.date || 'Not available'}</strong>
+                          </div>
+                          <div className="sv-info-row">
+                            <span className="sv-info-label">Imagery Format</span>
+                            <strong className="sv-info-val">
+                              {meta?.is_pano ? '360° Spherical Panorama' : 'Flat Perspective Capture'}
+                            </strong>
+                          </div>
+                        </div>
+                      )}
+
+                      {showActions && (
+                        <div className="sv-actions-overlay-card">
+                          <button className="sv-action-card-btn" onClick={downloadCurrentImage} disabled={saving}>
+                            Download Mapillary Image
+                          </button>
+                          <button className="sv-action-card-btn" onClick={saveCurrentImage} disabled={saving}>
+                            Save Mapillary Artifact
+                          </button>
+                          {lastArtifactId && <div className="sv-action-card-note">Saved as artifact #{lastArtifactId}.</div>}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
               </>
             )}
           </div>

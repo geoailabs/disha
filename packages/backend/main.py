@@ -4,7 +4,10 @@ import os
 
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parent / ".env")
+_BACKEND_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _BACKEND_DIR.parent.parent
+load_dotenv(_REPO_ROOT / ".env")
+load_dotenv(_BACKEND_DIR / ".env")
 
 # Initialize logging configuration based on LOG_LEVEL or DEBUG env vars
 log_level_str = os.environ.get("LOG_LEVEL", "DEBUG" if os.environ.get("DEBUG") else "INFO").upper()
