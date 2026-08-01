@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Geometry } from 'geojson'
-import { Viewer } from 'mapillary-js'
-import 'mapillary-js/dist/mapillary.css'
 import './StreetViewWorkspace.css'
 
 export interface StreetViewTarget {
@@ -110,9 +108,7 @@ export default function StreetViewWorkspace({
   const [meta, setMeta] = useState<StreetViewMeta | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [mapillaryToken, setMapillaryToken] = useState<string | null>(null)
   const [googleApiKey, setGoogleApiKey] = useState<string>('')
-  const [viewProvider, setViewProvider] = useState<'google' | 'mapillary'>('google')
   const [saving, setSaving] = useState(false)
   const [lastArtifactId, setLastArtifactId] = useState<number | null>(null)
   const [reportStatus, setReportStatus] = useState<string | null>(null)
@@ -122,8 +118,6 @@ export default function StreetViewWorkspace({
   const [galleryError, setGalleryError] = useState<string | null>(null)
   const [showInfo, setShowInfo] = useState(false)
   const [showActions, setShowActions] = useState(false)
-  const viewerHostRef = useRef<HTMLDivElement>(null)
-  const viewerRef = useRef<Viewer | null>(null)
 
   useEffect(() => {
     setShowInfo(false)
@@ -134,15 +128,13 @@ export default function StreetViewWorkspace({
     let cancelled = false
     fetch(`${API}/token`)
       .then((r) => r.json())
-      .then((data: { configured?: boolean; access_token?: string; google_key?: string }) => {
+      .then((data: { google_key?: string }) => {
         if (!cancelled) {
-          setMapillaryToken(data.access_token || '')
           setGoogleApiKey(data.google_key || '')
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setMapillaryToken('')
           setGoogleApiKey('')
         }
       })
@@ -190,49 +182,6 @@ export default function StreetViewWorkspace({
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [target])
-
-  useEffect(() => {
-    if (viewProvider !== 'mapillary') return
-    if (!meta?.found || !meta.pano_id || !target || !viewerHostRef.current || mapillaryToken === null) return
-    if (!mapillaryToken) {
-      setError('Mapillary access token is not configured. Set MAPILLARY_ACCESS_TOKEN to enable Mapillary viewer.')
-      return
-    }
-    const host = viewerHostRef.current
-    let cancelled = false
-
-    const viewer = new Viewer({
-      accessToken: mapillaryToken,
-      container: host,
-      component: {
-        cover: false,
-        sequence: { visible: true, playing: false },
-        zoom: true,
-        direction: true,
-        spatial: true,
-      },
-      imageId: meta.pano_id,
-      trackResize: true,
-    })
-    viewerRef.current = viewer
-
-    const onViewerBearing = (event?: { bearing?: number }) => {
-      if (cancelled || !viewerRef.current) return
-      const bearing = typeof event?.bearing === 'number' ? event.bearing : meta?.heading || 0
-      onYawChange?.(bearing)
-    }
-
-    viewer.on('bearing', onViewerBearing)
-    const timer = setTimeout(() => onViewerBearing({ bearing: meta?.heading || 0 }), 500)
-
-    return () => {
-      cancelled = true
-      clearTimeout(timer)
-      try { viewer.off('bearing', onViewerBearing) } catch { /* ignore viewer teardown noise */ }
-      try { viewer.remove() } catch { /* ignore viewer teardown noise */ }
-      viewerRef.current = null
-    }
-  }, [meta, target, mapillaryToken, onYawChange, viewProvider])
 
   const headers = useMemo(() => {
     const h: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -519,22 +468,6 @@ export default function StreetViewWorkspace({
           </div>
         </div>
         <div className="sv-header-actions">
-          <div className="sv-provider-toggle">
-            <button
-              className={`sv-provider-btn ${viewProvider === 'google' ? 'active' : ''}`}
-              onClick={() => setViewProvider('google')}
-              title="View with Free Google Street View Embed"
-            >
-              Google Street View
-            </button>
-            <button
-              className={`sv-provider-btn ${viewProvider === 'mapillary' ? 'active' : ''}`}
-              onClick={() => setViewProvider('mapillary')}
-              title="View with Mapillary 360° Viewer"
-            >
-              Mapillary
-            </button>
-          </div>
           {onLayoutChange && (
             <button
               className="sv-layout-toggle-btn"
@@ -559,163 +492,82 @@ export default function StreetViewWorkspace({
       {target && (
         <section className="sv-section">
           <div className="sv-viewer-shell">
-            {viewProvider === 'google' ? (
-              <>
-                <iframe
-                  title="Google Street View Embed"
-                  className="sv-google-iframe"
-                  src={
-                    googleApiKey
-                      ? `https://www.google.com/maps/embed/v1/streetview?key=${encodeURIComponent(googleApiKey)}&location=${target.lat},${target.lng}`
-                      : `https://maps.google.com/maps?layer=c&cbll=${target.lat},${target.lng}&output=embed`
-                  }
-                  allowFullScreen
-                  loading="lazy"
-                  referrerPolicy="no-referrer-when-downgrade"
-                />
+            <iframe
+              title="Google Street View Embed"
+              className="sv-google-iframe"
+              src={
+                googleApiKey
+                  ? `https://www.google.com/maps/embed/v1/streetview?key=${encodeURIComponent(googleApiKey)}&location=${target.lat},${target.lng}`
+                  : `https://maps.google.com/maps?layer=c&cbll=${target.lat},${target.lng}&output=embed`
+              }
+              allowFullScreen
+              loading="lazy"
+              referrerPolicy="no-referrer-when-downgrade"
+            />
 
-                <div className="sv-overlay-top-right">
-                  <div className="sv-overlay-button-group">
-                    <button 
-                      className={`sv-overlay-btn ${showInfo ? 'active' : ''}`}
-                      onClick={() => {
-                        setShowInfo(!showInfo)
-                        setShowActions(false)
-                      }}
-                      title="Location Details"
-                    >
-                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="12" cy="12" r="10" />
-                        <line x1="12" y1="16" x2="12" y2="12" />
-                        <line x1="12" y1="8" x2="12.01" y2="8" />
-                      </svg>
-                    </button>
-                    <button 
-                      className={`sv-overlay-btn ${showActions ? 'active' : ''}`}
-                      onClick={() => {
-                        setShowActions(!showActions)
-                        setShowInfo(false)
-                      }}
-                      title="Save Options"
-                    >
-                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-                        <polyline points="17 21 17 13 7 13 7 21" />
-                        <polyline points="7 3 7 8 15 8" />
-                      </svg>
-                    </button>
+            <div className="sv-overlay-top-right">
+              <div className="sv-overlay-button-group">
+                <button 
+                  className={`sv-overlay-btn ${showInfo ? 'active' : ''}`}
+                  onClick={() => {
+                    setShowInfo(!showInfo)
+                    setShowActions(false)
+                  }}
+                  title="Location Details"
+                >
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="16" x2="12" y2="12" />
+                    <line x1="12" y1="8" x2="12.01" y2="8" />
+                  </svg>
+                </button>
+                <button 
+                  className={`sv-overlay-btn ${showActions ? 'active' : ''}`}
+                  onClick={() => {
+                    setShowActions(!showActions)
+                    setShowInfo(false)
+                  }}
+                  title="Save Options"
+                >
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                    <polyline points="17 21 17 13 7 13 7 21" />
+                    <polyline points="7 3 7 8 15 8" />
+                  </svg>
+                </button>
+              </div>
+
+              {showInfo && (
+                <div className="sv-info-overlay-card">
+                  <div className="sv-info-row">
+                    <span className="sv-info-label">Coordinates</span>
+                    <strong className="sv-info-val">{coordinateLabel(meta?.lat ?? target.lat, meta?.lon ?? target.lng)}</strong>
                   </div>
-
-                  {showInfo && (
-                    <div className="sv-info-overlay-card">
-                      <div className="sv-info-row">
-                        <span className="sv-info-label">Coordinates</span>
-                        <strong className="sv-info-val">{coordinateLabel(meta?.lat ?? target.lat, meta?.lon ?? target.lng)}</strong>
-                      </div>
-                      <div className="sv-info-row">
-                        <span className="sv-info-label">Viewer</span>
-                        <strong className="sv-info-val">Google Street View Embed</strong>
-                      </div>
-                      {meta?.date && (
-                        <div className="sv-info-row">
-                          <span className="sv-info-label">Mapillary Date</span>
-                          <strong className="sv-info-val">{meta.date}</strong>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {showActions && (
-                    <div className="sv-actions-overlay-card">
-                      <button className="sv-action-card-btn" onClick={downloadCurrentImage} disabled={saving}>
-                        Download Mapillary Image
-                      </button>
-                      <button className="sv-action-card-btn" onClick={saveCurrentImage} disabled={saving}>
-                        Save Mapillary Artifact
-                      </button>
-                      {lastArtifactId && <div className="sv-action-card-note">Saved as artifact #{lastArtifactId}.</div>}
+                  <div className="sv-info-row">
+                    <span className="sv-info-label">Viewer</span>
+                    <strong className="sv-info-val">Google Street View Embed</strong>
+                  </div>
+                  {meta?.date && (
+                    <div className="sv-info-row">
+                      <span className="sv-info-label">Image Date</span>
+                      <strong className="sv-info-val">{meta.date}</strong>
                     </div>
                   )}
                 </div>
-              </>
-            ) : (
-              <>
-                {loading && <div className="sv-status">Loading Street View...</div>}
-                {!loading && error && <div className="sv-status">Street View lookup failed. {error}</div>}
-                {!loading && meta && !meta.found && (
-                  <div className="sv-status">No Mapillary imagery is available near this location.</div>
-                )}
-                {!loading && meta?.found && (
-                  <>
-                    <div ref={viewerHostRef} className="sv-viewer" />
+              )}
 
-                    <div className="sv-overlay-top-right">
-                      <div className="sv-overlay-button-group">
-                        <button 
-                          className={`sv-overlay-btn ${showInfo ? 'active' : ''}`}
-                          onClick={() => {
-                            setShowInfo(!showInfo)
-                            setShowActions(false)
-                          }}
-                          title="Location Details"
-                        >
-                          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <circle cx="12" cy="12" r="10" />
-                            <line x1="12" y1="16" x2="12" y2="12" />
-                            <line x1="12" y1="8" x2="12.01" y2="8" />
-                          </svg>
-                        </button>
-                        <button 
-                          className={`sv-overlay-btn ${showActions ? 'active' : ''}`}
-                          onClick={() => {
-                            setShowActions(!showActions)
-                            setShowInfo(false)
-                          }}
-                          title="Save Options"
-                        >
-                          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-                            <polyline points="17 21 17 13 7 13 7 21" />
-                            <polyline points="7 3 7 8 15 8" />
-                          </svg>
-                        </button>
-                      </div>
-
-                      {showInfo && (
-                        <div className="sv-info-overlay-card">
-                          <div className="sv-info-row">
-                            <span className="sv-info-label">Coordinates</span>
-                            <strong className="sv-info-val">{coordinateLabel(meta?.lat ?? target.lat, meta?.lon ?? target.lng)}</strong>
-                          </div>
-                          <div className="sv-info-row">
-                            <span className="sv-info-label">Capture Date</span>
-                            <strong className="sv-info-val">{meta?.date || 'Not available'}</strong>
-                          </div>
-                          <div className="sv-info-row">
-                            <span className="sv-info-label">Imagery Format</span>
-                            <strong className="sv-info-val">
-                              {meta?.is_pano ? '360° Spherical Panorama' : 'Flat Perspective Capture'}
-                            </strong>
-                          </div>
-                        </div>
-                      )}
-
-                      {showActions && (
-                        <div className="sv-actions-overlay-card">
-                          <button className="sv-action-card-btn" onClick={downloadCurrentImage} disabled={saving}>
-                            Download Mapillary Image
-                          </button>
-                          <button className="sv-action-card-btn" onClick={saveCurrentImage} disabled={saving}>
-                            Save Mapillary Artifact
-                          </button>
-                          {lastArtifactId && <div className="sv-action-card-note">Saved as artifact #{lastArtifactId}.</div>}
-                        </div>
-                      )}
-                    </div>
-                  </>
-                )}
-              </>
-            )}
+              {showActions && (
+                <div className="sv-actions-overlay-card">
+                  <button className="sv-action-card-btn" onClick={downloadCurrentImage} disabled={saving}>
+                    Download Image
+                  </button>
+                  <button className="sv-action-card-btn" onClick={saveCurrentImage} disabled={saving}>
+                    Save to Artifacts
+                  </button>
+                  {lastArtifactId && <div className="sv-action-card-note">Saved as artifact #{lastArtifactId}.</div>}
+                </div>
+              )}
+            </div>
           </div>
         </section>
       )}

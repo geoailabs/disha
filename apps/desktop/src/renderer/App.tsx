@@ -21,6 +21,7 @@ import ScenarioBuilderPanel from './components/ScenarioBuilderPanel'
 
 import DocumentView, { type DocumentImage, type OpenDocument } from './components/DocumentView'
 import ErrorBoundary from './components/ErrorBoundary'
+import DiagnosticsPanel from './components/DiagnosticsPanel'
 import {
   GeoJSONLayer,
   MapViewState,
@@ -200,6 +201,19 @@ function App() {
   const [fileTreeRevision, setFileTreeRevision] = useState(0)
   const [selectedLayerIds, setSelectedLayerIds] = useState<Set<string>>(new Set())
   const [selectedFeatures, setSelectedFeatures] = useState<SelectedFeatureEntry[]>([])
+  const [showDiagnostics, setShowDiagnostics] = useState(false)
+
+  useEffect(() => {
+    if (window.electronAPI && typeof window.electronAPI.getKeyStatus === 'function') {
+      window.electronAPI.getKeyStatus()
+        .then((status) => {
+          if (!status || !status.openai || !status.google_maps) {
+            setShowDiagnostics(true)
+          }
+        })
+        .catch((err) => console.error('Failed to get key status on mount:', err))
+    }
+  }, [])
 
   // Multi-select handler. Shift+click toggles; plain click replaces.
   const handleSelectFeature = useCallback(
@@ -3009,6 +3023,17 @@ function App() {
                 <path d="M10 2h4v12h-4z" fill="currentColor" fillOpacity={rightWidth > 0 ? 0.3 : 0} />
               </svg>
             </button>
+            <button
+              className="sidebar-toggle-btn"
+              title="System Diagnostics & API Keys"
+              onClick={() => setShowDiagnostics(true)}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 16v-4" />
+                <path d="M12 8h.01" />
+              </svg>
+            </button>
           </div>
         </div>
       </header>
@@ -3381,6 +3406,12 @@ function App() {
             <p className="workspace-transition-status">{transitionStatus}</p>
           </div>
         </div>
+      )}
+      {showDiagnostics && (
+        <DiagnosticsPanel
+          onClose={() => setShowDiagnostics(false)}
+          workspacePath={workspacePath}
+        />
       )}
     </div>
   )

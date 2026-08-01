@@ -1,0 +1,208 @@
+.diag-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 10000;
+}
+
+.diag-modal-card {
+  background: #1e1e24;
+  border: 1px solid #33333f;
+  border-radius: 8px;
+  width: 650px;
+  max-width: 90%;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  color: #f3f3f5;
+  font-family: inherit;
+}
+
+.diag-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid #33333f;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.diag-header h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.diag-close-btn {
+  background: transparent;
+  border: none;
+  color: #888;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.diag-close-btn:hover {
+  color: #fff;
+}
+
+.diag-body {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.diag-intro {
+  margin-top: 0;
+  color: #b0b0b8;
+  font-size: 14px;
+  line-height: 1.5;
+  margin-bottom: 24px;
+}
+
+.diag-section {
+  margin-bottom: 24px;
+}
+
+.diag-section h3 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #888899;
+}
+
+.diag-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.diag-item {
+  background: #25252d;
+  border: 1px solid #2e2e38;
+  border-radius: 6px;
+  padding: 10px 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.diag-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.diag-meta strong {
+  font-size: 13.5px;
+  color: #fff;
+}
+
+.diag-meta span {
+  font-size: 12px;
+  color: #b0b0b8;
+}
+
+.diag-badge {
+  font-size: 11px;
+  font-weight: bold;
+  padding: 4px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.diag-badge.pass {
+  background: rgba(40, 167, 69, 0.15);
+  color: #28a745;
+  border: 1px solid rgba(40, 167, 69, 0.3);
+}
+
+.diag-badge.warn {
+  background: rgba(255, 193, 7, 0.15);
+  color: #ffc107;
+  border: 1px solid rgba(255, 193, 7, 0.3);
+}
+
+.diag-badge.fail {
+  background: rgba(220, 53, 69, 0.15);
+  color: #dc3545;
+  border: 1px solid rgba(220, 53, 69, 0.3);
+}
+
+.diag-badge.checking {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ccc;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.diag-retry-btn {
+  background: #2e2e38;
+  border: 1px solid #3e3e4d;
+  color: #fff;
+  border-radius: 4px;
+  padding: 8px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.diag-retry-btn:hover {
+  background: #3e3e4d;
+}
+
+.credentials-form .form-group {
+  margin-bottom: 16px;
+}
+
+.credentials-form label {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 6px;
+  color: #b0b0b8;
+}
+
+.credentials-form input {
+  width: 100%;
+  box-sizing: border-box;
+  background: #15151a;
+  border: 1px solid #2e2e38;
+  border-radius: 4px;
+  padding: 8px 12px;
+  color: #fff;
+  font-size: 13px;
+}
+
+.credentials-form input:focus {
+  outline: none;
+  border-color: #555566;
+}
+
+.diag-save-btn {
+  background: #007acc;
+  border: none;
+  color: #fff;
+  border-radius: 4px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.diag-save-btn:hover {
+  background: #008be6;
+}
+
+.form-status-msg {
+  font-size: 12px;
+  margin-top: 10px;
+  color: #ffc107;
+}

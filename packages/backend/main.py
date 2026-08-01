@@ -25,7 +25,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db
-from routers import files, chat, artifacts, geocode, streetview, wms, gee, scenarios, rag
+from routers import files, chat, artifacts, geocode, streetview, wms, gee, scenarios, rag, diagnostics
 from tools import http as http_client
 
 
@@ -76,6 +76,7 @@ app.include_router(wms.router, prefix="/api/wms", tags=["wms"])
 app.include_router(gee.router, prefix="/api/gee", tags=["gee"])
 app.include_router(scenarios.router, prefix="/api/scenarios", tags=["scenarios"])
 app.include_router(rag.router, prefix="/api/rag", tags=["rag"])
+app.include_router(diagnostics.router, prefix="/api/diagnostics", tags=["diagnostics"])
 
 
 @app.get("/health")
