@@ -46,7 +46,7 @@ def _find_creds_file(workspace: str | None = None) -> str | None:
 
     # 1. Workspace-specific hidden file
     if workspace:
-        ws_file = Path(workspace) / ".cursor-urban" / "ee-service-account.json"
+        ws_file = Path(workspace) / ".disha" / "ee-service-account.json"
         if ws_file.exists():
             return str(ws_file)
         for f in sorted(Path(workspace).glob("ee-*.json")):
@@ -118,7 +118,7 @@ async def save_gee_credentials(body: dict, workspace: str | None = Query(None)):
     here = Path(__file__).resolve()
     repo_root = here.parent.parent.parent.parent
     if workspace:
-        target = Path(workspace) / ".cursor-urban" / "ee-service-account.json"
+        target = Path(workspace) / ".disha" / "ee-service-account.json"
     else:
         target = repo_root / ".tmp" / "gee-credentials.json"
         

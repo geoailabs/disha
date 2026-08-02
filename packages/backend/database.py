@@ -11,16 +11,17 @@ import os
 import sqlite3
 from pathlib import Path
 
-_BACKEND_DIR = Path(__file__).parent
-DB_PATH = Path(os.environ.get("CURSOR_URBAN_DB", str(_BACKEND_DIR / "cursor_urban.db")))
+_DEFAULT_DB_DIR = Path.home() / ".disha"
+_DEFAULT_DB_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH = Path(os.environ.get("DISHA_DB", str(_DEFAULT_DB_DIR / "disha.db")))
 
 
 def get_connection(workspace: str | None = None) -> sqlite3.Connection:
     if workspace:
         # Resolve to workspace-specific DB path under a hidden folder
-        ws_dir = Path(workspace) / ".cursor-urban"
+        ws_dir = Path(workspace) / ".disha"
         ws_dir.mkdir(parents=True, exist_ok=True)
-        db_file = ws_dir / "cursor_urban.db"
+        db_file = ws_dir / "disha.db"
         conn = sqlite3.connect(str(db_file), timeout=5.0)
         conn.row_factory = sqlite3.Row
         try:

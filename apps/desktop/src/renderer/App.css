@@ -92,6 +92,20 @@ body.resizing .resize-handle {
   min-width: 0;
 }
 
+.titlebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+}
+
+.titlebar-logo {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  object-fit: contain;
+}
+
 .titlebar-text {
   font-size: 13px;
   font-weight: 600;

@@ -58,7 +58,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/typecheck.sh",
+            "command": "$CLAUDE_PROJECT_DIR/.agents/hooks/typecheck.sh",
             "timeout": 30
           }
         ]

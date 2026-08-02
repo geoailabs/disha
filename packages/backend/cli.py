@@ -10,7 +10,8 @@ def main():
     parser.add_argument("--host", default="127.0.0.1")
     args = parser.parse_args()
 
-    uvicorn.run("main:app", host=args.host, port=args.port)
+    from main import app
+    uvicorn.run(app, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

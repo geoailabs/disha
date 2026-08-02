@@ -21,7 +21,6 @@ interface StreetViewMeta {
   date?: string | null
   heading?: number | null
   address?: string | null
-  access_token?: string
   error?: string
   is_pano?: boolean | null
 }

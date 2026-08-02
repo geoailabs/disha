@@ -1,4 +1,4 @@
-# Workspace Rules: Cursor for Urban Planners
+# Workspace Rules: Disha
 
 This file documents rules and guidelines for pair programming on this repository.
 

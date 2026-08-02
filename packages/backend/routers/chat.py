@@ -1656,23 +1656,27 @@ async def chat_websocket(websocket: WebSocket):
             image_data = payload.get("image")  # {base64, mime_type} or None
             chat_attachments = payload.get("chat_attachments", [])
             history_payload = payload.get("history")
-            api_key = payload.get("api_key") or ""
-            effective_api_key = str(api_key).strip() or _env_openai_api_key()
-            google_maps_api_key = str(payload.get("google_maps_api_key") or "")
+            api_key = (payload.get("api_key") or "").strip()
+            if not api_key:
+                api_key = (os.environ.get("OPENAI_API_KEY") or "").strip()
+
+            google_maps_api_key = (payload.get("google_maps_api_key") or "").strip()
+            if not google_maps_api_key:
+                google_maps_api_key = (os.environ.get("GOOGLE_MAPS_API_KEY") or "").strip()
 
             # Set the context-local variable for this WebSocket iteration
             google_maps_key_var.set(google_maps_api_key)
 
-            if not effective_api_key:
+            if not api_key:
                 await websocket.send_text(json.dumps({
                     "type": "error",
                     "code": "auth",
-                    "message": "OpenAI API key is missing. Please configure your API key in the settings panel."
+                    "message": "OpenAI API key is missing. Please configure your API key in the settings panel or set OPENAI_API_KEY in your .env file."
                 }))
                 await websocket.send_text(json.dumps({"type": "end"}))
                 continue
 
-            client = AsyncOpenAI(api_key=effective_api_key)
+            client = AsyncOpenAI(api_key=api_key)
 
             if not user_content.strip():
                 continue

@@ -22,6 +22,7 @@ import ScenarioBuilderPanel from './components/ScenarioBuilderPanel'
 import DocumentView, { type DocumentImage, type OpenDocument } from './components/DocumentView'
 import ErrorBoundary from './components/ErrorBoundary'
 import DiagnosticsPanel from './components/DiagnosticsPanel'
+import appIcon from './assets/icon.png'
 import {
   GeoJSONLayer,
   MapViewState,
@@ -538,7 +539,7 @@ function App() {
     activeId: string | null
   ) => {
     try {
-      const documentsDir = `${wsPath}/.cursor-urban/documents`
+      const documentsDir = `${wsPath}/.disha/documents`
       const metadata = docs.map((d) => ({
         id: d.id,
         filePath: d.filePath,
@@ -575,7 +576,7 @@ function App() {
 
   const loadDocumentsFromWorkspace = useCallback(async (wsPath: string) => {
     try {
-      const metaContent = await window.electronAPI.readFile(`${wsPath}/.cursor-urban/documents/documents.json`)
+      const metaContent = await window.electronAPI.readFile(`${wsPath}/.disha/documents/documents.json`)
       if (!metaContent) {
         setOpenDocs([])
         setActiveDocId(null)
@@ -595,7 +596,7 @@ function App() {
       loadedMeta.forEach((d: any) => savedDocIdsRef.current.add(d.id))
 
       if (loadedActiveId) {
-        const activeImgContent = await window.electronAPI.readFile(`${wsPath}/.cursor-urban/documents/${loadedActiveId}.json`)
+        const activeImgContent = await window.electronAPI.readFile(`${wsPath}/.disha/documents/${loadedActiveId}.json`)
         if (activeImgContent) {
           try {
             const imgObj = JSON.parse(activeImgContent)
@@ -2627,7 +2628,7 @@ function App() {
           if (isAiMarkers) {
             fp = `${workspacePath}/ai_markers.geojson`
           } else if (!fp?.trim()) {
-            fp = `${workspacePath}/.cursor-urban/layers/${l.id}.geojson`
+            fp = `${workspacePath}/.disha/layers/${l.id}.geojson`
           }
 
           const ok = await window.electronAPI.writeFile(fp, JSON.stringify(l.data, null, 2))
@@ -2908,9 +2909,10 @@ function App() {
         <div className="titlebar-left">
           {/* Traffic-light drag spacer: collapses in fullscreen where buttons are hidden */}
           <div className="titlebar-drag" style={{ width: isFullscreen ? 0 : undefined }} />
-          <span className="titlebar-text">
-            Cursor for Urban Planners
-          </span>
+          <div className="titlebar-brand">
+            <img src={appIcon} className="titlebar-logo" alt="Disha Logo" />
+            <span className="titlebar-text">Disha</span>
+          </div>
           <div className="workspace-container">
             <button
               className="workspace-btn"

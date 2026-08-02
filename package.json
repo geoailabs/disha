@@ -1,24 +1,28 @@
 {
-  "name": "cursor-urban-planners",
+  "name": "disha",
   "private": true,
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Smriti-kinra/Cursor-for-Urban-Planners.git"
+    "url": "git+https://github.com/Smriti-kinra/disha.git"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["electron", "esbuild", "electron-winstaller"]
   },
   "scripts": {
-    "dev": "concurrently -k -n backend,desktop -c blue,green \"pnpm run dev:backend\" \"sleep 2 && pnpm run dev:desktop\"",
-    "dev:desktop": "pnpm --filter @cursor-urban/desktop dev",
-    "dev:backend": "cd packages/backend && source .buildenv/bin/activate && python -m uvicorn main:app --reload --port 8765",
-    "build": "pnpm --filter @cursor-urban/desktop build",
-    "build:backend": "node scripts/build-backend.js",
-    "package": "pnpm run build:backend && pnpm --filter @cursor-urban/desktop package",
-    "release:mac": "node scripts/delete-github-assets.js && pnpm run build:backend && pnpm --filter @cursor-urban/desktop release:mac",
-    "release:win": "node scripts/delete-github-assets.js && pnpm run build:backend && pnpm --filter @cursor-urban/desktop release:win"
+    "dev": "concurrently -k -n backend,desktop -c blue,green \"pnpm run dev:backend\" \"shx sleep 2 && pnpm run dev:desktop\"",
+    "dev:desktop": "pnpm --filter @disha/desktop dev",
+    "dev:backend": "cd packages/backend && python -m uvicorn main:app --reload --port 8765",
+    "build": "pnpm --filter @disha/desktop build",
+    "build:backend": "cd packages/backend && python -m PyInstaller backend.spec --noconfirm",
+    "test:unit": "node packages/backend/tests/unit/run-unit-tests.js",
+    "test:smoke": "node packages/backend/tests/smoke/smoke-test-backend.js",
+    "test": "pnpm run test:unit && pnpm run test:smoke",
+    "package": "pnpm run test:unit && pnpm run build:backend && pnpm run test:smoke && pnpm --filter @disha/desktop package",
+    "release:mac": "pnpm run test:unit && pnpm run build:backend && pnpm run test:smoke && pnpm --filter @disha/desktop release:mac",
+    "release:win": "pnpm run test:unit && pnpm run build:backend && pnpm run test:smoke && pnpm --filter @disha/desktop release:win"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1"
+    "concurrently": "^9.2.1",
+    "shx": "^0.3.4"
   }
 }

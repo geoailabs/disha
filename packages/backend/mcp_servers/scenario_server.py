@@ -713,7 +713,7 @@ out geom;
             "https://z.overpass-api.de/api/interpreter",
         ]
         headers = {
-            "User-Agent": "Cursor-Urban-Planners/1.0",
+            "User-Agent": "Disha/1.0",
             "Referer": "https://overpass-turbo.eu/",
         }
         for url in mirrors:

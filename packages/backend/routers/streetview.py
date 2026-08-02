@@ -53,15 +53,12 @@ async def streetview_meta(
 
 @router.get("/token")
 async def streetview_token():
-    """Return the configured Mapillary client token and Google Maps key."""
+    """Return the configured Google Maps key for the Street View embed."""
     import os
-    from streetview.downloader import get_mapillary_token
 
-    token = get_mapillary_token()
     google_key = os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
     return {
-        "configured": bool(token),
-        "access_token": token,
+        "configured": bool(google_key),
         "google_key": google_key,
     }
 
@@ -73,7 +70,7 @@ async def streetview_pano(
     radius: int = Query(50, ge=1, le=500),
     zoom: int = Query(3, ge=0, le=5),
 ):
-    """Download the nearest Mapillary image as a JPEG."""
+    """Download the nearest Google Street View panorama as a JPEG."""
     try:
         meta, image, _cache_hit = await run_in_threadpool(
             service.image_bytes, lat, lng, radius, zoom

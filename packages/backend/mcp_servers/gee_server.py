@@ -53,7 +53,7 @@ def _find_gee_creds(workspace: str | None = None) -> str | None:
 
     # 2. Workspace-specific hidden file
     if workspace:
-        ws_file = Path(workspace) / ".cursor-urban" / "ee-service-account.json"
+        ws_file = Path(workspace) / ".disha" / "ee-service-account.json"
         if ws_file.exists():
             return str(ws_file)
 
