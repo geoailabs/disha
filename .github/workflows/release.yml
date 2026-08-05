@@ -40,9 +40,9 @@ jobs:
         run: |
           cd packages/backend
           python -m venv .buildenv
-          echo "$PWD/.buildenv/bin" >> $GITHUB_PATH
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller
+          source .buildenv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller pytest pytest-asyncio
 
       - name: Install Node dependencies
         run: pnpm install
@@ -84,9 +84,9 @@ jobs:
         run: |
           cd packages/backend
           python -m venv .buildenv
-          echo "$PWD\.buildenv\Scripts" >> $env:GITHUB_PATH
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller
+          .buildenv\Scripts\activate
+          pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller pytest pytest-asyncio
 
       - name: Install Node dependencies
         run: pnpm install
