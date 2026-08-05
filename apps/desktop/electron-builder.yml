@@ -22,6 +22,6 @@ extraResources:
       - "**/*"
 publish:
   provider: github
-  owner: Smriti-kinra
+  owner: geoailabs
   repo: disha
 

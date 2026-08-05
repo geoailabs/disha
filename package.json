@@ -3,7 +3,7 @@
   "private": true,
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Smriti-kinra/disha.git"
+    "url": "git+https://github.com/geoailabs/disha.git"
   },
   "onlyBuiltDependencies": ["electron", "esbuild", "electron-winstaller"],
   "scripts": {

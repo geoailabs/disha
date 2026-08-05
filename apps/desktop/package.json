@@ -7,7 +7,7 @@
   "main": "./out/main/index.js",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Smriti-kinra/disha.git"
+    "url": "git+https://github.com/geoailabs/disha.git"
   },
   "scripts": {
     "dev": "electron-vite dev",
