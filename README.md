@@ -108,44 +108,43 @@ Without a workspace open, the app still works for ad-hoc exploration — nothing
 
 ## Prerequisites
 
-- **Node.js** ≥ 18
-- **pnpm** ≥ 8
+- **Node.js** ≥ 18 (with **pnpm** ≥ 8)
 - **Python** ≥ 3.11
+- *(Optional)* **Pango library** for WeasyPrint PDF report exports:
+  - **macOS**: `brew install pango`
+  - **Linux**: `sudo apt install libpango1.0-dev`
 
-## Setup
+## Setup & First-Time Installation
 
-### 1. Install frontend dependencies
+### 1. Clone the repository & install Node dependencies
 
 ```bash
+git clone https://github.com/geoailabs/disha.git
+cd disha
 pnpm install
 ```
 
-### 2. Create a Python virtual environment and install backend dependencies
+### 2. Set up Python backend virtual environment & dependencies
 
 ```bash
 cd packages/backend
 python -m venv .buildenv
 source .buildenv/bin/activate   # Windows: .buildenv\Scripts\activate
+pip install --upgrade pip
 pip install -r requirements.txt
+cd ..
 ```
 
-> Vector import uses DuckDB's `spatial` extension, which is downloaded on first use (`INSTALL spatial`). For a fully offline packaged build, pre-cache or bundle the extension (see `~/.duckdb/extensions`).
+> **Note on Vector Imports**: Vector ingestion uses DuckDB's `spatial` extension, auto-downloaded on first use. All core GIS libraries (`geopandas`, `fiona`, `shapely`, `pyproj`, `duckdb`) are included in `requirements.txt`.
 
-### 3. Configure environment variables
-
-| Variable | Required | Purpose |
-|---|---|---|
-| `OPENAI_API_KEY` | ✅ Yes | Powers the chat assistant and deep-research reports (OpenAI Chat Completions + Responses, streaming + tool calls). |
-| `OPENAI_MODEL` | No | Default model when `model_config.json` is absent (defaults to `gpt-4o-mini`). The in-app model picker writes `model_config.json`, which takes precedence. |
-| `GOOGLE_MAPS_API_KEY` | No | Enables Google Places, environment (elevation/air quality/solar), and Google-first geocoding. The app runs without it — those tools report `upstream_unavailable` and the assistant falls back to OSM/Overture. |
-| `DISHA_DB` | No | Override the SQLite artifacts DB path (defaults to `packages/backend/disha.db`). |
+### 3. Configure environment variables & launch
 
 ```bash
-export OPENAI_API_KEY=sk-...
-export GOOGLE_MAPS_API_KEY=...   # optional
-```
+export OPENAI_API_KEY="sk-..."
+export GOOGLE_MAPS_API_KEY="..."   # Optional
 
-Everything else — Overpass, Nominatim, OSRM, Open-Meteo, Overture (public S3 parquet), WorldPop, Photon, Street View (`streetlevel`), DuckDuckGo search — is free and keyless.
+pnpm dev
+```
 
 ## Development
 
