@@ -56,8 +56,9 @@ async def run_diagnostics(workspace_path: str | None = Query(None)) -> Diagnosti
 
     # 3. Check Overpass API (OSM)
     try:
+        headers = {"User-Agent": "Disha-Diagnostic/1.0"}
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get("https://overpass-api.de/api/status")
+            resp = await client.get("https://overpass-api.de/api/status", headers=headers)
             if resp.status_code == 200:
                 overpass_status = {"status": "online", "message": "Overpass API is online and reachable."}
             else:
