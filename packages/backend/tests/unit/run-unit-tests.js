@@ -12,21 +12,24 @@ function getPytestExec() {
     : path.join(VENV_DIR, 'bin', 'pytest')
 
   if (fs.existsSync(venvPytest)) {
-    return venvPytest
+    return { cmd: venvPytest, args: ['tests/'] }
   }
 
-  // Fallback to system pytest
-  return 'pytest'
+  const venvPy = isWin
+    ? path.join(VENV_DIR, 'Scripts', 'python.exe')
+    : path.join(VENV_DIR, 'bin', 'python')
+
+  const py = fs.existsSync(venvPy) ? venvPy : 'python'
+  return { cmd: py, args: ['-m', 'pytest', 'tests/'] }
 }
 
 function runUnitTests() {
   console.log('\x1b[34m[Test] Running backend pytest functional test suite...\x1b[0m')
-  const pytestExec = getPytestExec()
+  const { cmd, args } = getPytestExec()
 
-  const result = spawnSync(pytestExec, ['tests/'], {
+  const result = spawnSync(cmd, args, {
     stdio: 'inherit',
     cwd: BACKEND_DIR,
-    shell: true,
   })
 
   if (result.status !== 0) {
