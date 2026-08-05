@@ -41,6 +41,7 @@ jobs:
           cd packages/backend
           python -m venv .buildenv
           source .buildenv/bin/activate
+          echo "$PWD/.buildenv/bin" >> $GITHUB_PATH
           pip install --upgrade pip
           pip install -r requirements.txt pyinstaller pytest pytest-asyncio
 
@@ -85,6 +86,7 @@ jobs:
           cd packages/backend
           python -m venv .buildenv
           .buildenv\Scripts\activate
+          echo "$PWD\.buildenv\Scripts" >> $env:GITHUB_PATH
           pip install --upgrade pip
           pip install -r requirements.txt pyinstaller pytest pytest-asyncio
 

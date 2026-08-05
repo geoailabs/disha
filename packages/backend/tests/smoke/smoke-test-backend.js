@@ -9,8 +9,17 @@ const DELAY_MS = 500
 
 function getBackendBinaryPath() {
   const isWin = process.platform === 'win32'
-  const binaryName = isWin ? 'backend.exe' : 'backend'
-  return path.resolve(__dirname, '..', '..', 'dist', 'backend', binaryName)
+  const isMac = process.platform === 'darwin'
+  const distDir = path.resolve(__dirname, '..', '..', 'dist')
+
+  if (isWin) {
+    return path.join(distDir, 'backend', 'backend.exe')
+  }
+  const macApp = path.join(distDir, 'backend.app', 'Contents', 'MacOS', 'backend')
+  if (isMac && fs.existsSync(macApp)) {
+    return macApp
+  }
+  return path.join(distDir, 'backend', 'backend')
 }
 
 function checkHealth(port) {
