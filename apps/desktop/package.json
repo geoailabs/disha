@@ -2,7 +2,7 @@
   "name": "@disha/desktop",
   "version": "0.1.0",
   "description": "Geospatial AI-driven IDE for urban planners",
-  "author": "Smriti Kinra",
+  "author": "GeoAI Labs",
   "private": true,
   "main": "./out/main/index.js",
   "repository": {
