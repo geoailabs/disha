@@ -5,15 +5,13 @@
     "type": "git",
     "url": "git+https://github.com/Smriti-kinra/disha.git"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": ["electron", "esbuild", "electron-winstaller"]
-  },
+  "onlyBuiltDependencies": ["electron", "esbuild", "electron-winstaller"],
   "scripts": {
-    "dev": "concurrently -k -n backend,desktop -c blue,green \"pnpm run dev:backend\" \"shx sleep 2 && pnpm run dev:desktop\"",
+    "dev": "concurrently -k -n backend,desktop -c blue,green \"pnpm run dev:backend\" \"node -e \\\"setTimeout(() => {}, 2000)\\\" && pnpm run dev:desktop\"",
     "dev:desktop": "pnpm --filter @disha/desktop dev",
-    "dev:backend": "cd packages/backend && python -m uvicorn main:app --reload --port 8765",
+    "dev:backend": "node packages/backend/run-dev.js",
     "build": "pnpm --filter @disha/desktop build",
-    "build:backend": "cd packages/backend && python -m PyInstaller backend.spec --noconfirm",
+    "build:backend": "node packages/backend/run-build.js",
     "test:unit": "node packages/backend/tests/unit/run-unit-tests.js",
     "test:smoke": "node packages/backend/tests/smoke/smoke-test-backend.js",
     "test": "pnpm run test:unit && pnpm run test:smoke",
