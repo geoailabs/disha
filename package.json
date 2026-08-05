@@ -5,7 +5,11 @@
     "type": "git",
     "url": "git+https://github.com/geoailabs/disha.git"
   },
-  "onlyBuiltDependencies": ["electron", "esbuild", "electron-winstaller"],
+  "onlyBuiltDependencies": [
+    "electron",
+    "esbuild",
+    "electron-winstaller"
+  ],
   "scripts": {
     "dev": "concurrently -k -n backend,desktop -c blue,green \"pnpm run dev:backend\" \"node -e \\\"setTimeout(() => {}, 2000)\\\" && pnpm run dev:desktop\"",
     "dev:desktop": "pnpm --filter @disha/desktop dev",
