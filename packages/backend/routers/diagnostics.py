@@ -21,9 +21,13 @@ class DiagnosticResult(BaseModel):
     workspace: dict[str, str]
 
 @router.get("")
-async def run_diagnostics(workspace_path: str | None = Query(None)) -> DiagnosticResult:
+async def run_diagnostics(
+    workspace_path: str | None = Query(None),
+    openai_api_key: str | None = Query(None),
+    google_maps_api_key: str | None = Query(None),
+) -> DiagnosticResult:
     # 1. Check OpenAI API Key
-    openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    openai_key = (openai_api_key or os.environ.get("OPENAI_API_KEY", "")).strip()
     if not openai_key:
         openai_status = {"status": "missing", "message": "OPENAI_API_KEY is not set."}
     else:
@@ -36,7 +40,8 @@ async def run_diagnostics(workspace_path: str | None = Query(None)) -> Diagnosti
 
     # 2. Check Google Maps API Key
     google_key = (
-        os.environ.get("GOOGLE_MAPS_API_KEY")
+        google_maps_api_key
+        or os.environ.get("GOOGLE_MAPS_API_KEY")
         or os.environ.get("GOOGLE_API_KEY")
         or ""
     ).strip()

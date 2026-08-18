@@ -36,9 +36,22 @@ export default function DiagnosticsPanel({ onClose, workspacePath }: Diagnostics
     setLoading(true)
     setError(null)
     try {
-      const url = `http://localhost:8765/api/diagnostics${
-        workspacePath ? `?workspace_path=${encodeURIComponent(workspacePath)}` : ''
-      }`
+      let storedOpenAI = openaiInput.trim()
+      let storedGoogle = googleInput.trim()
+      if (!storedOpenAI && window.electronAPI) {
+        storedOpenAI = (await window.electronAPI.getAPIKey()) || ''
+      }
+      if (!storedGoogle && window.electronAPI) {
+        storedGoogle = (await window.electronAPI.getGoogleMapsKey()) || ''
+      }
+
+      const params = new URLSearchParams()
+      if (workspacePath) params.set('workspace_path', workspacePath)
+      if (storedOpenAI) params.set('openai_api_key', storedOpenAI)
+      if (storedGoogle) params.set('google_maps_api_key', storedGoogle)
+
+      const queryStr = params.toString()
+      const url = `http://localhost:8765/api/diagnostics${queryStr ? `?${queryStr}` : ''}`
       const resp = await fetch(url)
       if (!resp.ok) throw new Error(`HTTP error ${resp.status}`)
       const json = await resp.json()
@@ -48,16 +61,23 @@ export default function DiagnosticsPanel({ onClose, workspacePath }: Diagnostics
     } finally {
       setLoading(false)
     }
-  }, [workspacePath])
+  }, [workspacePath, openaiInput, googleInput])
 
   useEffect(() => {
-    runChecks()
     // Load initial stored keys from Electron secure storage
     if (window.electronAPI) {
-      window.electronAPI.getAPIKey().then((k) => setOpenaiInput(k || '')).catch(() => {})
-      window.electronAPI.getGoogleMapsKey().then((k) => setGoogleInput(k || '')).catch(() => {})
+      Promise.all([
+        window.electronAPI.getAPIKey().catch(() => ''),
+        window.electronAPI.getGoogleMapsKey().catch(() => '')
+      ]).then(([oKey, gKey]) => {
+        if (oKey) setOpenaiInput(oKey)
+        if (gKey) setGoogleInput(gKey)
+        runChecks()
+      })
+    } else {
+      runChecks()
     }
-  }, [runChecks])
+  }, [])
 
   const handleSaveKeys = async (e: React.FormEvent) => {
     e.preventDefault()
