@@ -348,7 +348,7 @@ function App() {
   const mapViewRef = useRef<MapViewHandle>(null)
   const bookmarksRef = useRef<MapBookmark[]>([])
   const mapBoundsRef = useRef<typeof mapBounds>(null)
-  const saveProjectRef = useRef<(force?: boolean) => Promise<void>>(async () => {})
+  const saveProjectRef = useRef<(force?: boolean) => Promise<void>>(async () => { })
   // Lets the export handlers (defined before suggestExportTitle) read its
   // latest value without a forward-reference dependency.
   const suggestExportTitleRef = useRef<() => string>(() => 'Map')
@@ -456,7 +456,7 @@ function App() {
   useEffect(() => {
     window.electronAPI.getLastWorkspace().then((last) => {
       if (last) setWorkspacePath(last)
-    }).catch(() => {})
+    }).catch(() => { })
   }, [])
 
   const resetWorkspaceState = useCallback(() => {
@@ -549,7 +549,7 @@ function App() {
         pdfTotalPages: d.pdfTotalPages,
       }))
       const metaDataStr = JSON.stringify({ openDocs: metadata, activeDocId: activeId }, null, 2)
-      
+
       const writePromises: Promise<boolean>[] = [
         window.electronAPI.writeFile(`${documentsDir}/documents.json`, metaDataStr)
       ]
@@ -584,7 +584,7 @@ function App() {
         return
       }
       const { openDocs: loadedMeta, activeDocId: loadedActiveId } = JSON.parse(metaContent)
-      
+
       const docs: OpenDocument[] = loadedMeta.map((d: any) => ({
         ...d,
         displayUrl: `localfile://${d.filePath.split('/').map(encodeURIComponent).join('/')}`,
@@ -660,7 +660,7 @@ function App() {
     // Stop any in-flight task + clear temp artifacts on backend using the old path
     chatPanelRef.current?.stopStreaming()
     if (workspacePath) {
-      fetch(`http://localhost:8765/api/artifacts/clear_temp?workspace=${encodeURIComponent(workspacePath)}`, { method: 'POST' }).catch(() => {})
+      fetch(`http://localhost:8765/api/artifacts/clear_temp?workspace=${encodeURIComponent(workspacePath)}`, { method: 'POST' }).catch(() => { })
     }
 
     // Save current workspace first (save-first-then-clear)
@@ -676,7 +676,7 @@ function App() {
     // Backend: clear chat session history
     chatPanelRef.current?.resetHistory()
 
-    window.electronAPI.setLastWorkspace(selected).catch(() => {})
+    window.electronAPI.setLastWorkspace(selected).catch(() => { })
 
     // Release the guard after a tick so the loadProject useEffect sees the
     // new workspacePath and runs cleanly (isClosingRef=false).
@@ -702,7 +702,7 @@ function App() {
     // Stop any in-flight task + clear temp artifacts on backend using the old path
     chatPanelRef.current?.stopStreaming()
     if (workspacePath) {
-      fetch(`http://localhost:8765/api/artifacts/clear_temp?workspace=${encodeURIComponent(workspacePath)}`, { method: 'POST' }).catch(() => {})
+      fetch(`http://localhost:8765/api/artifacts/clear_temp?workspace=${encodeURIComponent(workspacePath)}`, { method: 'POST' }).catch(() => { })
     }
 
     // Save current workspace first (save-first-then-clear, per user requirement)
@@ -718,7 +718,7 @@ function App() {
     // Backend: clear chat session history
     chatPanelRef.current?.resetHistory()
 
-    window.electronAPI.setLastWorkspace(null).catch(() => {})
+    window.electronAPI.setLastWorkspace(null).catch(() => { })
 
     // Release the guard after a tick so subsequent interactions work normally
     setTimeout(() => {
@@ -754,9 +754,9 @@ function App() {
             : raw.type === 'Feature'
               ? { type: 'FeatureCollection', features: [raw] }
               : {
-                  type: 'FeatureCollection',
-                  features: [{ type: 'Feature', geometry: raw, properties: {} }],
-                }
+                type: 'FeatureCollection',
+                features: [{ type: 'Feature', geometry: raw, properties: {} }],
+              }
 
         const color = customColor || LAYER_COLORS[colorIndexRef.current % LAYER_COLORS.length]
         if (!customColor) colorIndexRef.current++
@@ -809,12 +809,12 @@ function App() {
               prevScenarios.map((s) =>
                 s.id === activeId
                   ? {
-                      ...s,
-                      layerVisibility: {
-                        ...s.layerVisibility,
-                        [id]: nextVisible,
-                      },
-                    }
+                    ...s,
+                    layerVisibility: {
+                      ...s.layerVisibility,
+                      [id]: nextVisible,
+                    },
+                  }
                   : s
               )
             )
@@ -867,13 +867,13 @@ function App() {
       let updated = false
       let nextIds = l.groupPathIds ? [...l.groupPathIds] : (l.groupId ? [l.groupId] : [])
       let nextNames = l.groupPathNames ? [...l.groupPathNames] : (l.groupName ? [l.groupName] : [])
-      
+
       const idx = nextIds.indexOf(groupId)
       if (idx !== -1) {
         nextNames[idx] = newGroupName
         updated = true
       }
-      
+
       if (l.groupId === groupId) {
         return {
           ...l,
@@ -899,7 +899,7 @@ function App() {
       const newGroupId = `group-${genId()}`
       const firstName = prev.find((l) => l.id === ids[0])?.name ?? 'Layer'
       const newGroupName = customGroupName || `${firstName} Group`
-      
+
       // Find a common parent path if they already share one
       const firstLayer = prev.find((l) => ids.includes(l.id))
       let commonIds: string[] = []
@@ -908,13 +908,13 @@ function App() {
         commonIds = firstLayer.groupPathIds ? [...firstLayer.groupPathIds] : (firstLayer.groupId ? [firstLayer.groupId] : [])
         commonNames = firstLayer.groupPathNames ? [...firstLayer.groupPathNames] : (firstLayer.groupName ? [firstLayer.groupName] : [])
       }
-      
+
       return prev.map((layer) => {
         if (!ids.includes(layer.id)) return layer
-        
+
         const finalIds = [...commonIds, newGroupId]
         const finalNames = [...commonNames, newGroupName]
-        
+
         return {
           ...layer,
           groupId: newGroupId,
@@ -934,15 +934,15 @@ function App() {
     setLayers((prev) => {
       return prev.map((l) => {
         if (l.id !== id) return l
-        
+
         let ids = l.groupPathIds ? [...l.groupPathIds] : (l.groupId ? [l.groupId] : [])
         let names = l.groupPathNames ? [...l.groupPathNames] : (l.groupName ? [l.groupName] : [])
-        
+
         if (ids.length > 0) {
           ids.pop()
           names.pop()
         }
-        
+
         return {
           ...l,
           groupId: ids.length > 0 ? ids[ids.length - 1] : undefined,
@@ -959,13 +959,13 @@ function App() {
       return prev.map((l) => {
         let ids = l.groupPathIds ? [...l.groupPathIds] : (l.groupId ? [l.groupId] : [])
         let names = l.groupPathNames ? [...l.groupPathNames] : (l.groupName ? [l.groupName] : [])
-        
+
         const idx = ids.indexOf(groupId)
         if (idx !== -1) {
           ids.splice(idx, 1)
           names.splice(idx, 1)
         }
-        
+
         return {
           ...l,
           groupId: ids.length > 0 ? ids[ids.length - 1] : undefined,
@@ -981,28 +981,28 @@ function App() {
     setLayers((prev) => {
       const isSourceGroup = prev.some((l) => l.groupPathIds?.includes(sourceId) || l.groupId === sourceId)
       const sourceLayer = prev.find((l) => l.id === sourceId)
-      
+
       let sourceLayerIds: string[] = []
       if (isSourceGroup) {
         sourceLayerIds = prev.filter((l) => l.groupPathIds?.includes(sourceId) || l.groupId === sourceId).map((l) => l.id)
       } else if (sourceLayer) {
         sourceLayerIds = [sourceId]
       }
-      
+
       if (sourceLayerIds.length === 0) return prev
-      
+
       const isTargetGroup = prev.some((l) => l.groupPathIds?.includes(targetId) || l.groupId === targetId)
       const targetLayer = prev.find((l) => l.id === targetId)
-      
+
       let newPathIds: string[] = []
       let newPathNames: string[] = []
-      
+
       if (position === 'inside') {
         const firstTargetInGroup = prev.find((l) => l.groupPathIds?.includes(targetId) || l.groupId === targetId)
         if (firstTargetInGroup) {
           let tIds = firstTargetInGroup.groupPathIds ? [...firstTargetInGroup.groupPathIds] : (firstTargetInGroup.groupId ? [firstTargetInGroup.groupId] : [])
           let tNames = firstTargetInGroup.groupPathNames ? [...firstTargetInGroup.groupPathNames] : (firstTargetInGroup.groupName ? [firstTargetInGroup.groupName] : [])
-          
+
           const idx = tIds.indexOf(targetId)
           if (idx !== -1) {
             newPathIds = tIds.slice(0, idx + 1)
@@ -1018,7 +1018,7 @@ function App() {
           if (firstTargetInGroup) {
             let tIds = firstTargetInGroup.groupPathIds ? [...firstTargetInGroup.groupPathIds] : (firstTargetInGroup.groupId ? [firstTargetInGroup.groupId] : [])
             let tNames = firstTargetInGroup.groupPathNames ? [...firstTargetInGroup.groupPathNames] : (firstTargetInGroup.groupName ? [firstTargetInGroup.groupName] : [])
-            
+
             const idx = tIds.indexOf(targetId)
             if (idx !== -1) {
               newPathIds = tIds.slice(0, idx)
@@ -1032,7 +1032,7 @@ function App() {
           newPathNames = tNames
         }
       }
-      
+
       const updatedMovedLayers = prev.filter((l) => sourceLayerIds.includes(l.id)).map((l) => {
         let relativeIds: string[] = []
         let relativeNames: string[] = []
@@ -1045,10 +1045,10 @@ function App() {
             relativeNames = sNames.slice(idx)
           }
         }
-        
+
         const finalIds = [...newPathIds, ...relativeIds]
         const finalNames = [...newPathNames, ...relativeNames]
-        
+
         return {
           ...l,
           groupId: finalIds.length > 0 ? finalIds[finalIds.length - 1] : undefined,
@@ -1057,9 +1057,9 @@ function App() {
           groupPathNames: finalNames.length > 0 ? finalNames : undefined,
         }
       })
-      
+
       const remainingLayers = prev.filter((l) => !sourceLayerIds.includes(l.id))
-      
+
       let insertIndex = -1
       if (position === 'inside') {
         const lastChild = [...remainingLayers].reverse().find((l) => l.groupPathIds?.includes(targetId) || l.groupId === targetId)
@@ -1085,11 +1085,11 @@ function App() {
           }
         }
       }
-      
+
       if (insertIndex === -1) {
         insertIndex = remainingLayers.length
       }
-      
+
       return [
         ...remainingLayers.slice(0, insertIndex),
         ...updatedMovedLayers,
@@ -1185,7 +1185,7 @@ function App() {
       for (const fp of paths) {
         const lower = fp.toLowerCase()
         const filename = fp.split(/[/\\]/).pop() || 'file'
-        
+
         if (lower.endsWith('.geojson') || lower.endsWith('.json')) {
           const name = filename.replace(/\.(geojson|json)$/i, '')
           await addLayer(name, fp)
@@ -1627,11 +1627,11 @@ function App() {
         prev.map((l) =>
           l.name.toLowerCase() === layerName.toLowerCase()
             ? {
-                ...l,
-                ...(style.fillColor !== undefined ? { fillColor: style.fillColor } : {}),
-                ...(style.lineColor !== undefined ? { lineColor: style.lineColor } : {}),
-                ...(style.opacity !== undefined ? { opacity: style.opacity } : {}),
-              }
+              ...l,
+              ...(style.fillColor !== undefined ? { fillColor: style.fillColor } : {}),
+              ...(style.lineColor !== undefined ? { lineColor: style.lineColor } : {}),
+              ...(style.opacity !== undefined ? { opacity: style.opacity } : {}),
+            }
             : l,
         ),
       )
@@ -1682,7 +1682,7 @@ function App() {
 
       // Label changes (independent of color mode).
       if (p.label_property !== undefined || p.label_enabled !== undefined ||
-          p.label_size !== undefined || p.label_color !== undefined) {
+        p.label_size !== undefined || p.label_color !== undefined) {
         const property = p.label_property ?? prevLabel?.property ?? ''
         spec.label = {
           enabled: p.label_enabled ?? (p.label_property ? true : prevLabel?.enabled ?? false),
@@ -1838,7 +1838,7 @@ function App() {
       } else {
         const ring =
           coordinates[0][0] !== coordinates[coordinates.length - 1][0] ||
-          coordinates[0][1] !== coordinates[coordinates.length - 1][1]
+            coordinates[0][1] !== coordinates[coordinates.length - 1][1]
             ? [...coordinates, coordinates[0]]
             : coordinates
         geometry = { type: 'Polygon', coordinates: [ring] }
@@ -2031,7 +2031,7 @@ function App() {
     if (action.type === 'add_geojson') {
       const { geojson, name, color } = action.payload
       setAppMode('map') // Auto-switch to Map view
-      const geometryTypes = ['Point','MultiPoint','LineString','MultiLineString','Polygon','MultiPolygon','GeometryCollection']
+      const geometryTypes = ['Point', 'MultiPoint', 'LineString', 'MultiLineString', 'Polygon', 'MultiPolygon', 'GeometryCollection']
       const data: FeatureCollection =
         geojson && 'type' in geojson && geojson.type === 'FeatureCollection'
           ? (geojson as FeatureCollection)
@@ -2072,7 +2072,6 @@ function App() {
       return
     }
     // AI-placed pins become separate one-point layers inside the persistent
-    // "AI Markers" group so they can be managed like Figma objects.
     if (action.type === 'add_marker') {
       addAiMarkersToGroup([action.payload])
       return
@@ -2416,9 +2415,9 @@ function App() {
       workspace: workspacePath || undefined,
       activeScenario: activeScenarioId
         ? {
-            name: scenarios.find((s) => s.id === activeScenarioId)?.name || '',
-            description: scenarios.find((s) => s.id === activeScenarioId)?.description || '',
-          }
+          name: scenarios.find((s) => s.id === activeScenarioId)?.name || '',
+          description: scenarios.find((s) => s.id === activeScenarioId)?.description || '',
+        }
         : undefined,
       center: mapViewState.center,
       zoom: mapViewState.zoom,
@@ -2474,15 +2473,15 @@ function App() {
         const s = l.styleSpec
         const style = s
           ? {
-              mode: s.mode,
-              property: s.property,
-              categoryCount: s.categories?.length,
-              classes: s.breaks ? s.breaks.length + 1 : undefined,
-              ramp: s.rampName,
-              labels: (s.label?.enabled
-                ? { property: s.label.property }
-                : false) as false | { property: string },
-            }
+            mode: s.mode,
+            property: s.property,
+            categoryCount: s.categories?.length,
+            classes: s.breaks ? s.breaks.length + 1 : undefined,
+            ramp: s.rampName,
+            labels: (s.label?.enabled
+              ? { property: s.label.property }
+              : false) as false | { property: string },
+          }
           : { mode: 'simple' as const, labels: false as const }
 
         const features_data = featureCount <= 100
@@ -2758,9 +2757,9 @@ function App() {
                 : raw.type === 'Feature'
                   ? { type: 'FeatureCollection', features: [raw] }
                   : {
-                      type: 'FeatureCollection',
-                      features: [{ type: 'Feature', geometry: raw, properties: {} }],
-                    }
+                    type: 'FeatureCollection',
+                    features: [{ type: 'Feature', geometry: raw, properties: {} }],
+                  }
             const isAiMarkers = info.name.toLowerCase() === AI_MARKERS_LAYER.toLowerCase()
             const defaultStyleSpec = isAiMarkers ? {
               mode: 'simple' as const,
@@ -2776,13 +2775,13 @@ function App() {
 
             const finalStyleSpec = info.styleSpec !== undefined
               ? (isAiMarkers ? {
-                  ...defaultStyleSpec,
-                  ...info.styleSpec,
-                  label: {
-                    ...defaultStyleSpec?.label,
-                    ...info.styleSpec?.label,
-                  }
-                } : info.styleSpec)
+                ...defaultStyleSpec,
+                ...info.styleSpec,
+                label: {
+                  ...defaultStyleSpec?.label,
+                  ...info.styleSpec?.label,
+                }
+              } : info.styleSpec)
               : defaultStyleSpec
 
             const gpIds = info.groupPathIds || (info.groupId ? [info.groupId] : undefined)
@@ -2933,21 +2932,20 @@ function App() {
           <div className="sidebar-toggles">
             {(appMode === 'map' || appMode === 'artifacts' || appMode === 'document') && (
               <button
-                className={`sidebar-toggle-btn ${
-                  (appMode === 'map'
+                className={`sidebar-toggle-btn ${(appMode === 'map'
                     ? leftWidth > 0
                     : appMode === 'document'
-                    ? showDocumentSidebar
-                    : showArtifactsSidebar)
+                      ? showDocumentSidebar
+                      : showArtifactsSidebar)
                     ? 'active'
                     : ''
-                }`}
+                  }`}
                 title={
                   (appMode === 'map'
                     ? leftWidth > 0
                     : appMode === 'document'
-                    ? showDocumentSidebar
-                    : showArtifactsSidebar)
+                      ? showDocumentSidebar
+                      : showArtifactsSidebar)
                     ? "Hide Left Sidebar"
                     : "Show Left Sidebar"
                 }
@@ -2955,8 +2953,8 @@ function App() {
                   appMode === 'map'
                     ? toggleLeft
                     : appMode === 'document'
-                    ? () => setShowDocumentSidebar(!showDocumentSidebar)
-                    : () => setShowArtifactsSidebar(!showArtifactsSidebar)
+                      ? () => setShowDocumentSidebar(!showDocumentSidebar)
+                      : () => setShowArtifactsSidebar(!showArtifactsSidebar)
                 }
               >
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -2969,8 +2967,8 @@ function App() {
                       (appMode === 'map'
                         ? leftWidth > 0
                         : appMode === 'document'
-                        ? showDocumentSidebar
-                        : showArtifactsSidebar)
+                          ? showDocumentSidebar
+                          : showArtifactsSidebar)
                         ? 0.3
                         : 0
                     }
@@ -3007,195 +3005,195 @@ function App() {
       <div className="layout">
         {/* Left panel — map mode only */}
         {appMode !== 'map' || leftWidth === 0 ? null : (
-        <aside ref={leftPanelRef} className="panel left-panel" style={{ width: leftWidth }}>
-          <div className="tab-bar tab-bar-scroll">
-            <button
-              className={`tab ${activeLeftTab === 'files' ? 'active' : ''}`}
-              onClick={() => setActiveLeftTab('files')}
-            >
-              Files
-            </button>
-            <button
-              className={`tab ${activeLeftTab === 'layers' ? 'active' : ''}`}
-              onClick={() => setActiveLeftTab('layers')}
-            >
-              Layers
-              {displayLayersCount > 0 && <span className="tab-badge">{displayLayersCount}</span>}
-            </button>
+          <aside ref={leftPanelRef} className="panel left-panel" style={{ width: leftWidth }}>
+            <div className="tab-bar tab-bar-scroll">
+              <button
+                className={`tab ${activeLeftTab === 'files' ? 'active' : ''}`}
+                onClick={() => setActiveLeftTab('files')}
+              >
+                Files
+              </button>
+              <button
+                className={`tab ${activeLeftTab === 'layers' ? 'active' : ''}`}
+                onClick={() => setActiveLeftTab('layers')}
+              >
+                Layers
+                {displayLayersCount > 0 && <span className="tab-badge">{displayLayersCount}</span>}
+              </button>
 
-            <button
-              className={`tab ${activeLeftTab === 'bookmarks' ? 'active' : ''}`}
-              onClick={() => setActiveLeftTab('bookmarks')}
-            >
-              Marks
-              {bookmarks.length > 0 && <span className="tab-badge">{bookmarks.length}</span>}
-            </button>
-            <button
-              className={`tab ${activeLeftTab === 'export' ? 'active' : ''}`}
-              onClick={() => setActiveLeftTab('export')}
-            >
-              Export
-            </button>
-            <button
-              className={`tab ${activeLeftTab === 'zoning' ? 'active' : ''}`}
-              onClick={() => setActiveLeftTab('zoning')}
-            >
-              Zones
-            </button>
-            <button
-              className={`tab ${activeLeftTab === 'scenarios' ? 'active' : ''}`}
-              onClick={() => setActiveLeftTab('scenarios')}
-            >
-              Scenarios
-              {scenarios.length > 0 && <span className="tab-badge">{scenarios.length}</span>}
-            </button>
-          </div>
-          {activeLeftTab === 'files' && (
-            <>
-              {convertingFile && (
-                <div className="import-status">Importing {convertingFile}…</div>
-              )}
-              {convertError && (
-                <div className="import-status import-error" onClick={() => setConvertError(null)}>
-                  {convertError}
-                </div>
-              )}
-              <FileTree
-                workspacePath={workspacePath}
-                onFileClick={handleFileClick}
-                onImportClick={handleImportSpatialFiles}
-                revision={fileTreeRevision}
-              />
-            </>
-          )}
-          {activeLeftTab === 'layers' && (
-            <>
-              <LayerPanel
-                layers={layers}
-                selectedLayerIds={selectedLayerIds}
-                onSelectedLayerIdsChange={setSelectedLayerIds}
-                selectedFeatures={selectedFeatures}
-                onSelectFeature={handleSelectFeature}
-                onToggle={toggleLayer}
-                onRemove={removeLayer}
-                onZoomTo={zoomToLayer}
-                onStyle={(id) => {
-                  // Raster layers (WMS/GEE) have no vector symbology — block the panel unless it's a raster overlay.
-                  const layer = layers.find((l) => l.id === id)
-                  if ((layer?.wmsSpec || layer?.geeSpec) && !layer?.rasterOverlaySpec) return
-                  setStylingLayerId((cur) => (cur === id ? null : id))
-                  setAttrLayerId(null)
-                }}
-                activeStyleId={stylingLayerId}
-                onAttributes={(id) => { setAttrLayerId((cur) => (cur === id ? null : id)); setStylingLayerId(null) }}
-                activeAttrId={attrLayerId}
-                onRename={renameLayer}
-                onGroupWith={groupLayers}
-                onGroupMulti={groupLayersMulti}
-                onUngroup={ungroupLayer}
-                onUngroupGroup={ungroupGroup}
-                onToggleGroup={toggleLayerGroup}
-                onRenameGroup={renameGroup}
-                onStyleChange={handleSymbologyChange}
-                onUpdateLayer={(layerId, updates) => {
-                  setLayers((prev) => prev.map((l) => (l.id === layerId ? { ...l, ...updates } : l)))
-                }}
-                onAttributesChange={handleAttributesChange}
-                onReorderLayers={setLayers}
-                onMoveLayerOrGroup={moveLayerOrGroup}
-              />
-            </>
-          )}
-
-          {activeLeftTab === 'bookmarks' && (
-            <BookmarkPanel
-              bookmarks={bookmarks}
-              onGoTo={handleBookmarkGoTo}
-              onRemove={(id) => setBookmarks((prev) => prev.filter((b) => b.id !== id))}
-              onSaveCurrent={handleBookmarkSaveCurrent}
-            />
-          )}
-          {activeLeftTab === 'export' && (
-            <ExportPanel
-              layers={layers}
-              workspacePath={workspacePath}
-              onExportMapPng={handleExportMapPng}
-              onExportLayer={handleExportLayerFile}
-              onExportPdf={handleExportPdf}
-              onExportClippedRegion={(name) => void clipLayersToBboxAndSave(name)}
-              onPreviewBoundary={handlePreviewBoundary}
-              onSaveByRegion={handleSaveByRegion}
-              onSavePngToArtifact={handleSavePngToArtifact}
-              onSavePdfToArtifact={handleSavePdfToArtifact}
-              onSuggestExportTitle={suggestExportTitle}
-            />
-          )}
-          {activeLeftTab === 'zoning' && <ZoningPanel />}
-          {activeLeftTab === 'scenarios' && (
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-              {/* AI Scenario Builder — top section */}
-              <div style={{ flex: '0 0 auto', maxHeight: '55%', overflowY: 'auto', borderBottom: '2px solid var(--border)' }}>
-                <ScenarioBuilderPanel
-                  mapBounds={mapBounds}
-                  onOpenArtifacts={() => setAppMode('artifacts')}
-                  workspacePath={workspacePath}
-                />
-              </div>
-              {/* Manual scenario manager — bottom section */}
-              <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
-                <ScenarioPanel
-                  scenarios={scenarios}
-                  activeScenarioId={activeScenarioId}
-                  layers={layers}
-                  onCreateScenario={(name, description) => {
-                    const id = `scenario-${genId()}`
-                    setScenarios(prev => [...prev, {
-                      id, name, description,
-                      createdAt: Date.now(),
-                      layerIds: layers.map(l => l.id),
-                      layerVisibility: Object.fromEntries(layers.map(l => [l.id, l.visible]))
-                    }])
-                  }}
-                  onActivate={(id) => {
-                    setActiveScenarioId(id)
-                    if (!id) {
-                      setLayers(prev => prev.map(l => ({ ...l, visible: true })))
-                    } else {
-                      const scenario = scenarios.find(s => s.id === id)
-                      if (scenario) {
-                        setLayers(prev => prev.map(l => ({
-                          ...l,
-                          visible: scenario.layerIds.includes(l.id)
-                            ? (scenario.layerVisibility[l.id] ?? true)
-                            : false
-                        })))
-                      }
-                    }
-                  }}
-                  onDelete={(id) => {
-                    setScenarios(prev => prev.filter(s => s.id !== id))
-                    if (activeScenarioId === id) setActiveScenarioId(null)
-                  }}
-                  onRename={(id, name) => setScenarios(prev =>
-                    prev.map(s => s.id === id ? { ...s, name } : s)
-                  )}
-                  onAddLayer={(scenarioId, layerId) => setScenarios(prev =>
-                    prev.map(s => s.id === scenarioId
-                      ? { ...s, layerIds: s.layerIds.includes(layerId) ? s.layerIds : [...s.layerIds, layerId] }
-                      : s
-                    )
-                  )}
-                  onRemoveLayer={(scenarioId, layerId) => setScenarios(prev =>
-                    prev.map(s => s.id === scenarioId
-                      ? { ...s, layerIds: s.layerIds.filter(id => id !== layerId) }
-                      : s
-                    )
-                  )}
-                />
-              </div>
+              <button
+                className={`tab ${activeLeftTab === 'bookmarks' ? 'active' : ''}`}
+                onClick={() => setActiveLeftTab('bookmarks')}
+              >
+                Marks
+                {bookmarks.length > 0 && <span className="tab-badge">{bookmarks.length}</span>}
+              </button>
+              <button
+                className={`tab ${activeLeftTab === 'export' ? 'active' : ''}`}
+                onClick={() => setActiveLeftTab('export')}
+              >
+                Export
+              </button>
+              <button
+                className={`tab ${activeLeftTab === 'zoning' ? 'active' : ''}`}
+                onClick={() => setActiveLeftTab('zoning')}
+              >
+                Zones
+              </button>
+              <button
+                className={`tab ${activeLeftTab === 'scenarios' ? 'active' : ''}`}
+                onClick={() => setActiveLeftTab('scenarios')}
+              >
+                Scenarios
+                {scenarios.length > 0 && <span className="tab-badge">{scenarios.length}</span>}
+              </button>
             </div>
-          )}
-        </aside>
+            {activeLeftTab === 'files' && (
+              <>
+                {convertingFile && (
+                  <div className="import-status">Importing {convertingFile}…</div>
+                )}
+                {convertError && (
+                  <div className="import-status import-error" onClick={() => setConvertError(null)}>
+                    {convertError}
+                  </div>
+                )}
+                <FileTree
+                  workspacePath={workspacePath}
+                  onFileClick={handleFileClick}
+                  onImportClick={handleImportSpatialFiles}
+                  revision={fileTreeRevision}
+                />
+              </>
+            )}
+            {activeLeftTab === 'layers' && (
+              <>
+                <LayerPanel
+                  layers={layers}
+                  selectedLayerIds={selectedLayerIds}
+                  onSelectedLayerIdsChange={setSelectedLayerIds}
+                  selectedFeatures={selectedFeatures}
+                  onSelectFeature={handleSelectFeature}
+                  onToggle={toggleLayer}
+                  onRemove={removeLayer}
+                  onZoomTo={zoomToLayer}
+                  onStyle={(id) => {
+                    // Raster layers (WMS/GEE) have no vector symbology — block the panel unless it's a raster overlay.
+                    const layer = layers.find((l) => l.id === id)
+                    if ((layer?.wmsSpec || layer?.geeSpec) && !layer?.rasterOverlaySpec) return
+                    setStylingLayerId((cur) => (cur === id ? null : id))
+                    setAttrLayerId(null)
+                  }}
+                  activeStyleId={stylingLayerId}
+                  onAttributes={(id) => { setAttrLayerId((cur) => (cur === id ? null : id)); setStylingLayerId(null) }}
+                  activeAttrId={attrLayerId}
+                  onRename={renameLayer}
+                  onGroupWith={groupLayers}
+                  onGroupMulti={groupLayersMulti}
+                  onUngroup={ungroupLayer}
+                  onUngroupGroup={ungroupGroup}
+                  onToggleGroup={toggleLayerGroup}
+                  onRenameGroup={renameGroup}
+                  onStyleChange={handleSymbologyChange}
+                  onUpdateLayer={(layerId, updates) => {
+                    setLayers((prev) => prev.map((l) => (l.id === layerId ? { ...l, ...updates } : l)))
+                  }}
+                  onAttributesChange={handleAttributesChange}
+                  onReorderLayers={setLayers}
+                  onMoveLayerOrGroup={moveLayerOrGroup}
+                />
+              </>
+            )}
+
+            {activeLeftTab === 'bookmarks' && (
+              <BookmarkPanel
+                bookmarks={bookmarks}
+                onGoTo={handleBookmarkGoTo}
+                onRemove={(id) => setBookmarks((prev) => prev.filter((b) => b.id !== id))}
+                onSaveCurrent={handleBookmarkSaveCurrent}
+              />
+            )}
+            {activeLeftTab === 'export' && (
+              <ExportPanel
+                layers={layers}
+                workspacePath={workspacePath}
+                onExportMapPng={handleExportMapPng}
+                onExportLayer={handleExportLayerFile}
+                onExportPdf={handleExportPdf}
+                onExportClippedRegion={(name) => void clipLayersToBboxAndSave(name)}
+                onPreviewBoundary={handlePreviewBoundary}
+                onSaveByRegion={handleSaveByRegion}
+                onSavePngToArtifact={handleSavePngToArtifact}
+                onSavePdfToArtifact={handleSavePdfToArtifact}
+                onSuggestExportTitle={suggestExportTitle}
+              />
+            )}
+            {activeLeftTab === 'zoning' && <ZoningPanel />}
+            {activeLeftTab === 'scenarios' && (
+              <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+                {/* AI Scenario Builder — top section */}
+                <div style={{ flex: '0 0 auto', maxHeight: '55%', overflowY: 'auto', borderBottom: '2px solid var(--border)' }}>
+                  <ScenarioBuilderPanel
+                    mapBounds={mapBounds}
+                    onOpenArtifacts={() => setAppMode('artifacts')}
+                    workspacePath={workspacePath}
+                  />
+                </div>
+                {/* Manual scenario manager — bottom section */}
+                <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+                  <ScenarioPanel
+                    scenarios={scenarios}
+                    activeScenarioId={activeScenarioId}
+                    layers={layers}
+                    onCreateScenario={(name, description) => {
+                      const id = `scenario-${genId()}`
+                      setScenarios(prev => [...prev, {
+                        id, name, description,
+                        createdAt: Date.now(),
+                        layerIds: layers.map(l => l.id),
+                        layerVisibility: Object.fromEntries(layers.map(l => [l.id, l.visible]))
+                      }])
+                    }}
+                    onActivate={(id) => {
+                      setActiveScenarioId(id)
+                      if (!id) {
+                        setLayers(prev => prev.map(l => ({ ...l, visible: true })))
+                      } else {
+                        const scenario = scenarios.find(s => s.id === id)
+                        if (scenario) {
+                          setLayers(prev => prev.map(l => ({
+                            ...l,
+                            visible: scenario.layerIds.includes(l.id)
+                              ? (scenario.layerVisibility[l.id] ?? true)
+                              : false
+                          })))
+                        }
+                      }
+                    }}
+                    onDelete={(id) => {
+                      setScenarios(prev => prev.filter(s => s.id !== id))
+                      if (activeScenarioId === id) setActiveScenarioId(null)
+                    }}
+                    onRename={(id, name) => setScenarios(prev =>
+                      prev.map(s => s.id === id ? { ...s, name } : s)
+                    )}
+                    onAddLayer={(scenarioId, layerId) => setScenarios(prev =>
+                      prev.map(s => s.id === scenarioId
+                        ? { ...s, layerIds: s.layerIds.includes(layerId) ? s.layerIds : [...s.layerIds, layerId] }
+                        : s
+                      )
+                    )}
+                    onRemoveLayer={(scenarioId, layerId) => setScenarios(prev =>
+                      prev.map(s => s.id === scenarioId
+                        ? { ...s, layerIds: s.layerIds.filter(id => id !== layerId) }
+                        : s
+                      )
+                    )}
+                  />
+                </div>
+              </div>
+            )}
+          </aside>
         )}
 
         {/* Left resize handle — map mode only */}
@@ -3216,7 +3214,7 @@ function App() {
                 appear, but they will not persist until a folder is open.
               </div>
             )}
-            
+
             {streetViewActive && (
               <div
                 style={{
@@ -3343,25 +3341,25 @@ function App() {
 
         {/* Right panel */}
         {rightWidth > 0 && (
-        <aside className="panel right-panel" style={{ width: rightWidth }}>
-          <ErrorBoundary label="Chat">
-            <ChatPanel
-              ref={chatPanelRef}
-              conversations={conversations}
-              activeConversation={activeConversation}
-              onCreateConversation={handleCreateConversation}
-              onSelectConversation={handleSelectConversation}
-              onDeleteConversation={handleDeleteConversation}
-              onMessagesChange={handleConversationMessagesChange}
-              onRenameConversation={handleRenameConversation}
-              mapContext={mapContext}
-              onMapAction={handleMapAction}
-              documentImage={appMode === 'document' ? documentImage : null}
-              injectedMessage={injectedMessage}
-              onComposeMapFigure={composeMapFigure}
-            />
-          </ErrorBoundary>
-        </aside>
+          <aside className="panel right-panel" style={{ width: rightWidth }}>
+            <ErrorBoundary label="Chat">
+              <ChatPanel
+                ref={chatPanelRef}
+                conversations={conversations}
+                activeConversation={activeConversation}
+                onCreateConversation={handleCreateConversation}
+                onSelectConversation={handleSelectConversation}
+                onDeleteConversation={handleDeleteConversation}
+                onMessagesChange={handleConversationMessagesChange}
+                onRenameConversation={handleRenameConversation}
+                mapContext={mapContext}
+                onMapAction={handleMapAction}
+                documentImage={appMode === 'document' ? documentImage : null}
+                injectedMessage={injectedMessage}
+                onComposeMapFigure={composeMapFigure}
+              />
+            </ErrorBoundary>
+          </aside>
         )}
       </div>
       {isTransitioning && (
