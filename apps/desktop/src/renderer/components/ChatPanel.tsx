@@ -321,6 +321,7 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
   // Conversation renaming state
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
+  const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Google Maps API Key State
   const [googleKey, setGoogleKey] = useState('')
@@ -1443,9 +1444,45 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
     >
       {/* ── Chat header ── */}
       <div className="chat-header">
-        <span className="chat-header-title">
-          {activeConversation?.title || 'Urban Planning Assistant'}
-        </span>
+        {editingConversationId === activeConversation?.id && !showHistory ? (
+          <input
+            type="text"
+            className="chat-header-rename-input"
+            value={editingTitle}
+            onChange={(e) => setEditingTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                if (activeConversation) {
+                  onRenameConversation?.(activeConversation.id, editingTitle.trim() || 'New chat')
+                }
+                setEditingConversationId(null)
+              } else if (e.key === 'Escape') {
+                setEditingConversationId(null)
+              }
+            }}
+            onBlur={() => {
+              if (activeConversation) {
+                onRenameConversation?.(activeConversation.id, editingTitle.trim() || 'New chat')
+              }
+              setEditingConversationId(null)
+            }}
+            autoFocus
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <span
+            className="chat-header-title"
+            onDoubleClick={() => {
+              if (activeConversation) {
+                setEditingConversationId(activeConversation.id)
+                setEditingTitle(activeConversation.title)
+              }
+            }}
+            title="Double-click to rename chat"
+          >
+            {activeConversation?.title || 'Urban Planning Assistant'}
+          </span>
+        )}
         <div className="chat-header-actions">
           <button
             ref={historyBtnRef}
@@ -1750,11 +1787,24 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
                 className={`chat-history-item ${conv.id === activeConversation?.id ? 'active' : ''}`}
                 onClick={() => {
                   if (editingConversationId === conv.id) return
-                  onSelectConversation(conv.id)
-                  setShowHistory(false)
-                  wsRef.current?.close()
-                  wsRef.current = null
+                  if (clickTimerRef.current) clearTimeout(clickTimerRef.current)
+                  clickTimerRef.current = setTimeout(() => {
+                    onSelectConversation(conv.id)
+                    setShowHistory(false)
+                    wsRef.current?.close()
+                    wsRef.current = null
+                  }, 220)
                 }}
+                onDoubleClick={(e) => {
+                  e.stopPropagation()
+                  if (clickTimerRef.current) {
+                    clearTimeout(clickTimerRef.current)
+                    clickTimerRef.current = null
+                  }
+                  setEditingConversationId(conv.id)
+                  setEditingTitle(conv.title)
+                }}
+                title="Double-click to rename"
               >
                 <div className="chat-history-item-content">
                   {editingConversationId === conv.id ? (
@@ -1777,6 +1827,7 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
                       }}
                       autoFocus
                       onClick={(e) => e.stopPropagation()}
+                      onDoubleClick={(e) => e.stopPropagation()}
                     />
                   ) : (
                     <span className="chat-history-item-title">{conv.title}</span>
@@ -1786,23 +1837,14 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
                     {formatTime(conv.createdAt)}
                   </span>
                 </div>
-                {editingConversationId !== conv.id && (
-                  <button
-                    className="chat-history-rename-btn"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setEditingConversationId(conv.id)
-                      setEditingTitle(conv.title)
-                    }}
-                    title="Rename conversation"
-                  >
-                    ✎
-                  </button>
-                )}
                 <button
                   className="chat-history-delete"
                   onClick={(e) => {
                     e.stopPropagation()
+                    if (clickTimerRef.current) {
+                      clearTimeout(clickTimerRef.current)
+                      clickTimerRef.current = null
+                    }
                     onDeleteConversation(conv.id)
                   }}
                   title="Delete conversation"

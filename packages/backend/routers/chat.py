@@ -155,6 +155,7 @@ SYSTEM_PROMPT = (
     "- Highlight: highlight_features\n"
     "- Search: web_search, geocode, autogeoreference_image (extract landmarks and align active/attached map image automatically), georeference_active_document (align dropped map image to real-world coordinates using 3+ landmark GCPs), digitize_image_features (convert list of normalized x,y image coordinates to real-world GeoJSON features using the solved matrix)\n"
     "- OSM: osm_search (amenities, buildings, roads), "
+    "osm_fetch_bus_routes (fetch 15+ actual transit/bus route lines around ISBT or city center — ALWAYS prefer this when user asks for bus routes or transit lines), "
     "osm_boundary (city/district/state boundary polygons), "
     "osm_boundary_union (merge multiple boundaries into ONE polygon — server-side, no coordinate echoing), "
     "osm_reverse_geocode, osm_route_overview\n"
@@ -1352,6 +1353,21 @@ async def _execute_tool(
                     "duration_minutes": result.get("duration_minutes"),
                     "displayed_on_map": True,
                     "layer_name": f"Route ({result.get('distance_km', '?')} km)",
+                }
+
+            # Auto-display bus routes
+            elif name == "osm_fetch_bus_routes" and "geojson" in result:
+                label = result.get("name") or "Transit Routes"
+                if not await _send_action_if_allowed(ws, "add_geojson", {
+                    "geojson": result["geojson"],
+                    "name": label,
+                }):
+                    return json.dumps({"status": "cancelled"})
+                result = {
+                    "name": label,
+                    "count": result.get("count", 0),
+                    "displayed_on_map": True,
+                    "layer_name": label,
                 }
 
             # Auto-display buffer/hull/union

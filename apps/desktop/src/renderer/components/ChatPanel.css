@@ -30,6 +30,27 @@
   white-space: nowrap;
   max-width: 60%;
   user-select: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.chat-header-title:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.05));
+}
+
+.chat-header-rename-input {
+  background: var(--input-bg, #1a1a26);
+  border: 1px solid var(--accent, #89b4fa);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 3px 8px;
+  outline: none;
+  max-width: 60%;
+  box-sizing: border-box;
 }
 
 .chat-new-btn-header {
@@ -171,30 +192,6 @@
 .chat-history-delete:hover {
   color: var(--danger);
   background: rgba(243, 139, 168, 0.1);
-}
-
-.chat-history-rename-btn {
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  font-size: 12px;
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
-  opacity: 0;
-  transition: all 0.15s;
-  flex-shrink: 0;
-  line-height: 1;
-}
-
-.chat-history-item:hover .chat-history-rename-btn {
-  opacity: 0.6;
-}
-
-.chat-history-rename-btn:hover {
-  opacity: 1 !important;
-  color: var(--accent);
-  background: rgba(137, 180, 250, 0.1);
 }
 
 .chat-history-rename-input {

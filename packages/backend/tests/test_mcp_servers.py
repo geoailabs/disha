@@ -89,3 +89,39 @@ async def test_zoning_server_functional():
     res = await server.execute("analyze_zones", {"geojson": geojson_zones})
     assert "error" not in res
     assert "zones" in res or "summary" in res or "breakdown" in res or "status" in res
+
+@pytest.mark.asyncio
+async def test_osm_server_bus_routes():
+    from mcp_servers.osm_server import OSMServer
+    server = OSMServer()
+    decls = server.get_declarations()
+    names = {d.name for d in decls}
+    assert "osm_fetch_bus_routes" in names
+
+    # Execute osm_fetch_bus_routes (mocked Overpass post)
+    from unittest.mock import patch
+    with patch("mcp_servers.osm_server._overpass_post") as mock_post:
+        mock_post.return_value = {
+            "elements": [
+                {
+                    "type": "relation",
+                    "tags": {"ref": "43", "name": "ISBT 43 - Sector 17", "operator": "CTU"},
+                    "members": [
+                        {
+                            "type": "way",
+                            "geometry": [
+                                {"lat": 30.7107, "lon": 76.7366},
+                                {"lat": 30.7150, "lon": 76.7400}
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+        res = await server.execute("osm_fetch_bus_routes", {"lat": 30.7107, "lng": 76.7366, "limit": 15})
+        assert res["status"] == "success"
+        assert res["count"] == 1
+        assert "geojson" in res
+        assert len(res["geojson"]["features"]) == 1
+        assert res["geojson"]["features"][0]["properties"]["route_ref"] == "43"
+
