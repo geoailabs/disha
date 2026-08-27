@@ -172,7 +172,8 @@ SYSTEM_PROMPT = (
     "gis_intersection (overlap of A & B), gis_difference (A minus B), "
     "gis_clip (crop a layer to a polygon), gis_dissolve (merge features, "
     "optionally by a property), gis_nearest (closest feature to a point), "
-    "gis_spatial_join (tag points with the polygon they fall in)\n"
+    "gis_spatial_join (tag points with the polygon they fall in), "
+    "gis_filter (filter features from a loaded layer or dataset by attribute values e.g. district/state names, and render a new filtered layer on the map)\n"
     "- Bookmarks: save_bookmark, go_to_bookmark, export_region_clip\n"
     "- Zoning: analyze_zones, detect_zone_overlaps\n"
     "- Demographics & Employment: get_demographics (estimate population), project_population (forecast population growth), get_employment_density (estimate baseline jobs using custom TAZ grids or local multi-source proxy), project_employment (forecast future job growth and land demand area in hectares)\n"
@@ -248,8 +249,8 @@ SYSTEM_PROMPT = (
     "call. Do NOT call osm_boundary multiple times and then try gis_union — gis_union requires you to "
     "echo every coordinate as arguments, which is slow and unreliable.\n"
     "10. AIR QUALITY: prefer get_air_quality_google (per-pollutant breakdown, AQI, health "
-    "recommendations). Fall back to get_air_quality (Open-Meteo) only if Google returns "
-    "upstream_unavailable.\n"
+    "recommendations). If Google returns an error, HTTP 403, or upstream_unavailable, IMMEDIATELY "
+    "call get_air_quality (Open-Meteo, keyless fallback) so the user always receives live PM2.5, PM10, and AQI metrics.\n"
     "11. AMBIGUOUS PLACE NAMES: if the user types a partial or ambiguous place name, call "
     "places_autocomplete first to get candidate place_ids, then place_details on the best match "
     "to resolve to coordinates. Skip this for unambiguous queries — geocode is faster.\n"
@@ -290,7 +291,9 @@ SYSTEM_PROMPT = (
     "(using osm_boundary or osm_boundary_union), always mention explicitly in your chat response "
     "which administrative level (e.g., admin_level=5 for district/county, admin_level=8 for city/municipality) "
     "was used or chosen.\n"
-    "19. JUNCTIONS AND POI PINNING: When pinning a specific point of interest, landmark, chowk, junction, or address (like 'Fountain Chowk' or 'Airport Chowk'), ALWAYS first call the `geocode` tool with the full descriptive name and containing context (e.g. 'Fountain Chowk, Sector 43, Chandigarh') to resolve its exact point coordinate. DO NOT call `osm_boundary` or `osm_search` for a specific junction/chowk unless you want to search for adjacent amenities or the city boundary. To display the pinned point on the map, call `add_marker` at the resolved coordinate. When the user asks to route/cross through waypoints, ensure each waypoint is geocoded and explicitly passed in the routing tool's `waypoints` argument, and pass the corresponding color or label if customized."
+    "19. JUNCTIONS AND POI PINNING: When pinning a specific point of interest, landmark, chowk, junction, or address (like 'Fountain Chowk' or 'Airport Chowk'), ALWAYS first call the `geocode` tool with the full descriptive name and containing context (e.g. 'Fountain Chowk, Sector 43, Chandigarh') to resolve its exact point coordinate. DO NOT call `osm_boundary` or `osm_search` for a specific junction/chowk unless you want to search for adjacent amenities or the city boundary. To display the pinned point on the map, call `add_marker` at the resolved coordinate. When the user asks to route/cross through waypoints, ensure each waypoint is geocoded and explicitly passed in the routing tool's `waypoints` argument, and pass the corresponding color or label if customized.\n"
+    "20. AUTOMATIC ARTIFACT PERSISTENCE: Whenever you generate ANY successful substantive planning report, summary card, weather & air quality forecast, demographic profile, site suitability analysis, or structured findings in chat, you MUST execute the `create_artifact` tool call (with a descriptive title, full markdown content, and artifact_type='report' or 'note') so that the information is automatically saved and cataloged in the user's Artifacts panel. NEVER save error messages, tool failure alerts, failed request notes, or clarifying questions as artifacts.\n"
+    "21. ATTRIBUTE FILTERING & VECTOR SUBSETS: When the user asks to filter/extract/isolate specific features from a loaded layer or dataset (e.g. 'filter coastal districts in Tamil Nadu and Kerala', 'show only commercial parcels', 'extract expressways'), ALWAYS call `gis_filter` with the layer_name or path, target values array, and output_layer_name. Do NOT try to highlight features one by one, do NOT paste raw geometries in chat, and do NOT claim you cannot filter without asking the user for a file."
 )
 
 
@@ -1189,6 +1192,76 @@ async def _execute_tool(
                 }
                 return json.dumps(clean)
 
+            # Auto-save employment projection report as an Artifact
+            if name == "project_employment" and result.get("status") == "success":
+                report_md = result.get("report", "")
+                if report_md:
+                    place_name = (result.get("place_name") or "").strip()
+                    art_title = f"Employment Projection – {place_name}" if place_name else "Employment Projection"
+                    try:
+                        from tools.artifact_store import save_artifact as _save_artifact
+                        _save_artifact(
+                            title=art_title,
+                            artifact_type="report",
+                            format="markdown",
+                            content=report_md,
+                            workspace=map_context.get("workspace") if map_context else None,
+                        )
+                        await _send_action_if_allowed(ws, "refresh_artifacts", {})
+                    except Exception as _ae:
+                        print(f"[project_employment] artifact save failed: {_ae}")
+
+            # Auto-save GTFS transit service report as an Artifact
+            if name == "analyze_gtfs_service" and result.get("status") == "success":
+                report_md = result.get("report") or result.get("summary", "")
+                if report_md:
+                    try:
+                        from tools.artifact_store import save_artifact as _save_artifact
+                        _save_artifact(
+                            title=f"GTFS Transit Service Analysis – {result.get('feed_name', 'Report')}",
+                            artifact_type="report",
+                            format="markdown",
+                            content=report_md,
+                            workspace=map_context.get("workspace") if map_context else None,
+                        )
+                        await _send_action_if_allowed(ws, "refresh_artifacts", {})
+                    except Exception as _ae:
+                        print(f"[analyze_gtfs_service] artifact save failed: {_ae}")
+
+            # Auto-save Street Network analysis report as an Artifact
+            if name == "analyze_street_network" and result.get("status") == "success":
+                report_md = result.get("report") or result.get("summary", "")
+                if report_md:
+                    try:
+                        from tools.artifact_store import save_artifact as _save_artifact
+                        _save_artifact(
+                            title=f"Street Network & Bottleneck Analysis",
+                            artifact_type="analysis",
+                            format="markdown",
+                            content=report_md,
+                            workspace=map_context.get("workspace") if map_context else None,
+                        )
+                        await _send_action_if_allowed(ws, "refresh_artifacts", {})
+                    except Exception as _ae:
+                        print(f"[analyze_street_network] artifact save failed: {_ae}")
+
+            # Auto-save Emissions / Scenario evaluation report as an Artifact
+            if name in ("estimate_scenario_emissions", "compare_scenarios") and result.get("status") == "success":
+                report_md = result.get("report") or result.get("summary", "")
+                if report_md:
+                    try:
+                        from tools.artifact_store import save_artifact as _save_artifact
+                        _save_artifact(
+                            title=f"Scenario Emissions & Air Quality Assessment",
+                            artifact_type="report",
+                            format="markdown",
+                            content=report_md,
+                            workspace=map_context.get("workspace") if map_context else None,
+                        )
+                        await _send_action_if_allowed(ws, "refresh_artifacts", {})
+                    except Exception as _ae:
+                        print(f"[{name}] artifact save failed: {_ae}")
+
             # Auto-display osm_search result on map
             if name == "osm_search" and "geojson" in result and result.get("count", 0) > 0:
                 label = f"{args.get('feature_value', 'features')} ({args.get('feature_type', '')})"
@@ -1272,9 +1345,9 @@ async def _execute_tool(
                         trimmed[k] = result[k]
                 result = trimmed
 
-            # Auto-display osm_boundary on map. Keep geometry/centroid/bbox in
+            # Auto-display osm_boundary on map. Keep geometry/centroid/bbox/area in
             # the model-visible result so follow-up tools (gis_area, gis_buffer,
-            # gis_point_in_polygon) can chain on the boundary.
+            # gis_point_in_polygon) or chat responses have exact numbers immediately.
             elif name == "osm_boundary" and "geojson" in result:
                 label = f"{args.get('name', 'Boundary')} boundary"
                 if not await _send_action_if_allowed(ws, "add_geojson", {"geojson": result["geojson"], "name": label}):
@@ -1284,6 +1357,13 @@ async def _execute_tool(
                     "displayed_on_map": True,
                     "layer_name": label,
                 }
+                if "area_km2" in result:
+                    model_result["area_km2"] = result["area_km2"]
+                if "area_hectares" in result:
+                    model_result["area_hectares"] = result["area_hectares"]
+                if "centroid" in result:
+                    model_result["centroid"] = result["centroid"]
+
                 feats = result["geojson"].get("features") or []
                 geom = feats[0].get("geometry") if feats else None
                 if geom and _shape is not None:
@@ -1292,13 +1372,24 @@ async def _execute_tool(
                         if not g.is_empty:
                             minx, miny, maxx, maxy = g.bounds
                             c = g.centroid
-                            model_result["centroid"] = {"lat": round(c.y, 6), "lng": round(c.x, 6)}
+                            if "centroid" not in model_result:
+                                model_result["centroid"] = {"lat": round(c.y, 6), "lng": round(c.x, 6)}
                             model_result["bbox"] = {
                                 "south": round(miny, 6), "west": round(minx, 6),
                                 "north": round(maxy, 6), "east": round(maxx, 6),
                             }
                     except Exception:
                         pass
+
+                if geom and "area_km2" not in model_result:
+                    try:
+                        from tools.geo import geodesic_area_m2
+                        area_m2 = geodesic_area_m2(geom)
+                        model_result["area_km2"] = round(area_m2 / 1e6, 2)
+                        model_result["area_hectares"] = round(area_m2 / 1e4, 2)
+                    except Exception:
+                        pass
+
                 if geom:
                     model_result["geometry"] = geom
                 result = model_result

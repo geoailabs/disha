@@ -12,7 +12,9 @@ All inputs are EPSG:4326 lng/lat.
 from __future__ import annotations
 
 import asyncio
+import json
 import math
+from pathlib import Path
 
 from llm.base import ToolDeclaration
 from tools.geo import area_breakdown, geodesic_buffer
@@ -86,6 +88,7 @@ class GISServer:
         "gis_dissolve",
         "gis_nearest",
         "gis_spatial_join",
+        "gis_filter",
     }
 
     def get_declarations(self) -> list[ToolDeclaration]:
@@ -306,9 +309,62 @@ class GISServer:
                     "required": ["points", "polygons"],
                 },
             ),
+            ToolDeclaration(
+                name="gis_filter",
+                description=(
+                    "Filter features from a loaded map layer, GeoJSON dataset, or workspace spatial file "
+                    "by attribute values (e.g. district names, state name, zoning category, road class) and "
+                    "create a new filtered layer on the map. ALWAYS use this whenever the user asks to filter, "
+                    "extract, or isolate a subset of features (e.g. 'filter coastal districts in Tamil Nadu and Kerala', "
+                    "'show only residential zones', 'extract expressways')."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "layer_name": {
+                            "type": "string",
+                            "description": "Name of the loaded map layer to filter (e.g. 'India District Boundaries').",
+                        },
+                        "path": {
+                            "type": "string",
+                            "description": "Optional relative path to a GeoJSON / Shapefile / GeoPackage in the workspace.",
+                        },
+                        "property_name": {
+                            "type": "string",
+                            "description": "Property/column name to filter on (e.g. 'district', 'st_nm', 'state', 'zone_code'). If omitted, matches across all properties.",
+                        },
+                        "values": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "List of target values to match (e.g. ['Thiruvallur', 'Chennai', 'Kollam', 'Ernakulam']).",
+                        },
+                        "value": {
+                            "type": "string",
+                            "description": "Single target value to match.",
+                        },
+                        "operator": {
+                            "type": "string",
+                            "enum": ["in", "equals", "contains", "not_equals"],
+                            "description": "Comparison operator (default 'in').",
+                        },
+                        "output_layer_name": {
+                            "type": "string",
+                            "description": "Title/name for the new filtered layer (e.g. 'Coastal Districts (Tamil Nadu & Kerala)').",
+                        },
+                        "geojson": {
+                            "type": "object",
+                            "description": "Optional GeoJSON FeatureCollection to filter directly.",
+                        },
+                    },
+                    "required": ["output_layer_name"],
+                },
+            ),
         ]
 
     async def execute(self, tool_name: str, args: dict) -> dict:
+        if tool_name == "gis_filter":
+            return await self._gis_filter(args)
+
         # Handlers are sync + CPU-bound — defer to a thread so we don't block the loop.
         dispatch = {
             "gis_buffer": self._buffer,
@@ -656,3 +712,210 @@ class GISServer:
                     coords.extend(ring)
 
         return coords
+
+    async def _gis_filter(self, args: dict) -> dict:
+        layer_name = (args.get("layer_name") or "").strip()
+        path = (args.get("path") or "").strip()
+        prop_name = (args.get("property_name") or "").strip().lower()
+        values = args.get("values") or []
+        value = args.get("value")
+        operator = (args.get("operator") or "in").strip().lower()
+        output_layer_name = (args.get("output_layer_name") or f"Filtered {layer_name or 'Layer'}").strip()
+        geojson_input = args.get("geojson")
+
+        ws = args.get("_ws")
+        map_context = args.get("_map_context") or {}
+        workspace = map_context.get("workspace") or args.get("workspace") or ""
+
+        # 1. Normalize filter targets
+        target_list = []
+        if isinstance(values, list) and values:
+            target_list.extend([str(v).strip() for v in values if v is not None])
+        if value is not None and str(value).strip():
+            target_list.append(str(value).strip())
+
+        if not target_list:
+            return {"error": "Please provide 'values' or 'value' to filter features by."}
+
+        target_set = {v.lower() for v in target_list}
+
+        # 2. Resolve features / source
+        features: list[dict] = []
+        source_name = layer_name or path or "GeoJSON"
+
+        if geojson_input:
+            if isinstance(geojson_input, dict):
+                features = geojson_input.get("features", [geojson_input] if geojson_input.get("type") == "Feature" else [])
+        elif path:
+            full_path = Path(path)
+            if workspace and not full_path.is_absolute():
+                full_path = Path(workspace) / path
+            if full_path.exists():
+                try:
+                    if full_path.suffix.lower() in (".geojson", ".json"):
+                        data = json.loads(full_path.read_text(encoding="utf-8"))
+                        features = data.get("features", [])
+                    else:
+                        from tools.vector_convert import to_geojson
+                        data = to_geojson(str(full_path))
+                        features = data.get("features", [])
+                except Exception as e:
+                    return {"error": f"Failed to read file '{path}': {e}"}
+            else:
+                return {"error": f"File not found: {full_path}"}
+        elif layer_name and map_context:
+            layers = map_context.get("layers", [])
+            target_layer = None
+            for l in layers:
+                if l.get("name", "").lower() == layer_name.lower() or layer_name.lower() in l.get("name", "").lower():
+                    target_layer = l
+                    break
+
+            if target_layer:
+                file_path = target_layer.get("filePath")
+                if file_path:
+                    fp = Path(file_path)
+                    if workspace and not fp.is_absolute():
+                        fp = Path(workspace) / file_path
+                    if fp.exists():
+                        try:
+                            if fp.suffix.lower() in (".geojson", ".json"):
+                                data = json.loads(fp.read_text(encoding="utf-8"))
+                                features = data.get("features", [])
+                            else:
+                                from tools.vector_convert import to_geojson
+                                data = to_geojson(str(fp))
+                                features = data.get("features", [])
+                        except Exception:
+                            pass
+
+                if not features and "geometry_data" in target_layer:
+                    geom_data = target_layer["geometry_data"]
+                    if isinstance(geom_data, dict):
+                        features = geom_data.get("features", [geom_data] if geom_data.get("type") == "Feature" else [])
+
+        # Fallback: scan workspace for matching .geojson files if features is still empty
+        if not features and workspace:
+            ws_dir = Path(workspace)
+            candidates = list(ws_dir.glob("*.geojson")) + list(ws_dir.glob("*.json"))
+            for cand in candidates:
+                if "project.json" in cand.name or "documents.json" in cand.name:
+                    continue
+                if (layer_name and layer_name.lower() in cand.stem.lower()) or "district" in cand.stem.lower() or "state" in cand.stem.lower():
+                    try:
+                        data = json.loads(cand.read_text(encoding="utf-8"))
+                        if isinstance(data, dict) and data.get("type") == "FeatureCollection":
+                            features = data.get("features", [])
+                            source_name = cand.name
+                            break
+                    except Exception:
+                        continue
+
+        if not features:
+            return {
+                "error": f"Could not find vector features for layer '{layer_name or path}'. Ensure the dataset is loaded or present in the workspace."
+            }
+
+        # 3. Filter features
+        matched_features = []
+        all_props_keys = set()
+        matched_names = []
+
+        for f in features:
+            if not isinstance(f, dict):
+                continue
+            props = f.get("properties") or {}
+            for k in props:
+                all_props_keys.add(k)
+
+            is_match = False
+            if prop_name:
+                val = None
+                # Check exact property key match first (e.g. 'state' must match 'state', not 'statecode')
+                for k, v in props.items():
+                    if k.lower() == prop_name:
+                        val = v
+                        break
+                if val is None:
+                    # Fallback to substring key match only if exact key not found
+                    for k, v in props.items():
+                        if prop_name in k.lower():
+                            val = v
+                            break
+                if val is not None:
+                    str_val = str(val).strip().lower()
+                    if operator == "equals":
+                        is_match = str_val in target_set
+                    elif operator == "not_equals":
+                        is_match = str_val not in target_set
+                    elif operator == "contains":
+                        is_match = any(t in str_val or str_val in t for t in target_set)
+                    else:  # default 'in'
+                        is_match = str_val in target_set or any(t in str_val or str_val in t for t in target_set)
+            else:
+                for v in props.values():
+                    if v is not None:
+                        str_v = str(v).strip().lower()
+                        if str_v in target_set or any(t in str_v or str_v in t for t in target_set):
+                            is_match = True
+                            break
+
+            if is_match:
+                matched_features.append(f)
+                name_val = (
+                    props.get("district") or props.get("district_name") or props.get("dtname")
+                    or props.get("name") or props.get("st_nm") or props.get("zone_code") or str(props)[:30]
+                )
+                matched_names.append(str(name_val))
+
+        if not matched_features:
+            return {
+                "status": "error",
+                "error": f"No features in '{source_name}' matched the filter criteria ({target_list[:8]}).",
+                "available_properties": sorted(list(all_props_keys))[:20],
+                "searched_count": len(features),
+            }
+
+        # 4. Assemble filtered FeatureCollection and bounding box
+        out_fc = {"type": "FeatureCollection", "features": matched_features}
+
+        all_coords = []
+        for mf in matched_features:
+            geom = mf.get("geometry")
+            if geom:
+                all_coords.extend(self._extract_all_coords(geom))
+        bbox = None
+        if all_coords:
+            lons = [c[0] for c in all_coords if isinstance(c, (list, tuple)) and len(c) >= 2]
+            lats = [c[1] for c in all_coords if isinstance(c, (list, tuple)) and len(c) >= 2]
+            if lons and lats:
+                bbox = [min(lons), min(lats), max(lons), max(lats)]
+
+        # 5. Save & add to map
+        file_saved = None
+        if workspace:
+            safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in output_layer_name.lower())
+            out_file = Path(workspace) / f"{safe_name}.geojson"
+            out_file.write_text(json.dumps(out_fc, ensure_ascii=False), encoding="utf-8")
+            file_saved = str(out_file)
+            if ws:
+                from tools.action_utils import send_action
+                await send_action(ws, "add_geojson_file", {"path": str(out_file), "name": output_layer_name})
+                if bbox:
+                    await send_action(ws, "fit_bounds", {"bounds": bbox})
+        else:
+            if ws:
+                from tools.action_utils import send_action
+                await send_action(ws, "add_geojson", {"geojson": out_fc, "name": output_layer_name})
+                if bbox:
+                    await send_action(ws, "fit_bounds", {"bounds": bbox})
+
+        return {
+            "status": "success",
+            "matched_count": len(matched_features),
+            "output_layer_name": output_layer_name,
+            "file_path": file_saved,
+            "matched_features": matched_names[:50],
+            "bounds": bbox,
+            "message": f"Filtered {len(matched_features)} features and added layer '{output_layer_name}' to the map.",
+        }

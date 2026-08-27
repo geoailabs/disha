@@ -151,11 +151,35 @@ def save_artifact(
         # content must be non-NULL per DB schema; store empty string
         final_content = ""
 
-    # --- Insert row first to get auto-increment id ---
+    # --- Insert or update row ---
     meta_json = json.dumps(final_meta) if final_meta is not None else None
 
     conn = get_connection(workspace)
     try:
+        # Check for existing artifact with the same title and artifact_type
+        if format != "image":
+            existing = conn.execute(
+                "SELECT id, title, artifact_type, format, content, meta, file_path, created_at, updated_at "
+                "FROM artifacts WHERE title = ? AND artifact_type = ? ORDER BY id DESC LIMIT 1",
+                (title, artifact_type),
+            ).fetchone()
+            if existing:
+                # If content and format are identical, return existing artifact without creating duplicates
+                if (existing["content"] or "") == final_content and existing["format"] == format:
+                    return dict(existing)
+                # Same title and type with updated content -> update in place
+                conn.execute(
+                    "UPDATE artifacts SET content = ?, format = ?, meta = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (final_content, format, meta_json, existing["id"]),
+                )
+                conn.commit()
+                updated = conn.execute(
+                    "SELECT id, title, artifact_type, format, content, meta, file_path, created_at, updated_at "
+                    "FROM artifacts WHERE id = ?",
+                    (existing["id"],),
+                ).fetchone()
+                return dict(updated)
+
         cursor = conn.execute(
             "INSERT INTO artifacts (title, content, artifact_type, format, meta) "
             "VALUES (?, ?, ?, ?, ?)",

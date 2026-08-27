@@ -13,6 +13,34 @@ import json as _json
 import httpx
 from llm.base import ToolDeclaration
 from tools import cache, http as http_client
+from tools.geo import geodesic_area_m2
+
+try:
+    from shapely.geometry import shape
+    HAS_SHAPELY = True
+except ImportError:
+    HAS_SHAPELY = False
+    shape = None
+
+
+def _extract_name_stem(name: str) -> str:
+    """Strip common administrative or conservation suffixes to find base name."""
+    import re
+    cleaned = (name or "").strip()
+    suffixes = [
+        r"\bBiosphere Reserve\b",
+        r"\bNational Park\b",
+        r"\bTiger Reserve\b",
+        r"\bWildlife Sanctuary\b",
+        r"\bNature Reserve\b",
+        r"\bBird Sanctuary\b",
+        r"\bForest Reserve\b",
+        r"\bSanctuary\b",
+        r"\bReserve\b",
+    ]
+    for pattern in suffixes:
+        cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE).strip()
+    return cleaned
 
 
 # Multiple Overpass mirrors. The main instance frequently rate-limits (429)
@@ -538,7 +566,7 @@ out skel qt;
             return {"error": f"Unexpected error: {e}", "code": "internal"}
 
     async def _fetch_boundary(self, args: dict) -> dict:
-        name = _sanitize_osm_name(args.get("name", "")).strip()
+        name = _sanitize_osm_name(args.get("name") or args.get("place_name") or args.get("place") or args.get("query") or "").strip()
         place_type = _sanitize_osm_token((args.get("place_type") or "").strip())
         parent = _sanitize_osm_name((args.get("parent") or "").strip())
         country_code = _sanitize_osm_token((args.get("country_code") or "").strip())
@@ -575,51 +603,139 @@ out skel qt;
                         f"or call osm_search(feature_type='place', feature_value='suburb') near the city center."
                     )}
             else:
-                admin_level_int = int(args.get("admin_level", 4))
+                has_explicit_admin_level = "admin_level" in args and args["admin_level"] is not None
+                admin_level_int = int(args["admin_level"]) if has_explicit_admin_level else 4
                 admin_level = str(admin_level_int)
-                overpass_query = (
-                    f'[out:json][timeout:30];'
-                    f'relation["name"~"^{name}$",i]["admin_level"="{admin_level}"]'
-                    f'["boundary"="administrative"];'
-                    f'out geom;'
-                )
+                stem = _extract_name_stem(name)
 
-                if country_code:
-                    # 1) geoBoundaries: clean MultiPolygon, no way-merge needed,
-                    #    aggressively cached (30-day TTL).
-                    geojson_feature = await self._geoboundaries_boundary(
-                        name=name,
-                        country_code=country_code,
-                        admin_level=admin_level_int,
+                if has_explicit_admin_level:
+                    overpass_query = (
+                        f'[out:json][timeout:30];'
+                        f'relation["name"~"^{name}$",i]["admin_level"="{admin_level}"]'
+                        f'["boundary"="administrative"];'
+                        f'out geom;'
                     )
-                    # 2) Nominatim: handles arbitrary names (sub-national places
-                    #    geoBoundaries doesn't ship — sectors, neighborhoods).
-                    if not geojson_feature:
-                        geojson_feature = await self._nominatim_boundary(
-                            name=name, country_code=country_code, parent=parent,
+                    if country_code:
+                        geojson_feature = await self._geoboundaries_boundary(
+                            name=name,
+                            country_code=country_code,
+                            admin_level=admin_level_int,
                         )
-                    # 3) Overpass: last resort, with the way-merge fallback path.
-                    if not geojson_feature:
+                        if not geojson_feature:
+                            geojson_feature = await self._nominatim_boundary(
+                                name=name, country_code=country_code, parent=parent,
+                            )
+                        if not geojson_feature:
+                            geojson_feature = await self._overpass_boundary(overpass_query)
+                    else:
                         geojson_feature = await self._overpass_boundary(overpass_query)
+                        if not geojson_feature:
+                            geojson_feature = await self._nominatim_boundary(
+                                name=name, country_code="", parent=parent,
+                            )
                 else:
-                    geojson_feature = await self._overpass_boundary(overpass_query)
-                    if not geojson_feature:
+                    # Generic / Natural / Protected Area / Admin boundary lookup
+                    # 1. Try Nominatim with exact name
+                    geojson_feature = await self._nominatim_boundary(
+                        name=name, country_code=country_code, parent=parent
+                    )
+                    # 2. Try Nominatim with stem if different
+                    if not geojson_feature and stem and stem != name:
                         geojson_feature = await self._nominatim_boundary(
-                            name=name, country_code="", parent=parent,
+                            name=stem, country_code=country_code, parent=parent
                         )
+                    # 3. Try geoBoundaries admin_level=4 (if country_code)
+                    if not geojson_feature and country_code:
+                        geojson_feature = await self._geoboundaries_boundary(
+                            name=name,
+                            country_code=country_code,
+                            admin_level=4,
+                        )
+                    # 4. If not found or tiny in country, try global Nominatim (handles regional/cross-border features like Sundarbans)
+                    is_tiny = False
+                    if geojson_feature and HAS_SHAPELY:
+                        try:
+                            g = geojson_feature.get("geometry")
+                            if g:
+                                a = geodesic_area_m2(g) / 1e6
+                                if a < 0.1:
+                                    is_tiny = True
+                        except Exception:
+                            pass
+
+                    if (not geojson_feature or is_tiny) and country_code:
+                        global_res = await self._nominatim_boundary(name=name, country_code="", parent=parent)
+                        if not global_res and stem and stem != name:
+                            global_res = await self._nominatim_boundary(name=stem, country_code="", parent=parent)
+                        if global_res:
+                            geojson_feature = global_res
+
+                    # 5. Try Overpass for nature reserves, national parks, protected areas, or administrative relations
+                    is_tiny = False
+                    if geojson_feature and HAS_SHAPELY:
+                        try:
+                            g = geojson_feature.get("geometry")
+                            if g:
+                                a = geodesic_area_m2(g) / 1e6
+                                if a < 0.1:
+                                    is_tiny = True
+                        except Exception:
+                            pass
+
+                    if not geojson_feature or is_tiny:
+                        candidates = [name]
+                        if stem and stem != name:
+                            candidates.append(stem)
+                        for target_name in candidates:
+                            op_q = (
+                                f'[out:json][timeout:30];'
+                                f'('
+                                f'  relation["name"~"^{target_name}",i]["boundary"~"^(administrative|protected_area|national_park|forest)$"];'
+                                f'  relation["name"~"^{target_name}",i]["leisure"="nature_reserve"];'
+                                f'  way["name"~"^{target_name}",i]["boundary"~"^(administrative|protected_area|national_park|forest)$"];'
+                                f');'
+                                f'out geom;'
+                            )
+                            op_res = await self._overpass_boundary(op_q)
+                            if op_res:
+                                geojson_feature = op_res
+                                break
 
                 if not geojson_feature:
                     return {"error": (
-                        f"No administrative boundary for '{name}' at admin_level {admin_level}. "
+                        f"No boundary found for '{name}'. "
                         f"If this is a sector/neighborhood, retry with place_type='suburb' "
-                        f"and parent='<city>'. Otherwise try a different admin_level or pass country_code."
+                        f"and parent='<city>'. Otherwise try specifying an admin_level or country_code."
                     )}
 
+            # Calculate centroid and geodesic area if geometry exists
+            centroid_dict = None
+            area_km2 = None
+            area_ha = None
+            geom = geojson_feature.get("geometry")
+            if geom and HAS_SHAPELY:
+                try:
+                    s = shape(geom)
+                    if not s.is_empty:
+                        c = s.centroid
+                        centroid_dict = {"lat": round(c.y, 6), "lng": round(c.x, 6)}
+                        area_m2 = geodesic_area_m2(geom)
+                        area_km2 = round(area_m2 / 1e6, 2)
+                        area_ha = round(area_m2 / 1e4, 2)
+                except Exception:
+                    pass
+
             geojson = {"type": "FeatureCollection", "features": [geojson_feature]}
-            return {
+            res = {
                 "geojson": geojson,
                 "name": geojson_feature.get("properties", {}).get("name", name),
             }
+            if centroid_dict:
+                res["centroid"] = centroid_dict
+            if area_km2 is not None:
+                res["area_km2"] = area_km2
+                res["area_hectares"] = area_ha
+            return res
         except Exception as e:
             return {"error": str(e)}
 
@@ -631,7 +747,7 @@ out skel qt;
 
         # Fetch all boundaries concurrently. Each _fetch_boundary call hits
         # Nominatim and/or Overpass on its own and is independent of the others.
-        place_args = [p if isinstance(p, dict) else {} for p in places]
+        place_args = [p if isinstance(p, dict) else {"name": str(p)} for p in places]
         results = await asyncio.gather(
             *(self._fetch_boundary(p) for p in place_args),
             return_exceptions=True,
@@ -870,8 +986,8 @@ out skel qt;
         if not results:
             return None
 
-        # Restrict strictly to boundary, place, and landuse features (prevent lakes, buildings, shops, etc.)
-        allowed_classes = {"boundary", "place", "landuse"}
+        # Restrict strictly to boundary, place, landuse, leisure, and natural features
+        allowed_classes = {"boundary", "place", "landuse", "leisure", "natural"}
         filtered_results = [
             r for r in results 
             if r.get("class") in allowed_classes

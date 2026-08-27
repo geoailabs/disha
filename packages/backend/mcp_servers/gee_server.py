@@ -247,11 +247,14 @@ class GEEServer:
             ToolDeclaration(
                 name="get_dem_layer",
                 description=(
-                    "Add a Digital Elevation Model (DEM) raster to the map. "
+                    "Add a Digital Elevation Model (DEM) or terrain analysis raster to the map. "
                     "Sources: 'srtm' (USGS SRTM 30m, near-global), 'copernicus' (Copernicus DEM 30m, higher accuracy), "
-                    "'nasadem' (NASA DEM 30m, void-filled SRTM). "
-                    "The layer is colour-ramped from blue (sea level) to red (high elevation). "
-                    "Use for slope analysis, flood risk, watershed delineation, and terrain visualization."
+                    "'nasadem' (NASA DEM 30m, void-filled SRTM).\n\n"
+                    "Modes:\n"
+                    "  • 'elevation' (default): Colour-ramped from sea level (blue) to peaks (white).\n"
+                    "  • 'hillshade': Shaded relief raster displaying 3D terrain ridges, sun illumination, valleys, and slope textures.\n"
+                    "  • 'slope': Terrain steepness in degrees (0° flat to 45°+ steep).\n\n"
+                    "Use for slope analysis, flood risk, watershed delineation, and 3D terrain visualization."
                 ),
                 parameters={
                     "type": "object",
@@ -260,6 +263,11 @@ class GEEServer:
                             "type": "string",
                             "enum": ["srtm", "copernicus", "nasadem"],
                             "description": "'srtm' = USGS SRTMGL1_003, 'copernicus' = Copernicus DEM GLO-30, 'nasadem' = NASA DEM HGT_001",
+                        },
+                        "mode": {
+                            "type": "string",
+                            "enum": ["elevation", "hillshade", "slope"],
+                            "description": "Visualization mode: 'elevation' (colour ramp), 'hillshade' (3D shaded relief / ridges), 'slope' (steepness in degrees). Default is 'elevation'.",
                         },
                         "max_elevation": {"type": "number", "description": "Max elevation (m) for colour ramp. Default 3000."},
                         "title": {"type": "string", "description": "Layer name for the map panel"},
@@ -533,35 +541,77 @@ class GEEServer:
             return {"error": f"Unknown source '{source}'. Use: srtm, copernicus, nasadem."}
 
         dataset_id, band, is_coll = _DEM_DATASETS[source]
-        vis = {
-            "bands": [band],
-            "min": 0,
-            "max": max_elev,
-            "palette": ["0000ff", "00aaff", "00ff00", "ffff00", "ff7f00", "ff0000", "ffffff"],
-            "palette_labels": ["0m", f"{int(max_elev * 0.16)}m", f"{int(max_elev * 0.33)}m", f"{int(max_elev * 0.5)}m", f"{int(max_elev * 0.66)}m", f"{int(max_elev * 0.83)}m", f"{int(max_elev)}m (Max)"],
-        }
+
+        mode = (args.get("mode") or "").strip().lower()
+        if not mode:
+            if "hillshade" in title.lower() or "relief" in title.lower():
+                mode = "hillshade"
+            elif "slope" in title.lower():
+                mode = "slope"
+            else:
+                mode = "elevation"
+
+        if mode == "hillshade":
+            vis = {
+                "bands": ["hillshade"],
+                "min": 0,
+                "max": 255,
+                "palette": ["000000", "777777", "ffffff"],
+                "palette_labels": ["Deep Shadow (0)", "Midtone (128)", "Illuminated Ridge (255)"],
+            }
+        elif mode == "slope":
+            vis = {
+                "bands": ["slope"],
+                "min": 0,
+                "max": 45,
+                "palette": ["2b83ba", "abdda4", "ffffbf", "fdae61", "d7191c"],
+                "palette_labels": ["0° (Flat)", "10° (Gentle)", "20° (Moderate)", "30° (Steep)", "45°+ (Very Steep)"],
+            }
+        else:
+            vis = {
+                "bands": [band],
+                "min": 0,
+                "max": max_elev,
+                "palette": ["0000ff", "00aaff", "00ff00", "ffff00", "ff7f00", "ff0000", "ffffff"],
+                "palette_labels": ["0m", f"{int(max_elev * 0.16)}m", f"{int(max_elev * 0.33)}m", f"{int(max_elev * 0.5)}m", f"{int(max_elev * 0.66)}m", f"{int(max_elev * 0.83)}m", f"{int(max_elev)}m (Max)"],
+            }
 
         try:
             import ee
 
             def build_image():
                 if is_coll:
-                    img = ee.ImageCollection(dataset_id).mosaic()
+                    raw_img = ee.ImageCollection(dataset_id).mosaic()
                 else:
-                    img = ee.Image(dataset_id)
-                result = ee.data.getMapId({"image": img, "visParams": vis})
+                    raw_img = ee.Image(dataset_id)
+
+                dem_band = raw_img.select(band)
+                if mode == "hillshade":
+                    processed = ee.Terrain.hillshade(dem_band)
+                elif mode == "slope":
+                    processed = ee.Terrain.slope(dem_band)
+                else:
+                    processed = dem_band
+
+                result = ee.data.getMapId({"image": processed, "visParams": vis})
                 return result["tile_fetcher"].url_format
 
             tile_url = await self._tile_url(build_image)
-            layer_title = title or f"DEM — {source.upper()} (0–{int(max_elev)} m)"
+            if mode == "hillshade":
+                layer_title = title or f"Shaded Relief (Hillshade) — {source.upper()}"
+            elif mode == "slope":
+                layer_title = title or f"Terrain Slope — {source.upper()} (0–45°)"
+            else:
+                layer_title = title or f"DEM — {source.upper()} (0–{int(max_elev)} m)"
+
             await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
             return {
                 "status": "success",
                 "source": source,
+                "mode": mode,
                 "dataset": dataset_id,
                 "message": (
-                    f"Elevation model '{layer_title}' added to map. "
-                    f"Colour ramp: blue=sea level → green → yellow → red={int(max_elev)}m → white=peaks."
+                    f"Terrain layer '{layer_title}' ({mode}) added to map."
                 ),
             }
 
