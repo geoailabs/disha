@@ -79,9 +79,9 @@ The chat panel on the right is the main control surface:
 | **Origin-Destination (OD) Flows** | `import_od_matrix`, `generate_gravity_od_matrix`, `calculate_mode_choice`, `visualize_od_flows` |
 | **ITS & Parking** | `optimize_traffic_signal`, `analyze_parking_requirements` |
 | **Emissions & AQI** | `estimate_scenario_emissions` |
-| **Google Earth Engine (GEE)** | `get_gee_layer`, `get_population_layer`, `get_dem_layer`, `get_land_cover`, `analyze_lulc_change`, `get_ndvi_layer` |
+| **Google Earth Engine (GEE)** | `get_gee_layer`, `get_population_layer`, `get_dem_layer`, `get_land_cover`, `analyze_lulc_change`, `analyze_land_use_zonal_stats` ($km^2$ & % breakdown), `extract_land_use_polygons` (vector GeoJSON extraction), `get_ndvi_layer` |
 | **DataMeet & Public Datasets** | `browse_datameet_catalog`, `import_datameet_boundary`, `import_public_dataset` |
-| **GTFS Transit** | `import_gtfs_feed`, `analyze_gtfs_service` |
+| **GTFS Transit** | `import_gtfs_feed` (local `.zip`/folder or URL), `analyze_gtfs_service`, `analyze_gtfs_schedules` (hourly headways & timetables), `analyze_transit_catchment` (400m/800m walking buffers) |
 | **WMS Servers** | `add_wms_layer`, `list_wms_layers` |
 | **Weather** | `get_weather`, `get_air_quality` |
 | **Search & geocode** | `web_search`, `geocode`, `measure_distance`, `measure_area` |

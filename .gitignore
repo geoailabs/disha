@@ -11,6 +11,8 @@ __pycache__/
 *.pyo
 *.spec.bak
 .DS_Store
+electron.vite.config.*.mjs
+
 
 # User & Runtime Workspace Data (Keep Repo Clean & Open-Source)
 .disha/

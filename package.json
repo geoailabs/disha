@@ -11,7 +11,7 @@
     "electron-winstaller"
   ],
   "scripts": {
-    "dev": "concurrently -k -n backend,desktop -c blue,green \"pnpm run dev:backend\" \"node -e \\\"setTimeout(() => {}, 2000)\\\" && pnpm run dev:desktop\"",
+    "dev": "concurrently -k -n backend,desktop -c blue,green \"pnpm run dev:backend\" \"pnpm run dev:desktop\"",
     "dev:desktop": "pnpm --filter @disha/desktop dev",
     "dev:backend": "node packages/backend/run-dev.js",
     "build": "pnpm --filter @disha/desktop build",

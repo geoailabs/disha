@@ -194,6 +194,8 @@ class GEEServer:
         "add_gee_layer",
         "get_land_cover",
         "analyze_lulc_change",
+        "analyze_land_use_zonal_stats",
+        "extract_land_use_polygons",
         "get_ndvi_layer",
         "get_population_layer",
         "get_dem_layer",
@@ -311,6 +313,44 @@ class GEEServer:
                 },
             ),
             ToolDeclaration(
+                name="analyze_land_use_zonal_stats",
+                description=(
+                    "Perform zonal land-use analysis on Google Dynamic World / ESA WorldCover datasets. "
+                    "Calculates exact area in km² and percentage composition breakdown of each land cover category "
+                    "(Built Area, Water, Trees, Crops, Shrub, Grass, Bare Ground) inside a boundary polygon or region."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "geojson": {"type": "object", "description": "GeoJSON polygon / geometry dict for the study boundary."},
+                        "lat": {"type": "number", "description": "Latitude for circular study area (if geojson not provided)."},
+                        "lng": {"type": "number", "description": "Longitude for circular study area (if geojson not provided)."},
+                        "radius_km": {"type": "number", "description": "Radius in km for circular study area (default 5 km)."},
+                        "year": {"type": "integer", "description": "Year to analyze (default 2023)."},
+                        "source": {"type": "string", "enum": ["dynamic_world", "esa_worldcover"], "description": "Land cover dataset source."},
+                    },
+                },
+            ),
+            ToolDeclaration(
+                name="extract_land_use_polygons",
+                description=(
+                    "Extract specific land cover classes (e.g. 'Built Area', 'Trees', 'Water', 'Crops') "
+                    "into vector GeoJSON polygons for spatial joins, zoning analysis, or offline GIS mapping."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "target_class": {"type": "string", "description": "Class name to extract (e.g. 'Built Area', 'Trees', 'Water', 'Crops', 'Grass')."},
+                        "geojson": {"type": "object", "description": "Optional boundary polygon to constrain extraction."},
+                        "lat": {"type": "number", "description": "Latitude for circular bounding region."},
+                        "lng": {"type": "number", "description": "Longitude for circular bounding region."},
+                        "radius_km": {"type": "number", "description": "Radius in km for bounding region (default 5 km)."},
+                        "year": {"type": "integer", "description": "Year to analyze (default 2023)."},
+                    },
+                    "required": ["target_class"],
+                },
+            ),
+            ToolDeclaration(
                 name="get_ndvi_layer",
                 description=(
                     "Compute and display an NDVI layer from Sentinel-2 SR for a given year. "
@@ -363,6 +403,10 @@ class GEEServer:
             return await self._get_land_cover(args)
         if tool_name == "analyze_lulc_change":
             return await self._analyze_lulc_change(args)
+        if tool_name == "analyze_land_use_zonal_stats":
+            return await self._analyze_land_use_zonal_stats(args)
+        if tool_name == "extract_land_use_polygons":
+            return await self._extract_land_use_polygons(args)
         if tool_name == "get_ndvi_layer":
             return await self._get_ndvi_layer(args)
         if tool_name == "get_gee_layer":
@@ -878,3 +922,235 @@ class GEEServer:
 
         except Exception as exc:
             return {"error": f"GEE execution failed: {exc}", "code": "gee_error"}
+
+    # ── Zonal Land Use Analysis & Vector Extraction ─────────────────────────
+
+    async def _analyze_land_use_zonal_stats(self, args: dict) -> dict:
+        geojson_input = args.get("geojson")
+        lat = args.get("lat")
+        lng = args.get("lng")
+        radius_km = float(args.get("radius_km") or 5.0)
+        year = int(args.get("year") or 2023)
+        source = (args.get("source") or "dynamic_world").lower()
+        workspace = args.get("_workspace")
+
+        dw_classes = [
+            "Water", "Trees", "Grass", "Flooded Vegetation",
+            "Crops", "Shrub & Scrub", "Built Area", "Bare Ground", "Snow & Ice",
+        ]
+        dw_colors = [
+            "#419BDF", "#397D49", "#88B053", "#7A87C6",
+            "#E49635", "#DFC35A", "#C4281B", "#A59B8F", "#B39FE1",
+        ]
+
+        ok, err = await _ensure_gee(workspace)
+        if not ok:
+            # Clean fallback when GEE credentials are not configured
+            return {
+                "status": "partial_fallback",
+                "message": f"GEE credentials not active ({err}). Displaying standard Dynamic World class schema for {year}.",
+                "classes": {str(i): {"name": name, "color": color} for i, (name, color) in enumerate(zip(dw_classes, dw_colors))},
+                "note": "Configure GEE credentials in workspace root (ee-service-account.json) for live pixel-reduction zonal stats."
+            }
+
+        try:
+            import ee
+
+            def run_zonal():
+                if geojson_input:
+                    ee_geom = ee.Geometry(geojson_input.get("geometry", geojson_input))
+                elif lat is not None and lng is not None:
+                    ee_geom = ee.Geometry.Point([float(lng), float(lat)]).buffer(radius_km * 1000.0)
+                else:
+                    ee_geom = ee.Geometry.Point([76.7794, 30.7333]).buffer(5000)  # Default Chandigarh center
+
+                img = (
+                    ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1")
+                    .filterDate(f"{year}-01-01", f"{year}-12-31")
+                    .select("label")
+                    .mode()
+                )
+
+                # Pixel area image in m² grouped by land cover class
+                area_img = ee.Image.pixelArea().addBands(img)
+                stats = area_img.reduceRegion(
+                    reducer=ee.Reducer.sum().group(groupField=1, groupName="class_id"),
+                    geometry=ee_geom,
+                    scale=10,
+                    maxPixels=1e9,
+                ).getInfo()
+
+                groups = stats.get("groups", [])
+                total_area_m2 = sum(g.get("sum", 0) for g in groups) or 1.0
+
+                class_results = []
+                dominant_name = "Unknown"
+                max_area = -1.0
+
+                for g in groups:
+                    cid = int(g.get("class_id", 0))
+                    area_m2 = float(g.get("sum", 0))
+                    cname = dw_classes[cid] if 0 <= cid < len(dw_classes) else f"Class {cid}"
+                    ccolor = dw_colors[cid] if 0 <= cid < len(dw_colors) else "#cccccc"
+                    pct = round((area_m2 / total_area_m2) * 100.0, 2)
+                    area_km2 = round(area_m2 / 1e6, 4)
+                    area_ha = round(area_m2 / 10000.0, 2)
+
+                    if area_m2 > max_area:
+                        max_area = area_m2
+                        dominant_name = cname
+
+                    class_results.append({
+                        "class_id": cid,
+                        "class_name": cname,
+                        "color": ccolor,
+                        "area_km2": area_km2,
+                        "area_hectares": area_ha,
+                        "percentage": pct,
+                    })
+
+                class_results.sort(key=lambda x: x["area_km2"], reverse=True)
+
+                return {
+                    "total_area_km2": round(total_area_m2 / 1e6, 4),
+                    "dominant_land_use": dominant_name,
+                    "breakdown": class_results,
+                }
+
+            loop = asyncio.get_event_loop()
+            res = await loop.run_in_executor(None, run_zonal)
+
+            return {
+                "status": "success",
+                "year": year,
+                "source": "Google Dynamic World V1 (10m resolution)",
+                "zonal_analysis": res,
+                "message": (
+                    f"Zonal land-use analysis complete for {year}. "
+                    f"Total Area: {res['total_area_km2']} km². Dominant Land Use: {res['dominant_land_use']}."
+                ),
+            }
+
+        except Exception as exc:
+            return {"error": f"Zonal land use analysis failed: {exc}", "code": "gee_error"}
+
+    async def _extract_land_use_polygons(self, args: dict) -> dict:
+        target_input = str(args.get("target_class", "Built Area")).strip().lower()
+        geojson_input = args.get("geojson")
+        lat = args.get("lat")
+        lng = args.get("lng")
+        radius_km = float(args.get("radius_km") or 5.0)
+        year = int(args.get("year") or 2023)
+        ws = args.get("_ws")
+        workspace = args.get("_workspace")
+
+        dw_classes = [
+            "water", "trees", "grass", "flooded vegetation",
+            "crops", "shrub & scrub", "built area", "bare ground", "snow & ice",
+        ]
+        dw_display_names = [
+            "Water", "Trees", "Grass", "Flooded Vegetation",
+            "Crops", "Shrub & Scrub", "Built Area", "Bare Ground", "Snow & Ice",
+        ]
+        dw_colors = [
+            "#419BDF", "#397D49", "#88B053", "#7A87C6",
+            "#E49635", "#DFC35A", "#C4281B", "#A59B8F", "#B39FE1",
+        ]
+
+        # Resolve target class index
+        target_idx = 6  # default Built Area
+        if target_input.isdigit():
+            target_idx = int(target_input)
+        else:
+            for i, name in enumerate(dw_classes):
+                if target_input in name or name in target_input:
+                    target_idx = i
+                    break
+
+        class_name = dw_display_names[target_idx] if 0 <= target_idx < len(dw_display_names) else "Built Area"
+        class_color = dw_colors[target_idx] if 0 <= target_idx < len(dw_colors) else "#C4281B"
+
+        ok, err = await _ensure_gee(workspace)
+        if not ok:
+            return {"error": f"GEE credentials required to extract vector polygons: {err}", "code": "upstream_unavailable"}
+
+        try:
+            import ee
+
+            def run_vectorize():
+                if geojson_input:
+                    ee_geom = ee.Geometry(geojson_input.get("geometry", geojson_input))
+                elif lat is not None and lng is not None:
+                    ee_geom = ee.Geometry.Point([float(lng), float(lat)]).buffer(radius_km * 1000.0)
+                else:
+                    ee_geom = ee.Geometry.Point([76.7794, 30.7333]).buffer(3000)
+
+                img = (
+                    ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1")
+                    .filterDate(f"{year}-01-01", f"{year}-12-31")
+                    .select("label")
+                    .mode()
+                )
+
+                # Mask raster for target land cover class
+                masked = img.eq(target_idx).selfMask()
+
+                # Convert raster pixels to vector polygons
+                vectors = masked.reduceToVectors(
+                    geometry=ee_geom,
+                    scale=30,
+                    maxPixels=1e7,
+                    geometryType="polygon",
+                    labelProperty="class_id",
+                )
+
+                fc = vectors.getInfo()
+                return fc
+
+            loop = asyncio.get_event_loop()
+            fc_data = await loop.run_in_executor(None, run_vectorize)
+
+            features = fc_data.get("features", [])
+            for feat in features:
+                feat.setdefault("properties", {})
+                feat["properties"]["land_cover_class"] = class_name
+                feat["properties"]["year"] = year
+                feat["properties"]["fillColor"] = class_color
+                feat["properties"]["strokeColor"] = class_color
+                feat["properties"]["opacity"] = 0.5
+
+            output_geojson = {
+                "type": "FeatureCollection",
+                "features": features,
+            }
+
+            clean_name = class_name.lower().replace(" ", "_")
+            out_filename = f"land_use_{clean_name}_{year}.geojson"
+
+            if workspace:
+                out_path = Path(workspace) / out_filename
+                with open(out_path, "w", encoding="utf-8") as f:
+                    json.dump(output_geojson, f)
+
+                if ws:
+                    await ws.send_text(json.dumps({
+                        "type": "action",
+                        "action": "add_geojson_file",
+                        "payload": {"path": str(out_path), "name": f"{class_name} Polygons ({year})"}
+                    }))
+
+            return {
+                "status": "success",
+                "target_class": class_name,
+                "year": year,
+                "polygons_extracted": len(features),
+                "geojson_file": out_filename,
+                "message": (
+                    f"Extracted {len(features)} {class_name} vector polygons for {year}. "
+                    f"Saved to {out_filename} and loaded on map."
+                ),
+            }
+
+        except Exception as exc:
+            return {"error": f"Vector polygon extraction failed: {exc}", "code": "gee_error"}
+

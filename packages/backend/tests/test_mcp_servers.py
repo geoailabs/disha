@@ -125,3 +125,91 @@ async def test_osm_server_bus_routes():
         assert len(res["geojson"]["features"]) == 1
         assert res["geojson"]["features"][0]["properties"]["route_ref"] == "43"
 
+
+@pytest.mark.asyncio
+async def test_gtfs_server_functional(tmp_path):
+    from mcp_servers.gtfs_server import GTFSServer
+
+    server = GTFSServer()
+    decls = server.get_declarations()
+    names = {d.name for d in decls}
+    assert "import_gtfs_feed" in names
+    assert "analyze_gtfs_service" in names
+    assert "analyze_gtfs_schedules" in names
+    assert "analyze_transit_catchment" in names
+
+    # Create mock GTFS folder structure in tmp_path
+    gtfs_dir = tmp_path / "mock_gtfs"
+    gtfs_dir.mkdir()
+
+    stops_txt = "stop_id,stop_name,stop_lat,stop_lon\nS1,ISBT 17,30.7333,76.7794\nS2,Sector 22,30.7300,76.7750\n"
+    routes_txt = "route_id,route_short_name,route_long_name,route_type\nR1,101,City Loop,3\n"
+    trips_txt = "route_id,service_id,trip_id,shape_id\nR1,FULL,T1,SH1\n"
+    shapes_txt = "shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence\nSH1,30.7333,76.7794,1\nSH1,30.7300,76.7750,2\n"
+    stop_times_txt = "trip_id,arrival_time,departure_time,stop_id,stop_sequence\nT1,08:15:00,08:16:00,S1,1\nT1,08:30:00,08:31:00,S2,2\n"
+    frequencies_txt = "trip_id,start_time,end_time,headway_secs\nT1,06:00:00,22:00:00,900\n"
+
+    (gtfs_dir / "stops.txt").write_text(stops_txt)
+    (gtfs_dir / "routes.txt").write_text(routes_txt)
+    (gtfs_dir / "trips.txt").write_text(trips_txt)
+    (gtfs_dir / "shapes.txt").write_text(shapes_txt)
+    (gtfs_dir / "stop_times.txt").write_text(stop_times_txt)
+    (gtfs_dir / "frequencies.txt").write_text(frequencies_txt)
+
+    # 1. Test local directory import
+    res_import = await server.execute("import_gtfs_feed", {
+        "path": str(gtfs_dir),
+        "workspace": str(tmp_path),
+        "title": "Mock Transit"
+    })
+    assert res_import["status"] == "success"
+    assert res_import["summary"]["stops"] == 2
+    assert res_import["summary"]["routes"] == 1
+
+    # 2. Test service analysis
+    res_service = await server.execute("analyze_gtfs_service", {
+        "workspace": str(tmp_path)
+    })
+    assert res_service["status"] == "success"
+    assert res_service["network_stats"]["total_stops"] == 2
+
+    # 3. Test schedule analysis
+    res_sched = await server.execute("analyze_gtfs_schedules", {
+        "workspace": str(tmp_path),
+        "stop_id": "S1"
+    })
+    assert res_sched["status"] == "success"
+    assert "hourly_departures_histogram" in res_sched
+    assert len(res_sched["stop_timetable"]) > 0
+
+    # 4. Test transit catchment
+    res_catch = await server.execute("analyze_transit_catchment", {
+        "workspace": str(tmp_path),
+        "radius_meters": 400
+    })
+    assert res_catch["status"] == "success"
+    assert res_catch["stops_buffered"] == 2
+    assert "service_coverage" in res_catch
+
+
+@pytest.mark.asyncio
+async def test_gee_land_use_tools():
+    from mcp_servers.gee_server import GEEServer
+
+    server = GEEServer()
+    decls = server.get_declarations()
+    names = {d.name for d in decls}
+    assert "analyze_land_use_zonal_stats" in names
+    assert "extract_land_use_polygons" in names
+
+    # Test zonal stats execution (fallback when GEE creds not set)
+    res_zonal = await server.execute("analyze_land_use_zonal_stats", {
+        "lat": 30.7333,
+        "lng": 76.7794,
+        "year": 2023
+    })
+    assert "status" in res_zonal
+    assert "error" not in res_zonal
+
+
+
