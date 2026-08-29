@@ -1115,6 +1115,9 @@ class GEEServer:
                 feat.setdefault("properties", {})
                 feat["properties"]["land_cover_class"] = class_name
                 feat["properties"]["year"] = year
+                feat["properties"]["layer_name"] = f"{class_name} Polygons ({year})"
+                feat["properties"]["source_tool"] = "extract_land_use_polygons"
+                feat["properties"]["description"] = f"Satellite land cover vector polygon for {class_name} ({year})"
                 feat["properties"]["fillColor"] = class_color
                 feat["properties"]["strokeColor"] = class_color
                 feat["properties"]["opacity"] = 0.5

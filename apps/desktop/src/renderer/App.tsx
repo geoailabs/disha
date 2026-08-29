@@ -2511,8 +2511,14 @@ function App() {
 
       }),
       basemap,
+      selected_features: selectedFeatures.map((sf) => ({
+        layerId: sf.layerId,
+        layerName: sf.layerName,
+        properties: sf.feature.properties || {},
+        geometry: sf.feature.geometry,
+      })),
     }),
-    [workspacePath, mapViewState, mapBounds, bookmarks, layers, basemap, activeScenarioId, scenarios],
+    [workspacePath, mapViewState, mapBounds, bookmarks, layers, basemap, activeScenarioId, scenarios, selectedFeatures],
   )
 
   // ── Conversation helpers ──
@@ -3357,6 +3363,7 @@ function App() {
                 documentImage={appMode === 'document' ? documentImage : null}
                 injectedMessage={injectedMessage}
                 onComposeMapFigure={composeMapFigure}
+                onClearSelectedFeatures={() => setSelectedFeatures([])}
               />
             </ErrorBoundary>
           </aside>

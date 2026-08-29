@@ -208,6 +208,7 @@ interface ChatPanelProps {
   documentImage?: DocumentImage | null
   injectedMessage?: { text: string; nonce: number } | null
   onComposeMapFigure?: (title: string) => HTMLCanvasElement | null
+  onClearSelectedFeatures?: () => void
 }
 
 function CodePre({ children, ...props }: React.HTMLAttributes<HTMLPreElement>) {
@@ -2090,6 +2091,37 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
                 </button>
               </div>
             ))}
+          </div>
+        )}
+
+        {mapContext.selected_features && mapContext.selected_features.length > 0 && (
+          <div className="chat-attachments-container" style={{ marginBottom: 6 }}>
+            {mapContext.selected_features.map((feat, idx) => {
+              const label = feat.properties.layer_name || feat.properties.stop_name || feat.properties.name || feat.layerName || 'Selected Map Element'
+              return (
+                <div
+                  key={idx}
+                  className="chat-attachment-chip"
+                  style={{ borderColor: 'rgba(59,130,246,0.5)', background: 'rgba(59,130,246,0.12)' }}
+                  title={JSON.stringify(feat.properties, null, 2)}
+                >
+                  <span className="chat-attachment-icon">📍</span>
+                  <span className="chat-attachment-name" style={{ color: '#60a5fa', fontWeight: 500 }}>
+                    {label}
+                  </span>
+                  {onClearSelectedFeatures && (
+                    <button
+                      type="button"
+                      className="chat-attachment-remove"
+                      onClick={onClearSelectedFeatures}
+                      title="Deselect feature"
+                    >
+                      &times;
+                    </button>
+                  )}
+                </div>
+              )
+            })}
           </div>
         )}
 

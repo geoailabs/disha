@@ -351,6 +351,12 @@ export interface MapContext {
     style?: LayerStyleSummary
   }>
   basemap: string
+  selected_features?: Array<{
+    layerId: string
+    layerName: string
+    properties: Record<string, any>
+    geometry?: any
+  }>
 }
 
 /** Compact view of a layer's active styling, sent to the LLM so it can avoid
