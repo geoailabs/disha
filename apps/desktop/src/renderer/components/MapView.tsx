@@ -1792,12 +1792,57 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
                 return false
               })
               if (matchingLayer) {
-                const fullFeature = {
-                  type: 'Feature' as const,
-                  geometry: JSON.parse(JSON.stringify(feat.geometry)) as Geometry,
-                  properties: { ...(feat.properties || {}) },
+                const layerFeatures: Feature[] = matchingLayer.data?.features || []
+                let fullFeature: Feature
+
+                if (layerFeatures.length > 1) {
+                  const geoms = layerFeatures.map((f) => f.geometry).filter(Boolean)
+                  let combinedGeometry: Geometry
+                  if (geoms.every((g) => g.type === 'Polygon')) {
+                    combinedGeometry = {
+                      type: 'MultiPolygon',
+                      coordinates: geoms.map((g: any) => g.coordinates),
+                    }
+                  } else if (geoms.every((g) => g.type === 'Point')) {
+                    combinedGeometry = {
+                      type: 'MultiPoint',
+                      coordinates: geoms.map((g: any) => g.coordinates),
+                    }
+                  } else if (geoms.every((g) => g.type === 'LineString')) {
+                    combinedGeometry = {
+                      type: 'MultiLineString',
+                      coordinates: geoms.map((g: any) => g.coordinates),
+                    }
+                  } else {
+                    combinedGeometry = JSON.parse(JSON.stringify(feat.geometry))
+                  }
+
+                  const firstProps = layerFeatures[0]?.properties || {}
+                  const clickedProps = feat.properties || {}
+                  const mergedProps = {
+                    ...firstProps,
+                    ...clickedProps,
+                    layer_name: matchingLayer.name,
+                    total_feature_count: layerFeatures.length,
+                  }
+
+                  fullFeature = {
+                    type: 'Feature',
+                    geometry: combinedGeometry,
+                    properties: mergedProps,
+                  }
+                } else {
+                  fullFeature = {
+                    type: 'Feature',
+                    geometry: JSON.parse(JSON.stringify(feat.geometry)),
+                    properties: { ...(feat.properties || {}), layer_name: matchingLayer.name },
+                  }
                 }
-                onSelectFeature?.({ feature: fullFeature, layerId: matchingLayer.id }, e.originalEvent.shiftKey)
+
+                onSelectFeature?.(
+                  { feature: fullFeature, layerId: matchingLayer.id, layerName: matchingLayer.name },
+                  e.originalEvent.shiftKey,
+                )
               } else {
                 onSelectFeature?.(null, false)
               }
