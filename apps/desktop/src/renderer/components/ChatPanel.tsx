@@ -289,6 +289,7 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
   documentImage,
   injectedMessage,
   onComposeMapFigure,
+  onClearSelectedFeatures,
 }, ref) => {
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
