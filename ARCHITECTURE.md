@@ -1,6 +1,8 @@
 # Disha — Architecture & Features
 
-A geospatial-first AI-driven IDE for urban planners. The user chats with an LLM that drives a live MapLibre map, runs OSM / Overture / Google / GIS queries, drafts zoning, imports real GIS files, styles layers, exports publication-ready figures, and saves planning artifacts — all inside an offline-capable Electron desktop app.
+**A geospatial-first, AI-native desktop IDE for urban and regional planners.**
+
+Disha unifies an interactive spatial map canvas with a multi-domain AI reasoning engine. Planners can explore, analyze, model, and document complex urban environments through natural conversation and direct spatial interaction — bridging computational GIS, domain-specific planning analytics, and cartography into a unified desktop workspace.
 
 This document is split into two halves:
 
@@ -113,26 +115,20 @@ The chat panel on the right is the primary control surface. You can:
 
 Streaming text uses a WebSocket; replies appear token-by-token.
 
-### What the assistant can do
+### The 7+1 Domain Capabilities
 
-| Capability | Tools |
-|---|---|
-| **Navigate** | `fly_to`, `fit_bounds`, `go_to_bookmark` |
-| **Annotate** | `add_marker`, `add_markers`, `clear_markers`, `draw_line`, `draw_polygon`, `draw_circle` |
-| **Layers & style** | `add_geojson`, `toggle_layer`, `remove_layer`, `set_layer_style` (flat), `style_layer` (categorized/graduated + labels), `highlight_features` |
-| **Bookmarks & clip** | `save_bookmark`, `go_to_bookmark`, `export_region_clip` |
-| **OSM data** | `osm_search`, `osm_boundary`, `osm_boundary_union`, `osm_reverse_geocode`, `osm_route_overview` |
-| **Overture Maps** | `overture_places_search`, `overture_buildings_search` |
-| **Google Places** *(needs key)* | `places_autocomplete`, `place_details`, `nearby_places`, `nearby_places_in_polygon`, `places_density` |
-| **Google environment** *(needs key)* | `get_elevation`, `get_air_quality_google`, `get_solar_building` |
-| **GIS analysis** | `gis_buffer`, `gis_centroid`, `gis_area`, `gis_convex_hull`, `gis_point_in_polygon`, `gis_bounding_box`, `gis_union` |
-| **GIS overlay & relational** | `gis_intersection`, `gis_difference`, `gis_clip`, `gis_dissolve`, `gis_nearest`, `gis_spatial_join` |
-| **Zoning** | `analyze_zones`, `detect_zone_overlaps` |
-| **Demographics** | `get_demographics` (WorldPop, OSM fallback) |
-| **Weather** | `get_weather`, `get_air_quality` |
-| **Search & geocode** | `web_search`, `geocode`, `measure_distance`, `measure_area` |
-| **Artifacts** | `create_artifact`, `list_artifacts`, `get_artifact` |
-| **Reports** | `generate_report` (deep research) |
+The assistant's capabilities are structured across **7 core urban planning disciplines** powered by **1 cross-cutting utility engine**:
+
+| Domain Hub | Planning Discipline | Core Capabilities |
+|---|---|---|
+| **1. SpatialHub** | Spatial Geometry & Land Management | Central polygon registry (deduplication & reuse), geodesic buffering/areas, spatial overlays (intersection, difference, clip, dissolve, spatial join), OSM/DataMeet administrative boundaries, WMS raster layers. |
+| **2. MobilityHub** | Multimodal Transportation & Transit | Street network graphs, Dijkstra/freight routing, GTFS transit schedules & 400m/800m catchment buffers, ITS signal timing optimization, origin-destination (OD) gravity matrices & flow assignment. |
+| **3. EnvironmentHub** | Climate, Remote Sensing & Emissions | Google Earth Engine LULC & NDVI satellite indices, Open-Meteo weather & air quality, solar building analysis, digital elevation models (DEM), fleet emissions modeling. |
+| **4. PlanningHub** | Zoning & Plan Digitization | Zoning code compliance, zone density & overlap detection, master plan georeferencing, and image feature digitization. |
+| **5. DemographicsHub** | Population & Economic Forecasting | WorldPop 100m grid population metrics, cohort-component demographic forecasting, employment density projections. |
+| **6. PlacesHub** | Built Form & Urban POIs | Google Places search/details/density, Overture 3D building footprints and heights. |
+| **7. ScenariosHub** | Scenario Planning & Evaluation | Alternative planning scenario generation, Multi-Criteria Decision Analysis (MCDA) scoring and matrix comparisons. |
+| **+1. UtilityHub** | Shared System Infrastructure | Cross-cutting forward/reverse geocoding, live web research, geodesic distance/area measurements, and artifact persistence. |
 
 The current map state — viewport bounds, visible layers (with feature counts, property names, geometry data for small layers, and a styling summary), saved bookmarks — is appended to every prompt, so the assistant is always aware of what you're looking at.
 
@@ -185,10 +181,13 @@ Long-form notes and analyses the assistant generates (or you ask it to save) liv
 │   │   ├── artifacts.py           Artifact CRUD + upload + download
 │   │   ├── geocode.py             Forward + reverse geocode proxy
 │   │   └── streetview.py          Keyless Street View metadata + panorama
-│   ├── mcp_servers/               One class per domain (OSM, GIS, weather, zoning, demographics,
+│   ├── domains/                   ★ 7+1 Domain Hubs (Spatial, Mobility, Environment, Planning,
+│   │                              Demographics, Places, Scenarios, Utility) & ToolResult protocol
+│   ├── mcp_servers/               Underlying domain servers (OSM, GIS, weather, zoning, demographics,
 │   │                              Overture, Google Places, Google env, GEE, OD flow, network routing,
 │   │                              public catalogs/DataMeet, GTFS transit, WMS, scenarios)
 │   └── tools/
+│       ├── spatial_registry.py    ★ Centralized polygon registry, geodesic math & IoU deduplication
 │       ├── geo.py                 Geodesic area/perimeter/buffer (pyproj WGS84)
 │       ├── vector_convert.py      Shapefile/GPKG/KML/KMZ/GPX/CSV → WGS84 GeoJSON
 │       ├── utility.py             UtilityServer (search, geocode, measure, artifacts)
@@ -286,59 +285,54 @@ On the frontend, `App.tsx:handleMapAction` routes each action:
 
 To add a new action you must touch all three of: backend tool def + dispatch (`chat.py`), `MapAction` union (`types.ts`), action switch (`MapView.tsx` and/or `App.tsx`). The `add-map-action` skill in `.claude/skills/` encodes the procedure.
 
-## The MCP server pattern
+## The 7+1 Domain Hub Architecture & ToolResult Protocol
 
-Each domain server in `packages/backend/mcp_servers/` is a class with three things:
+Backend tools are consolidated into **7+1 Domain Hubs** in `packages/backend/domains/`, inheriting from `BaseDomainHub` in `domains/protocol.py`:
 
 ```python
-class FooServer:
+class BaseDomainHub(ABC):
+    name: str
     description: str
-    tool_names: set[str]                                # {"foo_x", "foo_y"}
-    def get_declarations(self) -> list[ToolDeclaration]: ...
-    async def execute(self, tool_name: str, args: dict) -> dict: ...
+    tool_names: set[str]
+    def get_declarations(self) -> list[dict[str, Any]]: ...
+    async def execute(self, tool_name: str, args: dict, context: dict | None = None) -> ToolResult: ...
 ```
 
-Servers live in `routers/chat.py:_servers` and their declarations are flattened into the OpenAI tool list by `_build_tools()`. There is **no external MCP stdio bridge** — the in-app chat is the only surface.
+Each tool execution returns a standardized `ToolResult`:
+- `data`: Clean summary dictionary returned to the LLM agent loop.
+- `map_action`: Optional map action `{"action": "<name>", "payload": {...}}` automatically sent over the WebSocket.
+- `artifact`: Optional report `{"title": "...", "content": "...", "artifact_type": "report"}` automatically persisted to the workspace/SQLite store.
+- `error`: Error message if status is `"error"`.
 
-| Server | File | Tools |
+Hubs live in `routers/chat.py:_hubs` and their declarations are flattened into the OpenAI tool list by `_build_tools()`. There is **no external MCP stdio bridge** — the in-app chat is the only surface.
+
+| Domain Hub | File | Key Capabilities & Tools |
 |---|---|---|
-| `OSMServer` | `osm_server.py` | `osm_search`, `osm_boundary`, `osm_boundary_union`, `osm_reverse_geocode`, `osm_route_overview` |
-| `GISServer` | `gis_server.py` | `gis_buffer`, `gis_centroid`, `gis_area`, `gis_convex_hull`, `gis_point_in_polygon`, `gis_bounding_box`, `gis_union`, `gis_intersection`, `gis_difference`, `gis_clip`, `gis_dissolve`, `gis_nearest`, `gis_spatial_join` |
-| `WeatherServer` | `weather_server.py` | `get_weather`, `get_air_quality` |
-| `ZoningServer` | `zoning_server.py` | `analyze_zones`, `detect_zone_overlaps` |
-| `DemographicsServer` | `demographics_server.py` | `get_demographics` (WorldPop 100m grid, OSM fallback), `project_population` |
-| `OvertureServer` | `overture_server.py` | `overture_places_search`, `overture_buildings_search` (DuckDB over public S3 parquet) |
-| `GooglePlacesServer` | `google_places_server.py` | `places_autocomplete`, `place_details`, `nearby_places`, `nearby_places_in_polygon`, `places_density` |
-| `GoogleEnvironmentServer` | `google_environment_server.py` | `get_elevation`, `get_air_quality_google`, `get_solar_building` |
-| `NetworkServer` | `network_server.py` | `fetch_street_network`, `analyze_street_network`, `find_shortest_path`, `find_freight_route`, `route_multi_stop`, `assign_traffic_flows` |
-| `ODServer` | `od_server.py` | `import_od_matrix`, `generate_gravity_od_matrix`, `calculate_mode_choice`, `visualize_od_flows` |
-| `ITSServer` | `its_server.py` | `optimize_traffic_signal`, `analyze_parking_requirements` |
-| `EmissionsServer` | `emissions_server.py` | `estimate_scenario_emissions` |
-| `GEEServer` | `gee_server.py` | `get_gee_layer`, `get_population_layer`, `get_dem_layer`, `get_land_cover`, `analyze_lulc_change`, `get_ndvi_layer`, `add_gee_layer` |
-| `DataMeetServer` | `datameet_server.py` | `browse_datameet_catalog`, `import_datameet_boundary`, `import_public_dataset` |
-| `GTFSServer` | `gtfs_server.py` | `import_gtfs_feed`, `analyze_gtfs_service` |
-| `WMSServer` | `wms_server.py` | `add_wms_layer`, `list_wms_layers` |
-| `ScenarioServer` | `scenario_server.py` | `generate_planning_scenarios`, `compare_scenarios` |
-| `UtilityServer` | `tools/utility.py` | `web_search`, `geocode`, `measure_distance`, `measure_area`, `create_artifact`, `list_artifacts`, `get_artifact`, `georeference_active_document`, `digitize_image_features` |
+| **1. SpatialHub** | `domains/spatial_hub.py` | Central polygon registry (`list_polygons`, `get_polygon`, `check_polygon_overlap`, `calculate_land_budget`), GIS geometry & overlays (`gis_buffer`, `gis_centroid`, `gis_area`, `gis_convex_hull`, `gis_intersection`, `gis_difference`, `gis_clip`, `gis_dissolve`, `gis_spatial_join`, `gis_nearest`), OSM administrative boundaries (`osm_boundary`, `osm_boundary_union`), DataMeet catalog boundaries, and WMS raster layers. |
+| **2. MobilityHub** | `domains/mobility_hub.py` | Street networks & graph analysis (`fetch_street_network`, `analyze_street_network`), Dijkstra/freight routing (`find_shortest_path`, `find_freight_route`, `route_multi_stop`), GTFS transit services & schedules (`import_gtfs_feed`, `analyze_gtfs_service`, `analyze_gtfs_schedules`, `analyze_transit_catchment`), ITS signal timings (`optimize_traffic_signal`, `analyze_parking_requirements`), and OD matrices (`import_od_matrix`, `generate_gravity_od_matrix`, `calculate_mode_choice`, `visualize_od_flows`). |
+| **3. EnvironmentHub** | `domains/environment_hub.py` | Google Earth Engine satellite imagery & land cover (`get_gee_layer`, `get_population_layer`, `get_dem_layer`, `get_land_cover`, `analyze_lulc_change`, `analyze_land_use_zonal_stats`, `extract_land_use_polygons`, `get_ndvi_layer`), Open-Meteo weather & AQI (`get_weather`, `get_air_quality`), Google Solar/Elevation (`get_elevation`, `get_air_quality_google`, `get_solar_building`), and fleet emissions modeling (`estimate_scenario_emissions`). |
+| **4. PlanningHub** | `domains/planning_hub.py` | Zoning analysis & compliance (`analyze_zones`, `detect_zone_overlaps`), master plan georeferencing (`georeference_active_document`), and feature digitization (`digitize_image_features`). |
+| **5. DemographicsHub** | `domains/demographics_hub.py` | WorldPop 100m grid population estimates (`get_demographics`), cohort-component population forecasting (`project_population`), and economic/employment density projections (`project_employment`). |
+| **6. PlacesHub** | `domains/places_hub.py` | Google Places Platform (`places_autocomplete`, `place_details`, `nearby_places`, `nearby_places_in_polygon`, `places_density`) and Overture 3D buildings & points of interest (`overture_places_search`, `overture_buildings_search`). |
+| **7. ScenariosHub** | `domains/scenarios_hub.py` | Scenario generation (`generate_planning_scenarios`) and Multi-Criteria Decision Analysis (MCDA) comparison (`compare_scenarios`). |
+| **8. UtilityHub** | `domains/utility_hub.py` | Cross-cutting tools: `web_search`, `geocode`, `measure_distance`, `measure_area`, and artifact storage (`create_artifact`, `list_artifacts`, `get_artifact`). |
 
-`generate_report` (deep research) is registered directly in `_build_tools()`, not via a server.
+`generate_report` (deep research) is registered directly in `_build_tools()`, not via a domain hub.
 
-Adding a domain tool means editing one server class — the flatten step picks it up automatically. Cross-cutting tools (search, geocode, measure, artifacts) belong in `UtilityServer`. The `add-mcp-tool` skill in `.claude/skills/` encodes the procedure.
+### Centralized Spatial & Polygon Registry
 
-The Google servers degrade gracefully: `tools/google.py` raises `GoogleUnavailable` when `GOOGLE_MAPS_API_KEY` is unset, and every Google tool catches it and returns `{"error": ..., "code": "upstream_unavailable"}`. The system prompt instructs the model to fall back to OSM/Overture in that case.
+All polygon lifecycles (user drawing in `MapView.tsx`, AI drawing via `draw_polygon`, OSM administrative boundaries, DataMeet boundaries, zoning parcels) are tracked centrally in `packages/backend/tools/spatial_registry.py`:
+- **IoU Deduplication ($\ge 90\%$):** Matches incoming bounding geometries against existing layers using spatial Intersection-over-Union and normalized name similarity ($\ge 0.85$).
+- **Reuse & Focus:** If a duplicate study area or boundary is requested, the existing layer is highlighted via `highlight_features` and exact calculated metrics are returned without spawning duplicate layers.
+- **Geodesic Accuracy:** Geodesic area ($\text{m}^2$, ha, $\text{km}^2$), centroid, and bounding box are computed using pyproj WGS84 ellipsoid math and strictly preserved in LLM context.
+- **Real-Time Synchronization:** Synchronizes seamlessly with active map layers (`map_context["layers"]`) on every chat turn.
 
-### Auto-display side effects
+### Declarative Map Actions & Auto-Display
 
-Some tools have post-execution side effects in `_execute_tool` so the model doesn't have to chain a second call. In each case the heavy geometry is rendered on the map and only a trimmed summary goes back to the model:
-
-- `osm_search` with results → auto-`add_geojson`; summary = count + first 50 names/coords.
-- `osm_boundary` / `osm_boundary_union` → auto-`add_geojson`, plus centroid, bbox, and (for unions) area breakdown + resolved/failed place lists go back to the model so it can chain `gis_buffer`, `gis_area`, etc.
-- `overture_places_search` / `overture_buildings_search` → auto-`add_geojson`; trimmed summary.
-- `nearby_places` / `nearby_places_in_polygon` (Google) → auto-`add_geojson`; trimmed summary + polygon-clip metadata.
-- `osm_route_overview` → auto-`draw_line` with the route geometry.
-- `gis_buffer`, `gis_convex_hull`, `gis_union` → auto-`add_geojson` of the result.
-- `gis_intersection`, `gis_difference`, `gis_clip`, `gis_dissolve`, `gis_spatial_join` → result normalized to a FeatureCollection, auto-`add_geojson`, and collapsed to area/kept/group_count/points/joined summary fields.
-- `create_artifact` → fires a `refresh_artifacts` action so the panel re-fetches.
+Rather than relying on ad-hoc side-effect chains, Domain Hubs declare intended UI and persistence side-effects directly via `ToolResult`:
+- When `ToolResult.map_action` is set, `chat.py` sends the corresponding `MapAction` over WebSocket.
+- When `ToolResult.artifact` is set, `chat.py` persists the markdown report via `artifact_store.py` and triggers a client-side `refresh_artifacts` action.
+- Heavy GeoJSON datasets are rendered on the map, while concise summaries (counts, bounding boxes, area metrics) are returned to the LLM agent loop.
 
 ## Geospatial conventions
 
@@ -480,17 +474,28 @@ In production, `apps/desktop/src/main/index.ts:startBackend` spawns the PyInstal
 ## Where to read first (in order)
 
 1. `packages/backend/routers/chat.py` — agentic loop, action contract, tool registry, deep research. **The heart of the AI behavior.**
-2. `apps/desktop/src/renderer/App.tsx` — single state container, component wiring, action routing, persistence.
-3. `apps/desktop/src/renderer/components/MapView.tsx` — MapLibre setup, symbology/label expressions, draw tools, right-click menu, action handlers.
-4. `apps/desktop/src/renderer/components/ChatPanel.tsx` — WebSocket client, streaming + deep-research render.
-5. `packages/backend/mcp_servers/osm_server.py` — canonical MCP server example with the most logic.
-6. `apps/desktop/src/renderer/types.ts` — shared interfaces, `LayerStyleSpec`, basemap defs, zone presets, the `MapAction` union.
-7. `packages/backend/tools/geo.py` + `tools/vector_convert.py` — geodesic math and the import/reprojection path.
-8. `apps/desktop/src/preload/index.ts` — full IPC surface between renderer and Electron main.
+2. `packages/backend/tools/spatial_registry.py` — centralized polygon registry, geodesic math, and IoU deduplication.
+3. `packages/backend/domains/` — 7+1 Domain Hubs and `ToolResult` protocol.
+4. `apps/desktop/src/renderer/App.tsx` — single state container, component wiring, action routing, persistence.
+5. `apps/desktop/src/renderer/components/MapView.tsx` — MapLibre setup, symbology/label expressions, draw tools, right-click menu, action handlers.
+6. `apps/desktop/src/renderer/components/ChatPanel.tsx` — WebSocket client, streaming + deep-research render.
+7. `apps/desktop/src/renderer/types.ts` — shared interfaces, `LayerStyleSpec`, basemap defs, zone presets, the `MapAction` union.
+8. `packages/backend/tools/geo.py` + `tools/vector_convert.py` — geodesic math and the import/reprojection path.
+9. `apps/desktop/src/preload/index.ts` — full IPC surface between renderer and Electron main.
+
+## Testing Architecture
+
+```bash
+# Run backend pytest suite (all 8 hubs, spatial registry, WebSocket loop)
+cd packages/backend
+.buildenv/bin/pytest tests/
+
+# Run frontend typecheck
+pnpm --filter @disha/desktop exec tsc --noEmit
+```
 
 ## Known gaps
 
-- **No tests.** Anywhere. The agent loop, OSM ring-merge, and geometry math are entirely untested.
 - **Overture cold start.** The first query for a region scans public S3 parquet (1–2 min); subsequent queries are cached.
 - **Vision is rasterize-then-send.** Large multi-page PDFs are capped per page (2200px long axis).
 - **DuckDB `spatial` extension** must be reachable (or pre-bundled) for vector import; first use triggers `INSTALL spatial`.

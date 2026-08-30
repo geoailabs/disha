@@ -28,24 +28,19 @@ _BACKEND_DIR = Path(__file__).parent.parent
 sys.path.insert(0, str(_BACKEND_DIR))
 
 from database import DB_PATH
-from mcp_servers.osm_server import OSMServer
-from mcp_servers.gis_server import GISServer
-from mcp_servers.weather_server import WeatherServer
-from mcp_servers.zoning_server import ZoningServer
-from mcp_servers.demographics_server import DemographicsServer
-from mcp_servers.overture_server import OvertureServer
-from mcp_servers.google_places_server import GooglePlacesServer
-from mcp_servers.google_environment_server import GoogleEnvironmentServer
-from mcp_servers.wms_server import WMSServer
-from mcp_servers.gee_server import GEEServer
-from mcp_servers.datameet_server import DatameetServer
-from mcp_servers.network_server import NetworkServer
-from mcp_servers.gtfs_server import GTFSServer
-from mcp_servers.od_server import ODServer
-from mcp_servers.scenario_server import ScenarioServer
-from mcp_servers.its_server import ITSServer
-from mcp_servers.emissions_server import EmissionsServer
-from tools.utility import UtilityServer
+from domains import (
+    BaseDomainHub,
+    DemographicsHub,
+    EnvironmentHub,
+    MobilityHub,
+    PlacesHub,
+    PlanningHub,
+    ScenariosHub,
+    SpatialHub,
+    ToolResult,
+    UtilityHub,
+)
+from tools.spatial_registry import spatial_registry
 from tools.config import get_model as _get_model
 from tools.google import google_maps_key_var
 from tools.action_utils import send_action as _send_action
@@ -95,26 +90,19 @@ def _env_google_maps_api_key() -> str:
 _env_key = _env_openai_api_key()
 _client = AsyncOpenAI(api_key=_env_key) if _env_key else None
 
-_servers = {
-    "osm": OSMServer(),
-    "gis": GISServer(),
-    "weather": WeatherServer(),
-    "zoning": ZoningServer(),
-    "demographics": DemographicsServer(),
-    "overture": OvertureServer(),
-    "google_places": GooglePlacesServer(),
-    "google_env": GoogleEnvironmentServer(),
-    "wms": WMSServer(),
-    "gee": GEEServer(),
-    "datameet": DatameetServer(),
-    "network": NetworkServer(),
-    "gtfs": GTFSServer(),
-    "od": ODServer(),
-    "scenario": ScenarioServer(),
-    "its": ITSServer(),
-    "emissions": EmissionsServer(),
-    "utility": UtilityServer(db_path=DB_PATH),
+_util_hub = UtilityHub(db_path=DB_PATH)
+_hubs: dict[str, BaseDomainHub] = {
+    "spatial": SpatialHub(db_path=DB_PATH),
+    "mobility": MobilityHub(),
+    "environment": EnvironmentHub(),
+    "planning": PlanningHub(utility_server=_util_hub.utility_server),
+    "demographics": DemographicsHub(),
+    "places": PlacesHub(),
+    "scenarios": ScenariosHub(),
+    "utility": _util_hub,
 }
+# Backward compatibility alias
+_servers = _hubs
 
 # ── Action tool names (sent directly to frontend as map actions) ──────────────
 
@@ -155,7 +143,7 @@ SYSTEM_PROMPT = (
     "- Highlight: highlight_features\n"
     "- Search: web_search, geocode, autogeoreference_image (extract landmarks and align active/attached map image automatically), georeference_active_document (align dropped map image to real-world coordinates using 3+ landmark GCPs), digitize_image_features (convert list of normalized x,y image coordinates to real-world GeoJSON features using the solved matrix)\n"
     "- OSM: osm_search (amenities, buildings, roads), "
-    "osm_fetch_bus_routes (fetch 15+ actual transit/bus route lines around ISBT or city center — ALWAYS prefer this when user asks for bus routes or transit lines), "
+    "osm_fetch_bus_routes (fetch actual transit/bus route lines around transit hubs, terminals, or city centers — ALWAYS prefer this when user asks for bus routes or transit lines), "
     "osm_boundary (city/district/state boundary polygons), "
     "osm_boundary_union (merge multiple boundaries into ONE polygon — server-side, no coordinate echoing), "
     "osm_reverse_geocode, osm_route_overview\n"
@@ -210,11 +198,10 @@ SYSTEM_PROMPT = (
     "extract_land_use_polygons (convert raster land cover classes into vector GeoJSON polygons loaded on the map), "
     "get_ndvi_layer (compute NDVI from Sentinel-2 to map vegetation density, green space, and urban heat islands). "
     "All GEE tools require the ee-*.json service account credentials file in the workspace root.\n"
-    "- DataMeet & Public India GIS: browse_datameet_catalog (list all available public India GIS datasets "
+    "- Public GIS Datasets: browse_datameet_catalog (list all available public GIS datasets "
     "with dataset_ids, titles, and categories — call this first before importing), "
-    "import_public_dataset (download and load a named dataset: india_states, india_districts, "
-    "india_railway_lines, india_railway_stations, india_rivers, india_national_highways, "
-    "india_urban_agglomerations, india_assembly_constituencies, chandigarh_boundary, etc.), "
+    "import_public_dataset (download and load a named dataset: national boundaries, states, districts, "
+    "railway lines, stations, rivers, highways, urban agglomerations, etc.), "
     "import_datameet_boundary (fetch state/district/village boundaries by administrative level).\n\n"
     "MAP CONTEXT:\n"
     "The current map state is appended to every message. It includes:\n"
@@ -237,21 +224,19 @@ SYSTEM_PROMPT = (
     "polygon. Use overture_places_search only when the Google tools return empty or "
     "upstream_unavailable. Use osm_search for non-commercial OSM-tagged features (water, "
     "infrastructure, hand-mapped local data).\n"
-    "4. When using osm_boundary, ALWAYS pass country_code (e.g. 'IN' for India) to avoid wrong matches. If osm_boundary returns an error (no boundary polygon is mapped in OSM), do NOT try to draw a wrong fallback polygon or building footprint. Instead, call the geocode tool to resolve the place's coordinates, fly_to that centroid, and add a pin marker using add_marker with the place name as the label.\n"
+    "4. When using osm_boundary, pass country_code (e.g. 'IN', 'US', 'GB', 'FR', 'DE') when known to disambiguate places with identical names across multiple countries. If osm_boundary returns an error (no boundary polygon is mapped in OSM), do NOT try to draw a wrong fallback polygon or building footprint. Instead, call the geocode tool to resolve the place's coordinates, fly_to that centroid, and add a pin marker using add_marker with the place name as the label.\n"
     "5. Only call the tools the user's request requires. Do not add extra actions.\n"
     "6. When the user asks to navigate somewhere, use fly_to. Do not add markers unless asked.\n"
-    "7. SUB-CITY BOUNDARIES (sectors, neighborhoods, colonies, suburbs): call osm_boundary with "
-    "place_type='suburb' (or 'neighbourhood'/'quarter') and parent='<city>'. Do NOT use admin_level — "
-    "Indian sectors are not administrative boundaries in OSM. If a result is empty, KEEP TRYING: "
-    "(a) name variants like 'Sector 30 A' / 'Sector 30 B' (Chandigarh sectors are often split), "
-    "(b) other place_type values, (c) osm_search(feature_type='place', feature_value='suburb') near "
-    "the city center. Do not give up after one failed call.\n"
+    "7. SUB-CITY BOUNDARIES (sectors, neighborhoods, wards, quarters, suburbs, subdivisions): call osm_boundary with "
+    "place_type='suburb' (or 'neighbourhood'/'quarter') and parent='<city>'. Do NOT rely solely on admin_level, as "
+    "sub-city units are frequently mapped with place tags rather than boundary relations in OSM. If a query returns empty, "
+    "attempt: (a) alphanumeric name variations (e.g. 'Sector 30 A' vs 'Sector 30'), (b) alternate place_type tags "
+    "('suburb', 'neighbourhood', 'quarter'), or (c) osm_search(feature_type='place', feature_value='suburb') near the city center.\n"
     "8. When finished, stop calling tools and respond with a brief summary of what you did.\n"
-    "9. SINGLE POLYGON ACROSS MULTIPLE PLACES: when the user asks for ONE polygon/region/boundary "
-    "spanning multiple cities/districts/sectors (e.g. 'mark Chandigarh, Panchkula and Mohali as one "
-    "polygon', 'tricity area', 'merge X and Y'), call osm_boundary_union with all places in a single "
-    "call. Do NOT call osm_boundary multiple times and then try gis_union — gis_union requires you to "
-    "echo every coordinate as arguments, which is slow and unreliable.\n"
+    "9. SINGLE POLYGON ACROSS MULTIPLE PLACES: when the user asks for ONE merged boundary or study area "
+    "spanning multiple adjacent cities, districts, or boroughs (e.g. 'merge City A and City B into one polygon', "
+    "'metropolitan study area'), call osm_boundary_union with all place names in a single call. Do NOT call "
+    "osm_boundary multiple times and then try manual coordinate stitching.\n"
     "10. AIR QUALITY: prefer get_air_quality_google (per-pollutant breakdown, AQI, health "
     "recommendations). If Google returns an error, HTTP 403, or upstream_unavailable, IMMEDIATELY "
     "call get_air_quality (Open-Meteo, keyless fallback) so the user always receives live PM2.5, PM10, and AQI metrics.\n"
@@ -295,9 +280,9 @@ SYSTEM_PROMPT = (
     "(using osm_boundary or osm_boundary_union), always mention explicitly in your chat response "
     "which administrative level (e.g., admin_level=5 for district/county, admin_level=8 for city/municipality) "
     "was used or chosen.\n"
-    "19. JUNCTIONS AND POI PINNING: When pinning a specific point of interest, landmark, chowk, junction, or address (like 'Fountain Chowk' or 'Airport Chowk'), ALWAYS first call the `geocode` tool with the full descriptive name and containing context (e.g. 'Fountain Chowk, Sector 43, Chandigarh') to resolve its exact point coordinate. DO NOT call `osm_boundary` or `osm_search` for a specific junction/chowk unless you want to search for adjacent amenities or the city boundary. To display the pinned point on the map, call `add_marker` at the resolved coordinate. When the user asks to route/cross through waypoints, ensure each waypoint is geocoded and explicitly passed in the routing tool's `waypoints` argument, and pass the corresponding color or label if customized.\n"
+    "19. JUNCTIONS AND POI PINNING: When pinning a specific point of interest, landmark, intersection, square, roundabout, junction, or address (e.g. 'Times Square, New York' or 'Airport Interchange, Sector 43'), ALWAYS first call the `geocode` tool with the full descriptive name and containing city/state context to resolve its exact point coordinate. DO NOT call `osm_boundary` or `osm_search` for a specific junction/intersection unless you want to search for adjacent amenities or the broader boundary. To display the pinned point on the map, call `add_marker` at the resolved coordinate. When the user asks to route/cross through waypoints, ensure each waypoint is geocoded and explicitly passed in the routing tool's `waypoints` argument, and pass the corresponding color or label if customized.\n"
     "20. AUTOMATIC ARTIFACT PERSISTENCE: Whenever you generate ANY successful substantive planning report, summary card, weather & air quality forecast, demographic profile, site suitability analysis, or structured findings in chat, you MUST execute the `create_artifact` tool call (with a descriptive title, full markdown content, and artifact_type='report' or 'note') so that the information is automatically saved and cataloged in the user's Artifacts panel. NEVER save error messages, tool failure alerts, failed request notes, or clarifying questions as artifacts.\n"
-    "21. ATTRIBUTE FILTERING & VECTOR SUBSETS: When the user asks to filter/extract/isolate specific features from a loaded layer or dataset (e.g. 'filter coastal districts in Tamil Nadu and Kerala', 'show only commercial parcels', 'extract expressways'), ALWAYS call `gis_filter` with the layer_name or path, target values array, and output_layer_name. Do NOT try to highlight features one by one, do NOT paste raw geometries in chat, and do NOT claim you cannot filter without asking the user for a file."
+    "21. ATTRIBUTE FILTERING & VECTOR SUBSETS: When the user asks to filter, extract, or isolate specific features from a loaded layer or dataset (e.g. filtering districts by region/state name, selecting commercial zoning parcels, isolating expressways from a road network), ALWAYS call `gis_filter` with the layer_name or path, target values array, and output_layer_name. Do NOT try to highlight features one by one, do NOT paste raw geometries in chat, and do NOT claim you cannot filter without asking the user for a file."
 )
 
 
@@ -1024,10 +1009,10 @@ def _build_tools() -> list[dict]:
     for name, desc, params in action_defs:
         tools.append(_decl_to_openai(name, desc, params))
 
-    # MCP server tools (utility tools come from UtilityServer in _servers)
-    for srv in _servers.values():
-        for decl in srv.get_declarations():
-            tools.append(_decl_to_openai(decl.name, decl.description, decl.parameters))
+    # Domain Hub tools (Spatial, Mobility, Environment, Planning, Demographics, Places, Scenarios, Utility)
+    for hub in _hubs.values():
+        for decl in hub.get_declarations():
+            tools.append(decl)
 
     # Deep research report generation
     tools.append(_decl_to_openai(
@@ -1078,6 +1063,11 @@ async def _execute_tool(
     if _is_cancelled():
         return json.dumps({"status": "cancelled"})
 
+    # 1. Sync live map layers to SpatialRegistry for real-time reactivity
+    if map_context and "layers" in map_context:
+        spatial_registry.sync_from_map_layers(map_context.get("layers"))
+
+    # 2. Deep research report generation
     if name == "generate_report":
         return await _run_deep_research(
             messages=messages or [],
@@ -1089,420 +1079,78 @@ async def _execute_tool(
             client=client
         )
 
-    # Map action tools → send directly to frontend
+    # 3. Map action tools (send directly to frontend)
     if name in _ACTION_TOOLS:
+        if name == "draw_polygon":
+            coords = args.get("coordinates")
+            if isinstance(coords, list) and len(coords) >= 3:
+                ring = list(coords)
+                if ring[0] != ring[-1]:
+                    ring.append(ring[0])
+                geom = {"type": "Polygon", "coordinates": [ring]}
+                label = args.get("label") or "Drawn Polygon"
+                reg_res = spatial_registry.register_or_get(
+                    name=label,
+                    geometry=geom,
+                    source="ai_draw",
+                    properties={"color": args.get("color")},
+                )
+                if reg_res["is_duplicate"]:
+                    # Highlight existing layer and notify model
+                    await _send_action_if_allowed(ws, "highlight_features", {"layer_name": reg_res["layer_name"]})
+                    poly_data = reg_res["polygon"]
+                    return json.dumps({
+                        "status": "success",
+                        "reused_existing": True,
+                        "layer_name": reg_res["layer_name"],
+                        "message": f"Polygon '{label}' matches existing layer '{reg_res['layer_name']}' ({reg_res['match_reason']}). Focused existing layer.",
+                        "area_km2": poly_data.get("area_km2"),
+                        "area_hectares": poly_data.get("area_hectares"),
+                        "centroid": poly_data.get("centroid"),
+                        "bbox": poly_data.get("bbox"),
+                    })
+
         if not await _send_action_if_allowed(ws, name, args):
             return json.dumps({"status": "cancelled"})
         return json.dumps({"status": "success", "message": f"'{name}' executed on map."})
 
-    # MCP server tools (includes UtilityServer)
-    for srv in _servers.values():
-        if name in srv.tool_names:
-            if _is_cancelled():
+    # 4. Domain Hub tools (Spatial, Mobility, Environment, Planning, Demographics, Places, Scenarios, Utility)
+    target_hub = next((h for h in _hubs.values() if name in h.tool_names), None)
+    if target_hub:
+        if _is_cancelled():
+            return json.dumps({"status": "cancelled"})
+        logger.debug(f"execute_tool hub={target_hub.name} name={name!r} args={args}")
+        try:
+            result: ToolResult = await target_hub.execute(
+                name,
+                args,
+                {"_map_context": map_context, "_ws": ws, "_active_image": active_image, "_client": client},
+            )
+        except Exception as exc:
+            logger.exception(f"Tool '{name}' failed in hub '{target_hub.name}'")
+            return json.dumps({"status": "error", "error": f"Tool '{name}' failed with internal error: {str(exc)}"})
+
+        # Auto-send map action if declared
+        if result.map_action:
+            if not await _send_action_if_allowed(ws, result.map_action["action"], result.map_action.get("payload", {})):
                 return json.dumps({"status": "cancelled"})
-            logger.debug(f"execute_tool name={name!r} args={args}")
+
+        # Auto-save artifact if declared
+        if result.artifact:
             try:
-                result = await srv.execute(name, {**args, "_map_context": map_context, "_ws": ws, "_active_image": active_image, "_client": client})
+                from tools.artifact_store import save_artifact as _save_artifact
+                _save_artifact(
+                    title=result.artifact.get("title", "Report"),
+                    artifact_type=result.artifact.get("artifact_type", "report"),
+                    format=result.artifact.get("format", "markdown"),
+                    content=result.artifact.get("content", ""),
+                    workspace=map_context.get("workspace") if map_context else None,
+                )
+                await _send_action_if_allowed(ws, "refresh_artifacts", {})
+            except Exception as _ae:
+                logger.warning(f"Failed to auto-save artifact for tool '{name}': {_ae}")
 
-            except Exception as exc:
-                logger.exception(f"Tool '{name}' failed with internal error")
-                result = {"status": "error", "error": f"Tool '{name}' failed with internal error: {str(exc)}"}
-
-
-            # Side-effect: refresh artifacts panel after a successful create_artifact or extract_attribute_table
-            if name in ("create_artifact", "extract_attribute_table"):
-                if not await _send_action_if_allowed(ws, "refresh_artifacts", {}):
-                    return json.dumps({"status": "cancelled"})
-                return json.dumps(result)
-
-            # Side-effect: dispatch generated scenarios to frontend
-            if name == "generate_planning_scenarios" and result.get("status") == "success":
-                await _send_action(ws, "add_scenarios", {"scenarios": result.get("scenarios_data", [])})
-                return json.dumps(result)
-
-            # Auto-display measure_distance result as Direct + Route layers on map
-            if name == "measure_distance" and "direct" in result and "points" in result:
-                route = result.get("route", {})
-                payload: dict = {
-                    "points": result["points"],
-                    "direct_km": result["direct"]["distance_km"],
-                }
-                if route:
-                    payload["route_coordinates"] = route.get("coordinates", [])
-                    payload["route_km"] = route.get("distance_km")
-                    payload["duration_minutes"] = route.get("duration_minutes")
-                if result.get("route_error"):
-                    payload["route_error"] = result["route_error"]
-                await _send_action_if_allowed(ws, "draw_distance_measurement", payload)
-                # Return a clean textual summary (not the raw coordinates blob)
-                summary: dict = {
-                    "direct_distance_km": result["direct"]["distance_km"],
-                    "direct_distance_m": result["direct"]["distance_meters"],
-                }
-                if route:
-                    summary["route_distance_km"] = route.get("distance_km")
-                    summary["route_distance_m"] = route.get("distance_meters")
-                    summary["route_duration_minutes"] = route.get("duration_minutes")
-                if result.get("route_error"):
-                    summary["route_error"] = result["route_error"]
-                summary["map_layers_drawn"] = True
-                return json.dumps(summary)
-
-            # Auto-save population projection report as an Artifact
-            if name == "project_population" and result.get("status") == "success":
-                report_md = result.get("report", "")
-                artifact_title = "Population Projection"
-                if report_md:
-                    projections = result.get("projections", [])
-                    place_name = (result.get("place_name") or "").strip()
-                    year_range = ""
-                    if projections:
-                        y0 = projections[0]["year"]
-                        y1 = projections[-1]["year"]
-                        year_range = str(y0) if y0 == y1 else f"{y0}–{y1}"
-                    parts = ["Population Projection"]
-                    if place_name:
-                        parts.append(f"– {place_name}")
-                    if year_range:
-                        parts.append(year_range)
-                    artifact_title = " ".join(parts)
-
-                    try:
-                        from tools.artifact_store import save_artifact as _save_artifact
-                        _save_artifact(
-                            title=artifact_title,
-                            artifact_type="report",
-                            format="markdown",
-                            content=report_md,
-                            workspace=map_context.get("workspace") if map_context else None,
-                        )
-                        if not await _send_action_if_allowed(ws, "refresh_artifacts", {}):
-                            return json.dumps({"status": "cancelled"})
-                    except Exception as _ae:
-                        # Non-fatal: artifact save failure should not block the LLM response
-                        print(f"[project_population] artifact save failed: {_ae}")
-
-                # Return a clean summary so the LLM narrates, not pastes the full report
-                clean: dict = {
-                    "status": "success",
-                    "artifact_saved": bool(report_md),
-                    "artifact_title": artifact_title,
-                    "baseline_year": result.get("baseline", {}).get("year"),
-                    "baseline_population": result.get("baseline", {}).get("population"),
-                    "model_type": result.get("model_type"),
-                    "growth_rate_pct": round(result.get("growth_rate", 0) * 100, 2),
-                    "projections": result.get("projections", []),
-                    "land_demand_hectares": result.get("land_demand_hectares"),
-                }
-                return json.dumps(clean)
-
-            # Auto-save employment projection report as an Artifact
-            if name == "project_employment" and result.get("status") == "success":
-                report_md = result.get("report", "")
-                if report_md:
-                    place_name = (result.get("place_name") or "").strip()
-                    art_title = f"Employment Projection – {place_name}" if place_name else "Employment Projection"
-                    try:
-                        from tools.artifact_store import save_artifact as _save_artifact
-                        _save_artifact(
-                            title=art_title,
-                            artifact_type="report",
-                            format="markdown",
-                            content=report_md,
-                            workspace=map_context.get("workspace") if map_context else None,
-                        )
-                        await _send_action_if_allowed(ws, "refresh_artifacts", {})
-                    except Exception as _ae:
-                        print(f"[project_employment] artifact save failed: {_ae}")
-
-            # Auto-save GTFS transit service report as an Artifact
-            if name == "analyze_gtfs_service" and result.get("status") == "success":
-                report_md = result.get("report") or result.get("summary", "")
-                if report_md:
-                    try:
-                        from tools.artifact_store import save_artifact as _save_artifact
-                        _save_artifact(
-                            title=f"GTFS Transit Service Analysis – {result.get('feed_name', 'Report')}",
-                            artifact_type="report",
-                            format="markdown",
-                            content=report_md,
-                            workspace=map_context.get("workspace") if map_context else None,
-                        )
-                        await _send_action_if_allowed(ws, "refresh_artifacts", {})
-                    except Exception as _ae:
-                        print(f"[analyze_gtfs_service] artifact save failed: {_ae}")
-
-            # Auto-save Street Network analysis report as an Artifact
-            if name == "analyze_street_network" and result.get("status") == "success":
-                report_md = result.get("report") or result.get("summary", "")
-                if report_md:
-                    try:
-                        from tools.artifact_store import save_artifact as _save_artifact
-                        _save_artifact(
-                            title=f"Street Network & Bottleneck Analysis",
-                            artifact_type="analysis",
-                            format="markdown",
-                            content=report_md,
-                            workspace=map_context.get("workspace") if map_context else None,
-                        )
-                        await _send_action_if_allowed(ws, "refresh_artifacts", {})
-                    except Exception as _ae:
-                        print(f"[analyze_street_network] artifact save failed: {_ae}")
-
-            # Auto-save Emissions / Scenario evaluation report as an Artifact
-            if name in ("estimate_scenario_emissions", "compare_scenarios") and result.get("status") == "success":
-                report_md = result.get("report") or result.get("summary", "")
-                if report_md:
-                    try:
-                        from tools.artifact_store import save_artifact as _save_artifact
-                        _save_artifact(
-                            title=f"Scenario Emissions & Air Quality Assessment",
-                            artifact_type="report",
-                            format="markdown",
-                            content=report_md,
-                            workspace=map_context.get("workspace") if map_context else None,
-                        )
-                        await _send_action_if_allowed(ws, "refresh_artifacts", {})
-                    except Exception as _ae:
-                        print(f"[{name}] artifact save failed: {_ae}")
-
-            # Auto-display osm_search result on map
-            if name == "osm_search" and "geojson" in result and result.get("count", 0) > 0:
-                label = f"{args.get('feature_value', 'features')} ({args.get('feature_type', '')})"
-                if not await _send_action_if_allowed(ws, "add_geojson", {"geojson": result["geojson"], "name": label}):
-                    return json.dumps({"status": "cancelled"})
-                features_summary = []
-                for f in result["geojson"].get("features", [])[:50]:
-                    props = f.get("properties", {})
-                    geom = f.get("geometry", {})
-                    entry = {"name": props.get("name", "")}
-                    if geom.get("type") == "Point":
-                        entry["lat"] = geom["coordinates"][1]
-                        entry["lng"] = geom["coordinates"][0]
-                    features_summary.append(entry)
-                result = {
-                    "count": result["count"],
-                    "displayed_on_map": True,
-                    "features": features_summary,
-                }
-
-            # Auto-display overture_places_search and overture_buildings_search
-            elif name in ("overture_places_search", "overture_buildings_search") \
-                    and "geojson" in result and result.get("count", 0) > 0:
-                if name == "overture_places_search":
-                    label = f"Overture: {args.get('category') or args.get('query') or 'places'}"
-                else:
-                    label = "Overture: buildings"
-                if not await _send_action_if_allowed(ws, "add_geojson", {"geojson": result["geojson"], "name": label}):
-                    return json.dumps({"status": "cancelled"})
-                features_summary = []
-                for f in result["geojson"].get("features", [])[:50]:
-                    props = f.get("properties", {})
-                    geom = f.get("geometry", {})
-                    entry = {"name": props.get("name", "") or props.get("id", "")}
-                    if "category" in props:
-                        entry["category"] = props["category"]
-                    if "height" in props and props["height"] is not None:
-                        entry["height_m"] = props["height"]
-                    if geom.get("type") == "Point":
-                        entry["lat"] = geom["coordinates"][1]
-                        entry["lng"] = geom["coordinates"][0]
-                    features_summary.append(entry)
-                result = {
-                    "count": result["count"],
-                    "displayed_on_map": True,
-                    "features": features_summary,
-                }
-
-            # Auto-display nearby_places (Google) — same shape as Overture, so
-            # the trim/summarize step mirrors that branch. Also covers the
-            # polygon-clipped variant.
-            elif name in ("nearby_places", "nearby_places_in_polygon") \
-                    and "geojson" in result and result.get("count", 0) > 0:
-                types_label = ",".join(args.get("included_types") or []) or "places"
-                suffix = " (in polygon)" if name == "nearby_places_in_polygon" else ""
-                label = f"Google: {types_label}{suffix}"
-                if not await _send_action_if_allowed(ws, "add_geojson", {"geojson": result["geojson"], "name": label}):
-                    return json.dumps({"status": "cancelled"})
-                features_summary = []
-                for f in result["geojson"].get("features", [])[:50]:
-                    props = f.get("properties", {})
-                    geom = f.get("geometry", {})
-                    entry = {
-                        "name": props.get("name", "") or props.get("id", ""),
-                        "primary_type": props.get("primary_type"),
-                        "address": props.get("address"),
-                    }
-                    if geom.get("type") == "Point":
-                        entry["lat"] = geom["coordinates"][1]
-                        entry["lng"] = geom["coordinates"][0]
-                    features_summary.append(entry)
-                trimmed = {
-                    "count": result["count"],
-                    "displayed_on_map": True,
-                    "features": features_summary,
-                }
-                # Preserve polygon-clip meta so the LLM can warn when the
-                # bounding-circle was capped or when filtering dropped many.
-                for k in ("truncated_search", "upstream_count", "search_radius_meters", "centroid"):
-                    if k in result:
-                        trimmed[k] = result[k]
-                result = trimmed
-
-            # Auto-display osm_boundary on map. Keep geometry/centroid/bbox/area in
-            # the model-visible result so follow-up tools (gis_area, gis_buffer,
-            # gis_point_in_polygon) or chat responses have exact numbers immediately.
-            elif name == "osm_boundary" and "geojson" in result:
-                label = f"{args.get('name', 'Boundary')} boundary"
-                if not await _send_action_if_allowed(ws, "add_geojson", {"geojson": result["geojson"], "name": label}):
-                    return json.dumps({"status": "cancelled"})
-                model_result: dict = {
-                    "name": result.get("name", ""),
-                    "displayed_on_map": True,
-                    "layer_name": label,
-                }
-                if "area_km2" in result:
-                    model_result["area_km2"] = result["area_km2"]
-                if "area_hectares" in result:
-                    model_result["area_hectares"] = result["area_hectares"]
-                if "centroid" in result:
-                    model_result["centroid"] = result["centroid"]
-
-                feats = result["geojson"].get("features") or []
-                geom = feats[0].get("geometry") if feats else None
-                if geom and _shape is not None:
-                    try:
-                        g = _shape(geom)
-                        if not g.is_empty:
-                            minx, miny, maxx, maxy = g.bounds
-                            c = g.centroid
-                            if "centroid" not in model_result:
-                                model_result["centroid"] = {"lat": round(c.y, 6), "lng": round(c.x, 6)}
-                            model_result["bbox"] = {
-                                "south": round(miny, 6), "west": round(minx, 6),
-                                "north": round(maxy, 6), "east": round(maxx, 6),
-                            }
-                    except Exception:
-                        pass
-
-                if geom and "area_km2" not in model_result:
-                    try:
-                        from tools.geo import geodesic_area_m2
-                        area_m2 = geodesic_area_m2(geom)
-                        model_result["area_km2"] = round(area_m2 / 1e6, 2)
-                        model_result["area_hectares"] = round(area_m2 / 1e4, 2)
-                    except Exception:
-                        pass
-
-                if geom:
-                    model_result["geometry"] = geom
-                result = model_result
-
-            # Auto-display merged boundary union. Only the summary (centroid,
-            # bbox, area, place lists) goes back to the model — the merged
-            # geometry can be huge and is already on the map as a layer.
-            elif name == "osm_boundary_union" and "geojson" in result:
-                label = result.get("name") or args.get("layer_name") or "Merged region"
-                if not await _send_action_if_allowed(ws, "add_geojson", {"geojson": result["geojson"], "name": label}):
-                    return json.dumps({"status": "cancelled"})
-                model_result: dict = {
-                    "name": label,
-                    "displayed_on_map": True,
-                    "layer_name": label,
-                    "places_resolved": result.get("places_resolved", []),
-                    "places_failed": result.get("places_failed", []),
-                }
-                feats = result["geojson"].get("features") or []
-                geom = feats[0].get("geometry") if feats else None
-                if geom and _shape is not None:
-                    try:
-                        g = _shape(geom)
-                        if not g.is_empty:
-                            minx, miny, maxx, maxy = g.bounds
-                            c = g.centroid
-                            model_result["centroid"] = {"lat": round(c.y, 6), "lng": round(c.x, 6)}
-                            model_result["bbox"] = {
-                                "south": round(miny, 6), "west": round(minx, 6),
-                                "north": round(maxy, 6), "east": round(maxx, 6),
-                            }
-                    except Exception:
-                        pass
-                if geom:
-                    try:
-                        from tools.geo import area_breakdown
-                        model_result["area"] = area_breakdown(geom)
-                    except Exception:
-                        pass
-                result = model_result
-
-            # Auto-display route
-            elif name == "osm_route_overview" and "geometry" in result:
-                if not await _send_action_if_allowed(ws, "draw_line", {
-                    "coordinates": result["geometry"]["coordinates"],
-                    "color": "#2563eb", "width": 4,
-                    "label": f"Route ({result.get('distance_km', '?')} km)",
-                }):
-                    return json.dumps({"status": "cancelled"})
-                result = {
-                    "distance_km": result.get("distance_km"),
-                    "duration_minutes": result.get("duration_minutes"),
-                    "displayed_on_map": True,
-                    "layer_name": f"Route ({result.get('distance_km', '?')} km)",
-                }
-
-            # Auto-display bus routes
-            elif name == "osm_fetch_bus_routes" and "geojson" in result:
-                label = result.get("name") or "Transit Routes"
-                if not await _send_action_if_allowed(ws, "add_geojson", {
-                    "geojson": result["geojson"],
-                    "name": label,
-                }):
-                    return json.dumps({"status": "cancelled"})
-                result = {
-                    "name": label,
-                    "count": result.get("count", 0),
-                    "displayed_on_map": True,
-                    "layer_name": label,
-                }
-
-            # Auto-display buffer/hull/union
-            elif name in ("gis_buffer", "gis_convex_hull", "gis_union") and "geojson" in result:
-                label = {"gis_buffer": f"Buffer ({args.get('radius_meters', '?')}m)",
-                         "gis_convex_hull": "Convex Hull", "gis_union": "Union"}[name]
-                if not await _send_action_if_allowed(ws, "add_geojson", {
-                    "geojson": {"type": "FeatureCollection", "features": [result["geojson"]]},
-                    "name": label,
-                }):
-                    return json.dumps({"status": "cancelled"})
-
-            # Auto-display overlay/relational ops. intersection/difference return
-            # a single Feature; clip/dissolve/spatial_join return a
-            # FeatureCollection. Normalize to an FC, render it, and collapse the
-            # model-visible result so huge geometry isn't echoed back.
-            elif name in (
-                "gis_intersection", "gis_difference", "gis_clip",
-                "gis_dissolve", "gis_spatial_join",
-            ) and "geojson" in result:
-                gj = result["geojson"]
-                fc = gj if gj.get("type") == "FeatureCollection" else {
-                    "type": "FeatureCollection", "features": [gj],
-                }
-                label = {
-                    "gis_intersection": "Intersection",
-                    "gis_difference": "Difference",
-                    "gis_clip": "Clipped",
-                    "gis_dissolve": "Dissolved",
-                    "gis_spatial_join": "Spatial join",
-                }[name]
-                if not await _send_action_if_allowed(ws, "add_geojson", {"geojson": fc, "name": label}):
-                    return json.dumps({"status": "cancelled"})
-                collapsed: dict = {"displayed_on_map": True, "layer_name": label}
-                for k in ("area", "kept", "group_count", "points", "joined", "intersects", "empty", "message"):
-                    if k in result:
-                        collapsed[k] = result[k]
-                result = collapsed
-
-            return json.dumps(result)
+        return result.to_json()
 
     return json.dumps({"error": f"Unknown tool: {name}"})
 

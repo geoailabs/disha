@@ -1831,6 +1831,7 @@ function App() {
       }
 
       let geometry: Geometry
+      let areaProps: Record<string, any> = {}
       if (type === 'point') {
         geometry = { type: 'Point', coordinates: coordinates[0] }
       } else if (type === 'line') {
@@ -1842,6 +1843,17 @@ function App() {
             ? [...coordinates, coordinates[0]]
             : coordinates
         geometry = { type: 'Polygon', coordinates: [ring] }
+        try {
+          const polyTurf = turf.polygon([ring])
+          const areaM2 = turf.area(polyTurf)
+          const areaHa = Number((areaM2 / 10000).toFixed(2))
+          const areaKm2 = Number((areaM2 / 1e6).toFixed(4))
+          areaProps = {
+            area_m2: Math.round(areaM2),
+            area_hectares: areaHa,
+            area_km2: areaKm2,
+          }
+        } catch { /* ignore */ }
       }
       userShapeCounterRef.current += 1
       const label = type === 'point' ? 'Point' : type === 'line' ? 'Line' : 'Polygon'
@@ -1857,7 +1869,15 @@ function App() {
         color,
         data: {
           type: 'FeatureCollection',
-          features: [{ type: 'Feature', geometry, properties: { name, source: 'user_draw' } }],
+          features: [{
+            type: 'Feature',
+            geometry,
+            properties: {
+              name,
+              source: 'user_draw',
+              ...areaProps,
+            },
+          }],
         },
       }
       setLayers((prev) => [...prev, layer])

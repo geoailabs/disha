@@ -1,8 +1,10 @@
 # Disha
 
-A geospatial-first, AI-driven desktop IDE for urban planners. You chat with an LLM that drives a live MapLibre map — flying to places, fetching OpenStreetMap / Overture / Google data, drafting zoning, running GIS analysis, importing shapefiles, styling layers, opening 360° Street View, and saving publication-ready figures and planning artifacts. Built as an Electron desktop app over a Python FastAPI backend.
+**A geospatial-first, AI-native desktop IDE for urban and regional planners.**
 
-> Think "Disha: the canvas is a map and the agent's tools are geospatial."
+Disha unifies an interactive spatial map canvas with a multi-domain AI reasoning engine. Planners can explore, analyze, model, and document complex urban environments through natural conversation and direct spatial interaction — bridging computational GIS, planning analytics, and cartography into a unified desktop workspace.
+
+> **Architecture:** Electron + React + MapLibre desktop frontend connected to a Python FastAPI backend powered by **7 Core Urban Planning Domains + 1 Cross-Cutting Utility Engine**.
 
 ---
 
@@ -59,35 +61,20 @@ The chat panel on the right is the main control surface:
 - **Deep research** — ask for a report and the assistant runs a multi-search deep-research pass (OpenAI `o4-mini-deep-research` + web search), streaming each search step and returning a cited Markdown report you can download as `.md` or PDF.
 - **Map-aware context** — the current viewport bounds, visible layers (with active styling summary), small-layer geometry, and saved bookmarks are appended to every prompt, so the assistant always knows what you're looking at.
 
-#### What the assistant can do
+#### The 7+1 Domain Hub Architecture
 
-| Capability | Tools |
-|---|---|
-| **Navigate** | `fly_to`, `fit_bounds`, `go_to_bookmark` |
-| **Annotate** | `add_marker`, `add_markers`, `clear_markers`, `draw_line`, `draw_polygon`, `draw_circle` |
-| **Layers & style** | `add_geojson`, `toggle_layer`, `remove_layer`, `set_layer_style` (flat color), `style_layer` (data-driven categorized/graduated + labels), `highlight_features` |
-| **Bookmarks & clip** | `save_bookmark`, `go_to_bookmark`, `export_region_clip` |
-| **OpenStreetMap** | `osm_search`, `osm_boundary`, `osm_boundary_union`, `osm_reverse_geocode`, `osm_route_overview` |
-| **Overture Maps** | `overture_places_search`, `overture_buildings_search` |
-| **Google Places** *(needs key)* | `places_autocomplete`, `place_details`, `nearby_places`, `nearby_places_in_polygon`, `places_density` |
-| **Google environment** *(needs key)* | `get_elevation`, `get_air_quality_google`, `get_solar_building` |
-| **GIS analysis** | `gis_buffer`, `gis_centroid`, `gis_area`, `gis_convex_hull`, `gis_point_in_polygon`, `gis_bounding_box`, `gis_union` |
-| **GIS overlay & relational** | `gis_intersection`, `gis_difference`, `gis_clip`, `gis_dissolve`, `gis_nearest`, `gis_spatial_join` |
-| **Zoning** | `analyze_zones`, `detect_zone_overlaps` |
-| **Demographics** | `get_demographics` (WorldPop population around coordinates, OSM fallback), `project_population` |
-| **Street Network & Routing** | `fetch_street_network`, `analyze_street_network`, `find_shortest_path`, `find_freight_route`, `route_multi_stop`, `assign_traffic_flows` |
-| **Origin-Destination (OD) Flows** | `import_od_matrix`, `generate_gravity_od_matrix`, `calculate_mode_choice`, `visualize_od_flows` |
-| **ITS & Parking** | `optimize_traffic_signal`, `analyze_parking_requirements` |
-| **Emissions & AQI** | `estimate_scenario_emissions` |
-| **Google Earth Engine (GEE)** | `get_gee_layer`, `get_population_layer`, `get_dem_layer`, `get_land_cover`, `analyze_lulc_change`, `analyze_land_use_zonal_stats` ($km^2$ & % breakdown), `extract_land_use_polygons` (vector GeoJSON extraction), `get_ndvi_layer` |
-| **DataMeet & Public Datasets** | `browse_datameet_catalog`, `import_datameet_boundary`, `import_public_dataset` |
-| **GTFS Transit** | `import_gtfs_feed` (local `.zip`/folder or URL), `analyze_gtfs_service`, `analyze_gtfs_schedules` (hourly headways & timetables), `analyze_transit_catchment` (400m/800m walking buffers) |
-| **WMS Servers** | `add_wms_layer`, `list_wms_layers` |
-| **Weather** | `get_weather`, `get_air_quality` |
-| **Search & geocode** | `web_search`, `geocode`, `measure_distance`, `measure_area` |
-| **Scenario Planning** | `generate_planning_scenarios`, `compare_scenarios` |
-| **Artifacts** | `create_artifact`, `list_artifacts`, `get_artifact` |
-| **Reports** | `generate_report` (deep-research planning report) |
+The assistant's capabilities are organized across **7 core urban planning disciplines** powered by **1 cross-cutting utility engine**:
+
+| Domain Hub | Planning Discipline | Core Capabilities |
+|---|---|---|
+| **1. SpatialHub** | Spatial Geometry & Land Management | Central polygon registry (deduplication & reuse), geodesic buffering/areas, spatial overlays (intersection, difference, clip, dissolve, spatial join), OSM/DataMeet administrative boundaries, WMS raster layers. |
+| **2. MobilityHub** | Multimodal Transportation & Transit | Street network graphs, Dijkstra/freight routing, GTFS transit schedules & 400m/800m catchment buffers, ITS signal timing optimization, origin-destination (OD) gravity matrices & flow assignment. |
+| **3. EnvironmentHub** | Climate, Remote Sensing & Emissions | Google Earth Engine LULC & NDVI satellite indices, Open-Meteo weather & air quality, solar building analysis, digital elevation models (DEM), fleet emissions modeling. |
+| **4. PlanningHub** | Zoning & Plan Digitization | Zoning code compliance, zone density & overlap detection, master plan georeferencing, and image feature digitization. |
+| **5. DemographicsHub** | Population & Economic Forecasting | WorldPop 100m grid population metrics, cohort-component demographic forecasting, employment density projections. |
+| **6. PlacesHub** | Built Form & Urban POIs | Google Places search/details/density, Overture 3D building footprints and heights. |
+| **7. ScenariosHub** | Scenario Planning & Evaluation | Alternative planning scenario generation, Multi-Criteria Decision Analysis (MCDA) scoring and matrix comparisons. |
+| **+1. UtilityHub** | Shared System Infrastructure | Cross-cutting forward/reverse geocoding, live web research, geodesic distance/area measurements, and artifact persistence. |
 
 ### 📌 Artifacts
 
@@ -261,22 +248,23 @@ Backend (packages/backend/) talks to:
 │   ├── cli.py                     PyInstaller entry point (uvicorn launcher)
 │   ├── database.py                SQLite + migrations
 │   ├── routers/                   chat, files, artifacts, geocode, streetview
-│   ├── mcp_servers/               One class per domain (OSM, GIS, weather, zoning,
-│   │                              demographics, Overture, Google Places, Google env)
-│   └── tools/                     UtilityServer, geodesic geo helpers, vector_convert,
-│                                  Google/HTTP wrappers, cache, artifact store, worldpop
+│   ├── domains/                   7+1 Domain Hubs (Spatial, Mobility, Environment, Planning,
+│   │                              Demographics, Places, Scenarios, Utility) & ToolResult protocol
+│   ├── mcp_servers/               Underlying domain servers (OSM, GIS, weather, zoning, etc.)
+│   ├── tools/                     SpatialRegistry, UtilityServer, geodesic geo helpers,
+│   │                              vector_convert, Google/HTTP wrappers, cache, artifact store
+│   └── tests/                     Automated pytest test suite (all hubs, registry, websocket)
 ├── ARCHITECTURE.md                Deep dive — features + system wiring
 ├── CLAUDE.md                      Orientation for AI coding agents
 └── README.md                      This file
 ```
 
-For a deeper dive into the agentic loop, the action contract, the MCP server pattern, and persistence, see **[ARCHITECTURE.md](ARCHITECTURE.md)**.
+For a deeper dive into the agentic loop, the action contract, the 7+1 Domain Hub architecture, spatial registry deduplication, and persistence, see **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
 ---
 
 ## Known gaps
 
-- **No automated tests** — the agent loop, OSM ring-merge, and geometry math are untested.
 - **PDF vision is rasterize-then-send** — large multi-page PDFs are capped per page.
 - **Overture cold start** — the first Overture query for a region scans public S3 parquet and can take 1–2 minutes; subsequent queries are cached.
 - **Raster basemaps only** — no Mapbox token, PMTiles, MBTiles, or vector tiles.

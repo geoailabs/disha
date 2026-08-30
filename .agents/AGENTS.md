@@ -40,3 +40,24 @@ This file documents rules and guidelines for pair programming on this repository
   ```
 * **ArtifactsPanel double-effect race:** `fetchArtifacts` must guard on `workspacePath` being non-null before hitting the API. If `workspacePath` is null, it must clear state immediately and return — never call `fetch()`. A separate `useEffect` that clears on workspace-close will race with the fetch callback and lose. The guard must live inside `fetchArtifacts` itself.
 * **Never revert these guards.** Removing `isClosingRef` from any of the auto-save effects or `fetchArtifacts` will silently re-introduce data corruption that is very hard to reproduce or notice.
+
+## Agent Prompting & Backend GIS Invariants
+
+### 7. System Prompt Neutrality & Zero Test-Case Bias
+* **Universal Applicability:** Prompts in `packages/backend/routers/chat.py` (`SYSTEM_PROMPT`, `_RESEARCH_SYSTEM`, and tool descriptions) must remain 100% location-agnostic, neutral, and globally applicable to any city, region, or planning authority worldwide.
+* **No Hardcoded Test-Case Entities:** Never inject specific city names, state names, transit terminal acronyms, chowk/junction names, or test-case entities (e.g. "Chandigarh", "Delhi", "Munnar", "Sundarbans", "ISBT", "Tamil Nadu") as specialized rules or examples in `chat.py`. Use generic illustrative placeholders (e.g. "City A and City B", "Times Square", "transit terminals", "commercial parcels").
+* **Sub-City Boundaries Rule:** Sub-city spatial queries (neighborhoods, sectors, wards, quarters, suburbs) must be guided by generic GIS principles (OSM `place=*` tag variations and alphanumeric suffixes) rather than region-specific assumptions.
+
+### 8. Case-Insensitive & Exact-Key Matching in GIS Operations
+* **Exact-Key Prioritization:** In `gis_filter` and all attribute querying tools, always evaluate exact property key matches (`k.lower() == target_prop.lower()`) before falling back to substring matching. This prevents catastrophic key collisions (such as a search for `state` matching the numeric `statecode` property first).
+* **Case & Whitespace Invariance:** Compare string attribute values case-insensitively and trim leading/trailing whitespace (`val.strip().lower() in target_set`).
+* **Non-Empty String Matching:** When checking substring containment (`ts in st_name`), always verify that both strings are non-empty (`bool(st_name.strip())`) to prevent empty strings from matching everything.
+
+### 9. Model Context Metric Preservation in `chat.py`
+* **Never Strip Calculated Tool Metrics:** When formatting tool outputs returned to the LLM agent loop in `packages/backend/routers/chat.py` (e.g., `osm_boundary`, `osm_boundary_union`, `gis_filter`), never strip calculated quantitative metrics (`area_km2`, `area_hectares`, `centroid`, `bbox`).
+* **Root Cause Prevention:** If the model does not see the computed area or centroid in the tool output payload, it assumes the tool failed and panics into external web searches or outputs false failure messages. Always preserve analytical metrics in the model-visible result dictionary.
+
+### 10. Artifact Persistence Guardrails
+* **Substantive Reports Only:** Automated artifact persistence (Rule 20) and backend interceptors must only save substantive planning reports, demographic profiles, weather & air quality forecast cards, scenario evaluations, and GIS summaries.
+* **Prohibit Error/Failure Artifacts:** Never save error messages, tool failure alerts, failed request traces, or clarifying prompts as artifacts.
+* **In-Place Deduplication:** All artifact storage must enforce `(title, artifact_type)` deduplication in `packages/backend/tools/artifact_store.py` to prevent duplicate sidebar entries when updating or refining existing findings.

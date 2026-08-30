@@ -795,13 +795,13 @@ class GISServer:
                         features = geom_data.get("features", [geom_data] if geom_data.get("type") == "Feature" else [])
 
         # Fallback: scan workspace for matching .geojson files if features is still empty
-        if not features and workspace:
+        if not features and workspace and layer_name:
             ws_dir = Path(workspace)
             candidates = list(ws_dir.glob("*.geojson")) + list(ws_dir.glob("*.json"))
             for cand in candidates:
                 if "project.json" in cand.name or "documents.json" in cand.name:
                     continue
-                if (layer_name and layer_name.lower() in cand.stem.lower()) or "district" in cand.stem.lower() or "state" in cand.stem.lower():
+                if layer_name.lower() in cand.stem.lower():
                     try:
                         data = json.loads(cand.read_text(encoding="utf-8"))
                         if isinstance(data, dict) and data.get("type") == "FeatureCollection":
@@ -863,8 +863,9 @@ class GISServer:
             if is_match:
                 matched_features.append(f)
                 name_val = (
-                    props.get("district") or props.get("district_name") or props.get("dtname")
-                    or props.get("name") or props.get("st_nm") or props.get("zone_code") or str(props)[:30]
+                    props.get("name") or props.get("title") or props.get("label")
+                    or (props.get(prop_name) if prop_name else None)
+                    or props.get("id") or (next(iter(props.values())) if props else "")
                 )
                 matched_names.append(str(name_val))
 
