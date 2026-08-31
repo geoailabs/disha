@@ -1253,6 +1253,10 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
   const sendMessageDirect = async (text: string): Promise<void> => {
     if ((!text.trim() && attachments.length === 0) || isStreaming || !activeConversation) return
 
+    const activeSelection = mapContext.selected_features && mapContext.selected_features.length > 0
+      ? mapContext.selected_features
+      : undefined
+
     const userMessage: ChatMessage = {
       role: 'user',
       content: text.trim() || (attachments.length > 0 ? `[Attached ${attachments[0].fileName}]` : ''),
@@ -1262,6 +1266,7 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
         filePath: att.filePath || '',
         mimeType: att.mimeType,
       })),
+      ...(activeSelection ? { selected_features: activeSelection } : {}),
     }
     const updated: ChatMessage[] = [...messages, userMessage]
     const placeholderTs = Date.now() + 1
@@ -1285,12 +1290,6 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
         timestamp: placeholderTs,
       }
 
-      // First payload on a fresh connection ships the conversation history
-      // so the backend can rebuild the OpenAI message list. Subsequent
-      // payloads on the same connection carry only the new user message.
-      // Document mode now bridges to the live map: send map_context too so
-      // the model can fly_to / add markers / run GIS tools while looking at
-      // the document. Backend accepts both fields in either mode.
       const payload: Record<string, unknown> = {
         content: userMessage.content,
         map_context: mapContext,
@@ -1320,6 +1319,9 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
       historySentRef.current = true
 
       setAttachments([]) // Clear attachments on send
+      if (onClearSelectedFeatures) {
+        onClearSelectedFeatures() // Clear selection chip from input box on send
+      }
       ws.send(JSON.stringify(payload))
     } catch {
       setChatError({
@@ -1973,6 +1975,19 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
                         <span className="attachment-name">{att.fileName}</span>
                       </div>
                     ))}
+                  </div>
+                )}
+                {msg.selected_features && msg.selected_features.length > 0 && (
+                  <div className="chat-msg-attachments">
+                    {msg.selected_features.map((feat, idx) => {
+                      const label = feat.properties.layer_name || feat.properties.stop_name || feat.properties.name || feat.layerName || 'Selected Map Element'
+                      return (
+                        <div key={idx} className="chat-msg-attachment-item" style={{ borderColor: 'rgba(59,130,246,0.5)', background: 'rgba(59,130,246,0.15)' }} title={JSON.stringify(feat.properties, null, 2)}>
+                          <span className="attachment-icon">📍</span>
+                          <span className="attachment-name" style={{ color: '#60a5fa', fontWeight: 500 }}>{label}</span>
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
               </div>

@@ -59,7 +59,7 @@ The chat panel on the right is the main control surface:
 - **Visible tool calls** — every OSM query, GIS op, or map action shows inline as it executes.
 - **Streaming** — replies arrive token-by-token over a WebSocket.
 - **Deep research** — ask for a report and the assistant runs a multi-search deep-research pass (OpenAI `o4-mini-deep-research` + web search), streaming each search step and returning a cited Markdown report you can download as `.md` or PDF.
-- **Map-aware context** — the current viewport bounds, visible layers (with active styling summary), small-layer geometry, and saved bookmarks are appended to every prompt, so the assistant always knows what you're looking at.
+- **Map-aware context & Interactive Selection** — the current viewport bounds, visible layers, selected feature/layer highlights (with centroid, bounding box, properties, and file path), small-layer geometry, and saved bookmarks are appended to prompts, allowing the AI to immediately analyze selected map shapes without exceeding token limits.
 
 #### The 7+1 Domain Hub Architecture
 

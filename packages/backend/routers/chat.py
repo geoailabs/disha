@@ -28,19 +28,25 @@ _BACKEND_DIR = Path(__file__).parent.parent
 sys.path.insert(0, str(_BACKEND_DIR))
 
 from database import DB_PATH
-from domains import (
-    BaseDomainHub,
-    DemographicsHub,
-    EnvironmentHub,
-    MobilityHub,
-    PlacesHub,
-    PlanningHub,
-    ScenariosHub,
-    SpatialHub,
-    ToolResult,
-    UtilityHub,
-)
-from tools.spatial_registry import spatial_registry
+from mcp_servers.osm_server import OSMServer
+from mcp_servers.gis_server import GISServer
+from mcp_servers.weather_server import WeatherServer
+from mcp_servers.zoning_server import ZoningServer
+from mcp_servers.demographics_server import DemographicsServer
+from mcp_servers.overture_server import OvertureServer
+from mcp_servers.google_places_server import GooglePlacesServer
+from mcp_servers.google_environment_server import GoogleEnvironmentServer
+from mcp_servers.wms_server import WMSServer
+from mcp_servers.gee_server import GEEServer
+from mcp_servers.datameet_server import DatameetServer
+from mcp_servers.network_server import NetworkServer
+from mcp_servers.gtfs_server import GTFSServer
+from mcp_servers.od_server import ODServer
+from mcp_servers.scenario_server import ScenarioServer
+from mcp_servers.its_server import ITSServer
+from mcp_servers.emissions_server import EmissionsServer
+from mcp_servers.plot_server import PlotServer
+from tools.utility import UtilityServer
 from tools.config import get_model as _get_model
 from tools.google import google_maps_key_var
 from tools.action_utils import send_action as _send_action
@@ -90,19 +96,27 @@ def _env_google_maps_api_key() -> str:
 _env_key = _env_openai_api_key()
 _client = AsyncOpenAI(api_key=_env_key) if _env_key else None
 
-_util_hub = UtilityHub(db_path=DB_PATH)
-_hubs: dict[str, BaseDomainHub] = {
-    "spatial": SpatialHub(db_path=DB_PATH),
-    "mobility": MobilityHub(),
-    "environment": EnvironmentHub(),
-    "planning": PlanningHub(utility_server=_util_hub.utility_server),
-    "demographics": DemographicsHub(),
-    "places": PlacesHub(),
-    "scenarios": ScenariosHub(),
-    "utility": _util_hub,
+_servers = {
+    "osm": OSMServer(),
+    "gis": GISServer(),
+    "weather": WeatherServer(),
+    "zoning": ZoningServer(),
+    "demographics": DemographicsServer(),
+    "overture": OvertureServer(),
+    "google_places": GooglePlacesServer(),
+    "google_env": GoogleEnvironmentServer(),
+    "wms": WMSServer(),
+    "gee": GEEServer(),
+    "datameet": DatameetServer(),
+    "network": NetworkServer(),
+    "gtfs": GTFSServer(),
+    "od": ODServer(),
+    "scenario": ScenarioServer(),
+    "its": ITSServer(),
+    "emissions": EmissionsServer(),
+    "plot": PlotServer(),
+    "utility": UtilityServer(db_path=DB_PATH),
 }
-# Backward compatibility alias
-_servers = _hubs
 
 # ── Action tool names (sent directly to frontend as map actions) ──────────────
 
@@ -209,7 +223,8 @@ SYSTEM_PROMPT = (
     "- zoom: current map zoom level.\n"
     "- bounds: current viewport (west,south,east,north) when available.\n"
     "- bookmarks: saved regions; use go_to_bookmark to navigate.\n"
-    "- Layer list with geometry_data (actual coordinates for small layers, bbox for large ones).\n\n"
+    "- Layer list with geometry_data (actual coordinates for small layers, bbox for large ones).\n"
+    "- selected_features: active map elements/layers highlighted by the user, providing layer name, attributes summary, centroid [lng, lat], bounding box, and file path.\n\n"
     "When the user refers to 'here', 'this location', 'current view', or 'current map', utilize the map 'Center' longitude and latitude coordinates from the Map Context. Do NOT call the 'geocode' tool with 'here' or 'this place'. For coordinate-based tools (like get_weather or get_air_quality), pass the latitude and longitude directly. For text-based tools (like web_search), call the 'osm_reverse_geocode' tool first to obtain a readable place name/address.\n\n"
     "IMPORTANT RULES:\n"
     "1. Do NOT add markers unless the user explicitly asks for markers or pins. When the user asks for multiple different points, use one add_markers call so the app creates a grouped set of separate marker layers.\n"
@@ -280,9 +295,10 @@ SYSTEM_PROMPT = (
     "(using osm_boundary or osm_boundary_union), always mention explicitly in your chat response "
     "which administrative level (e.g., admin_level=5 for district/county, admin_level=8 for city/municipality) "
     "was used or chosen.\n"
-    "19. JUNCTIONS AND POI PINNING: When pinning a specific point of interest, landmark, intersection, square, roundabout, junction, or address (e.g. 'Times Square, New York' or 'Airport Interchange, Sector 43'), ALWAYS first call the `geocode` tool with the full descriptive name and containing city/state context to resolve its exact point coordinate. DO NOT call `osm_boundary` or `osm_search` for a specific junction/intersection unless you want to search for adjacent amenities or the broader boundary. To display the pinned point on the map, call `add_marker` at the resolved coordinate. When the user asks to route/cross through waypoints, ensure each waypoint is geocoded and explicitly passed in the routing tool's `waypoints` argument, and pass the corresponding color or label if customized.\n"
-    "20. AUTOMATIC ARTIFACT PERSISTENCE: Whenever you generate ANY successful substantive planning report, summary card, weather & air quality forecast, demographic profile, site suitability analysis, or structured findings in chat, you MUST execute the `create_artifact` tool call (with a descriptive title, full markdown content, and artifact_type='report' or 'note') so that the information is automatically saved and cataloged in the user's Artifacts panel. NEVER save error messages, tool failure alerts, failed request notes, or clarifying questions as artifacts.\n"
-    "21. ATTRIBUTE FILTERING & VECTOR SUBSETS: When the user asks to filter, extract, or isolate specific features from a loaded layer or dataset (e.g. filtering districts by region/state name, selecting commercial zoning parcels, isolating expressways from a road network), ALWAYS call `gis_filter` with the layer_name or path, target values array, and output_layer_name. Do NOT try to highlight features one by one, do NOT paste raw geometries in chat, and do NOT claim you cannot filter without asking the user for a file."
+    "19. JUNCTIONS AND POI PINNING: When pinning a specific point of interest, landmark, chowk, junction, or address (like 'Fountain Chowk' or 'Airport Chowk'), ALWAYS first call the `geocode` tool with the full descriptive name and containing context (e.g. 'Fountain Chowk, Sector 43, Chandigarh') to resolve its exact point coordinate. DO NOT call `osm_boundary` or `osm_search` for a specific junction/chowk unless you want to search for adjacent amenities or the city boundary. To display the pinned point on the map, call `add_marker` at the resolved coordinate. When the user asks to route/cross through waypoints, ensure each waypoint is geocoded and explicitly passed in the routing tool's `waypoints` argument, and pass the corresponding color or label if customized.\n"
+    "20. AUTOMATIC ARTIFACT & MULTI-FORMAT EXPORT PERSISTENCE: Whenever you generate ANY planning report, summary card, demographic profile, plot/histogram, or structured analysis, call `create_artifact` with a descriptive title and format ('pdf', 'docx', 'html', 'png', 'jpg', 'xlsx', 'txt', 'json', 'markdown', 'table', 'geojson'). You CAN create PNG, JPEG, PDF, Word (.docx), HTML, and Excel (.xlsx) artifacts directly using `create_artifact`. For charts and histograms, call `create_plot` to generate clean plot image artifacts.\n"
+    "21. ATTRIBUTE FILTERING & VECTOR SUBSETS: When the user asks to filter/extract/isolate specific features from a loaded layer or dataset (e.g. 'filter coastal districts in Tamil Nadu and Kerala', 'show only commercial parcels', 'extract expressways'), ALWAYS call `gis_filter` with the layer_name or path, target values array, and output_layer_name. Do NOT try to highlight features one by one, do NOT paste raw geometries in chat, and do NOT claim you cannot filter without asking the user for a file."
+)
 )
 
 
@@ -1484,6 +1500,29 @@ async def chat_websocket(websocket: WebSocket):
 
             if map_context:
                 system += f"\n\nCurrent map state:\n{json.dumps(map_context, indent=2)}"
+                if map_context.get("selected_features"):
+                    selected_block = "\n\n[USER SELECTED MAP ELEMENTS / HIGHLIGHTED LAYERS]\n"
+                    for sf in map_context["selected_features"]:
+                        lname = sf.get("layerName") or sf.get("properties", {}).get("layer_name") or "Selected Map Element"
+                        props = sf.get("properties", {})
+                        centroid = sf.get("centroid")
+                        bbox = sf.get("bbox")
+                        fpath = sf.get("filePath")
+                        fcount = sf.get("featureCount")
+
+                        selected_block += f"- Selected Element/Layer: {lname}\n"
+                        if fpath:
+                            selected_block += f"  File Path: {fpath}\n"
+                        if fcount:
+                            selected_block += f"  Feature Count: {fcount}\n"
+                        if centroid:
+                            selected_block += f"  Centroid: [lng={centroid[0]}, lat={centroid[1]}]\n"
+                        if bbox:
+                            selected_block += f"  Bounding Box: [W={bbox[0]}, S={bbox[1]}, E={bbox[2]}, N={bbox[3]}]\n"
+                        if props:
+                            clean_props = {k: v for k, v in props.items() if v is not None}
+                            selected_block += f"  Properties: {json.dumps(clean_props)}\n"
+                    user_content += selected_block
             tools = _TOOLS
 
             # Build unified message content parts for vision model

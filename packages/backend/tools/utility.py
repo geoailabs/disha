@@ -167,9 +167,9 @@ class UtilityServer:
             ToolDeclaration(
                 name="create_artifact",
                 description=(
-                    "Save a note, analysis, report, or geospatial dataset as a project artifact. "
-                    "Supported formats: 'markdown' (default), 'table', 'geojson'. "
-                    "Do NOT use format='image' — images are created from the map export UI only."
+                    "Save a note, analysis, report, or geospatial export as a project artifact. "
+                    "Supported formats: 'jpeg', 'png', 'jpg', 'pdf', 'docx', 'html', 'xlsx', 'txt', 'json', 'markdown', 'table', 'geojson'. "
+                    "You CAN create JPEG, PNG, PDF, Word (.docx), HTML, and Excel (.xlsx) artifacts directly using this tool."
                 ),
                 parameters={
                     "type": "object",
@@ -189,8 +189,8 @@ class UtilityServer:
                         },
                         "format": {
                             "type": "string",
-                            "enum": ["markdown", "table", "geojson"],
-                            "description": "Payload format. Defaults to 'markdown'.",
+                            "enum": ["png", "jpg", "jpeg", "pdf", "docx", "html", "xlsx", "txt", "json", "markdown", "table", "geojson"],
+                            "description": "Payload format (png, jpg, jpeg, pdf, docx, html, xlsx, txt, json, markdown, table, geojson). Defaults to 'markdown'.",
                         },
                     },
                     "required": ["title", "content", "artifact_type"],
@@ -554,21 +554,43 @@ class UtilityServer:
             return {"error": str(e)}
 
     def _create_artifact(self, args: dict) -> dict:
-        if args.get("format") == "image":
-            return {"error": "format='image' is not supported for AI artifact creation. Images must be created from the map export UI."}
         try:
             from tools.artifact_store import save_artifact
+            from tools.export_engine import export_artifact_multi_format
+
+            title = args.get("title", "Untitled")
+            artifact_type = args.get("artifact_type", "note")
             fmt = args.get("format", "markdown")
+            content = args.get("content", "")
             map_context = args.get("_map_context", {})
             workspace = map_context.get("workspace") if map_context else None
+
+            file_bytes = None
+            file_ext = None
+            if fmt in ("png", "jpg", "jpeg", "pdf", "docx", "html", "xlsx", "txt", "json"):
+                file_bytes, filename, mime = export_artifact_multi_format(
+                    title=title,
+                    content=content,
+                    format_target=fmt,
+                    workspace=workspace,
+                )
+                file_ext = fmt
+
             result = save_artifact(
-                title=args.get("title", "Untitled"),
-                artifact_type=args.get("artifact_type", "note"),
+                title=title,
+                artifact_type=artifact_type,
                 format=fmt,
-                content=args.get("content", ""),
+                content=content,
+                file_bytes=file_bytes,
+                file_ext=file_ext,
                 workspace=workspace,
             )
-            return {"status": "created", "id": result["id"]}
+            return {
+                "status": "created",
+                "id": result["id"],
+                "format": fmt,
+                "file_path": result.get("file_path"),
+            }
         except ValueError as e:
             return {"error": str(e)}
         except Exception as e:

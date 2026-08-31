@@ -337,3 +337,37 @@ async def clear_temp_artifacts(workspace: str | None = Query(None)):
         return {"status": "success"}
     finally:
         conn.close()
+
+
+@router.post("/{artifact_id}/export")
+@router.get("/{artifact_id}/export")
+async def export_artifact_endpoint(
+    artifact_id: int,
+    format: str = Query("pdf"),
+    map_image_base64: str | None = Form(None),
+    workspace: str | None = Query(None),
+):
+    from tools.export_engine import export_artifact_multi_format
+
+    row = read_artifact(artifact_id, workspace)
+    if not row:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+
+    title = row.get("title") or "Artifact Export"
+    content = row.get("content") or ""
+    meta_dict = json.loads(row["meta"]) if row.get("meta") else {}
+
+    file_bytes, filename, mime_type = export_artifact_multi_format(
+        title=title,
+        content=content,
+        format_target=format,
+        map_image_base64=map_image_base64,
+        meta=meta_dict,
+        workspace=workspace,
+    )
+
+    return Response(
+        content=file_bytes,
+        media_type=mime_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

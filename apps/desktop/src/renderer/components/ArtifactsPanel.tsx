@@ -45,6 +45,8 @@ interface ArtifactsPanelProps {
   workspacePath?: string
   revision?: number
   onAddToMap: (geojson: object, name: string) => void
+  onComposeMapFigure?: (title: string, options?: { noTitleBand?: boolean }) => HTMLCanvasElement | null
+  onFitBounds?: (bounds: { west: number; south: number; east: number; north: number }, padding?: number) => void
   showSidebar?: boolean
   sidebarWidth?: number
   onLeftResizeStart?: (e: React.MouseEvent) => void
@@ -54,6 +56,8 @@ export default function ArtifactsPanel({
   workspacePath,
   revision,
   onAddToMap,
+  onComposeMapFigure,
+  onFitBounds,
   showSidebar = true,
   sidebarWidth = 260,
   onLeftResizeStart,
@@ -131,6 +135,80 @@ export default function ArtifactsPanel({
       }).catch(err => console.error('Failed to sync artifact order:', err))
     }
     handleArtDragEnd()
+  }
+
+  const extractBbox = (art: Artifact | null): { west: number; south: number; east: number; north: number } | null => {
+    if (!art) return null
+    if (art.meta) {
+      try {
+        const parsed = JSON.parse(art.meta)
+        if (Array.isArray(parsed.bbox) && parsed.bbox.length === 4) {
+          return { west: parsed.bbox[0], south: parsed.bbox[1], east: parsed.bbox[2], north: parsed.bbox[3] }
+        }
+      } catch {}
+    }
+    if (art.content) {
+      const trimmed = art.content.trim()
+      if (trimmed.startsWith('{')) {
+        try {
+          const parsedGeoJSON = JSON.parse(trimmed)
+          const b = turf.bbox(parsedGeoJSON)
+          if (b && b.length === 4 && isFinite(b[0])) {
+            return { west: b[0], south: b[1], east: b[2], north: b[3] }
+          }
+        } catch {}
+      }
+      const m1 = art.content.match(/W\s*([0-9.-]+),\s*S\s*([0-9.-]+),\s*E\s*([0-9.-]+),\s*N\s*([0-9.-]+)/i)
+      if (m1) {
+        return { west: parseFloat(m1[1]), south: parseFloat(m1[2]), east: parseFloat(m1[3]), north: parseFloat(m1[4]) }
+      }
+      const m2 = art.content.match(/\[([0-9.-]+),\s*([0-9.-]+),\s*([0-9.-]+),\s*([0-9.-]+)\]/)
+      if (m2) {
+        return { west: parseFloat(m2[1]), south: parseFloat(m2[2]), east: parseFloat(m2[3]), north: parseFloat(m2[4]) }
+      }
+    }
+    return null
+  }
+
+  const handleExportWithMap = async (artId: number, targetFmt: string) => {
+    try {
+      const bbox = extractBbox(fullArtifact)
+      if (bbox && onFitBounds) {
+        onFitBounds(bbox, 90)
+        // Give MapLibre a short frame tick to apply fitBounds
+        await new Promise((r) => setTimeout(r, 120))
+      }
+
+      const figure = onComposeMapFigure?.(fullArtifact?.title || 'Map Snapshot', { noTitleBand: true })
+      let mapImageBase64 = ''
+      if (figure) {
+        mapImageBase64 = figure.toDataURL('image/png')
+      }
+
+      const formData = new FormData()
+      formData.append('map_image_base64', mapImageBase64)
+
+      const url = `${API_BASE}/${artId}/export?format=${targetFmt}${workspacePath ? `&workspace=${encodeURIComponent(workspacePath)}` : ''}`
+      const res = await fetch(url, {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!res.ok) throw new Error('Export failed')
+
+      const blob = await res.blob()
+      const downloadUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = downloadUrl
+      const safeTitle = (fullArtifact?.title || 'export').replace(/[^a-z0-9-_]/gi, '_')
+      a.download = `${safeTitle}.${targetFmt}`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(downloadUrl)
+    } catch (err) {
+      console.error('Failed to export artifact with map figure:', err)
+    }
   }
 
   useEffect(() => {
@@ -316,25 +394,20 @@ export default function ArtifactsPanel({
                   </svg>
                   Edit
                 </button>
-                <a
+                <button
                   className="download-btn docx-btn"
-                  href={getUrl(`/${id}/docx`)}
-                  download
+                  onClick={() => handleExportWithMap(id, 'docx')}
                   style={{ display: 'inline-flex', alignItems: 'center' }}
                 >
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: 4 }}>
                     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                     <polyline points="14 2 14 8 20 8"></polyline>
-                    <line x1="16" y1="13" x2="8" y2="13"></line>
-                    <line x1="16" y1="17" x2="8" y2="17"></line>
-                    <polyline points="10 9 9 9 8 9"></polyline>
                   </svg>
-                  Word
-                </a>
-                <a
+                  Word (.docx)
+                </button>
+                <button
                   className="download-btn pdf-btn"
-                  href={getUrl(`/${id}/pdf`)}
-                  download
+                  onClick={() => handleExportWithMap(id, 'pdf')}
                   style={{ display: 'inline-flex', alignItems: 'center' }}
                 >
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: 4 }}>
@@ -342,30 +415,64 @@ export default function ArtifactsPanel({
                     <polyline points="14 2 14 8 20 8"></polyline>
                   </svg>
                   PDF
-                </a>
-                <a
-                  className="download-btn latex-btn"
-                  href={getUrl(`/${id}/latex`)}
-                  download
+                </button>
+                <button
+                  className="download-btn html-btn"
+                  onClick={() => handleExportWithMap(id, 'html')}
                   style={{ display: 'inline-flex', alignItems: 'center' }}
                 >
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: 4 }}>
                     <polyline points="16 18 22 12 16 6"></polyline>
                     <polyline points="8 6 2 12 8 18"></polyline>
                   </svg>
-                  LaTeX
-                </a>
+                  HTML
+                </button>
+                <button
+                  className="download-btn xlsx-btn"
+                  onClick={() => handleExportWithMap(id, 'xlsx')}
+                  style={{ display: 'inline-flex', alignItems: 'center' }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: 4 }}>
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                    <line x1="3" y1="9" x2="21" y2="9"></line>
+                    <line x1="9" y1="21" x2="9" y2="9"></line>
+                  </svg>
+                  Excel (.xlsx)
+                </button>
+                <button
+                  className="download-btn txt-btn"
+                  onClick={() => handleExportWithMap(id, 'txt')}
+                  style={{ display: 'inline-flex', alignItems: 'center' }}
+                >
+                  TXT
+                </button>
+                <button
+                  className="download-btn png-btn"
+                  onClick={() => handleExportWithMap(id, 'png')}
+                  style={{ display: 'inline-flex', alignItems: 'center' }}
+                >
+                  PNG Image
+                </button>
+                <button
+                  className="download-btn jpg-btn"
+                  onClick={() => handleExportWithMap(id, 'jpg')}
+                  style={{ display: 'inline-flex', alignItems: 'center' }}
+                >
+                  JPEG Image
+                </button>
+                <button
+                  className="download-btn json-btn"
+                  onClick={() => handleExportWithMap(id, 'json')}
+                  style={{ display: 'inline-flex', alignItems: 'center' }}
+                >
+                  JSON
+                </button>
                 <a
                   className="download-btn markdown-btn"
                   href={getUrl(`/${id}/download`)}
                   download
                   style={{ display: 'inline-flex', alignItems: 'center' }}
                 >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: 4 }}>
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                    <polyline points="7 10 12 15 17 10"></polyline>
-                    <line x1="12" y1="15" x2="12" y2="3"></line>
-                  </svg>
                   Markdown
                 </a>
               </div>
@@ -505,10 +612,31 @@ export default function ArtifactsPanel({
         </div>
       )
     }
-    // Fallback for unknown formats
+    // PDF, DOCX, HTML, XLSX, TXT, JSON and fallback formats
+    const downloadUrl = getUrl(`/${id}/export?format=${fmt}`)
     return (
       <div className="artifact-detail">
-        <p>{content}</p>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[rehypeHighlight]}
+          components={headingComponents}
+        >
+          {content}
+        </ReactMarkdown>
+        <div className="artifact-actions" style={{ marginTop: 16 }}>
+          <button
+            className="download-btn pdf-btn"
+            onClick={() => handleExportWithMap(id, fmt)}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', fontSize: '0.85rem', fontWeight: 600, borderRadius: 6, background: '#3b82f6', color: '#ffffff', border: 'none', cursor: 'pointer' }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            Download {fmt.toUpperCase()}
+          </button>
+        </div>
         <span className="artifact-date">{new Date(artifact.created_at).toLocaleDateString()}</span>
       </div>
     )
@@ -554,11 +682,17 @@ export default function ArtifactsPanel({
               <select
                 className="artifact-select"
                 value={format}
-                onChange={(e) => setFormat(e.target.value as 'markdown' | 'table' | 'geojson')}
+                onChange={(e) => setFormat(e.target.value as any)}
               >
+                <option value="pdf">PDF</option>
+                <option value="docx">Word (.docx)</option>
+                <option value="html">HTML</option>
+                <option value="xlsx">Excel (.xlsx)</option>
                 <option value="markdown">Markdown</option>
                 <option value="table">Table</option>
                 <option value="geojson">GeoJSON</option>
+                <option value="json">JSON</option>
+                <option value="txt">Text</option>
               </select>
               <textarea
                 className="artifact-textarea"

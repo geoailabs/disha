@@ -1353,9 +1353,13 @@ function App() {
   // attribution) from the live map canvas + current view state. Single source
   // for all four export paths so decorations are always baked into the output.
   const composeMapFigure = useCallback(
-    (title: string): HTMLCanvasElement | null => {
-      const canvas = mapViewRef.current?.getCanvas()
+    (title: string, options?: { noTitleBand?: boolean; bbox?: any }): HTMLCanvasElement | null => {
+      const mapView = mapViewRef.current
+      if (!mapView) return null
+
+      const canvas = mapView.fitBboxAndSnapshot ? mapView.fitBboxAndSnapshot(options?.bbox, 120) : mapView.getCanvas()
       if (!canvas) return null
+
       return composeFigure(canvas, {
         title: title || 'Map',
         centerLat: mapViewState.center[1],
@@ -1363,6 +1367,7 @@ function App() {
         bearing: mapViewState.bearing,
         legend: buildLegendEntries(layers),
         attribution: BASEMAPS[basemap]?.attribution || '',
+        noTitleBand: options?.noTitleBand,
       })
     },
     [mapViewState, layers, basemap],
@@ -2531,12 +2536,31 @@ function App() {
 
       }),
       basemap,
-      selected_features: selectedFeatures.map((sf) => ({
-        layerId: sf.layerId,
-        layerName: sf.layerName,
-        properties: sf.feature.properties || {},
-        geometry: sf.feature.geometry,
-      })),
+      selected_features: selectedFeatures.map((sf) => {
+        const layer = layers.find((l) => l.id === sf.layerId)
+        let bbox: [number, number, number, number] | undefined = undefined
+        let centroid: [number, number] | undefined = undefined
+        try {
+          if (sf.feature?.geometry) {
+            bbox = turf.bbox(sf.feature) as [number, number, number, number]
+            const c = turf.centroid(sf.feature)
+            centroid = [
+              Math.round(c.geometry.coordinates[0] * 100000) / 100000,
+              Math.round(c.geometry.coordinates[1] * 100000) / 100000,
+            ]
+          }
+        } catch { /* ignore */ }
+
+        return {
+          layerId: sf.layerId,
+          layerName: sf.layerName || layer?.name || 'Selected Layer',
+          filePath: layer?.filePath,
+          featureCount: layer?.data?.features?.length || 1,
+          properties: sf.feature.properties || {},
+          ...(bbox ? { bbox } : {}),
+          ...(centroid ? { centroid } : {}),
+        }
+      }),
     }),
     [workspacePath, mapViewState, mapBounds, bookmarks, layers, basemap, activeScenarioId, scenarios, selectedFeatures],
   )
@@ -3350,6 +3374,22 @@ function App() {
                 showSidebar={showArtifactsSidebar}
                 sidebarWidth={leftWidth}
                 onLeftResizeStart={onResizeStart('left')}
+                onComposeMapFigure={composeMapFigure}
+                onFitBounds={(bounds, padding = 90) => {
+                  setMapActions((prev) => [
+                    ...prev,
+                    {
+                      type: 'fit_bounds',
+                      payload: {
+                        west: bounds.west,
+                        south: bounds.south,
+                        east: bounds.east,
+                        north: bounds.north,
+                        padding,
+                      },
+                    },
+                  ])
+                }}
                 onAddToMap={(geojson, name) => {
                   setMapActions((prev) => [
                     ...prev,

@@ -17,6 +17,8 @@ interface NominatimSearchResult {
 export type MapViewHandle = {
   getCanvas: () => HTMLCanvasElement | null
   resize: () => void
+  zoomOutMargin: (delta?: number) => void
+  fitBboxAndSnapshot: (bboxTarget?: any, padding?: number) => HTMLCanvasElement | null
 }
 
 // Helper to check if a polygon/multipolygon geometry intersects the viewport bounds
@@ -547,9 +549,94 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       setMapReady(false)
       layerRevisionRef.current.clear()
       map.remove()
-      mapRef.current = null
-    }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useImperativeHandle(ref, () => ({
+    getCanvas: () => mapRef.current?.getCanvas() ?? null,
+    resize: () => mapRef.current?.resize(),
+    zoomOutMargin: (delta = 0.75) => {
+      if (mapRef.current) {
+        mapRef.current.zoomTo(mapRef.current.getZoom() - delta, { animate: false })
+      }
+    },
+    fitBboxAndSnapshot: (bboxTarget?: any, padding = 80) => {
+      const map = mapRef.current
+      if (!map) return null
+
+      const origCenter = map.getCenter()
+      const origZoom = map.getZoom()
+      const origBearing = map.getBearing()
+      const origPitch = map.getPitch()
+
+      let boundsToFit: [[number, number], [number, number]] | null = null
+
+      if (bboxTarget) {
+        if (Array.isArray(bboxTarget) && bboxTarget.length === 4) {
+          boundsToFit = [[bboxTarget[0], bboxTarget[1]], [bboxTarget[2], bboxTarget[3]]]
+        } else if (typeof bboxTarget === 'object' && bboxTarget.west !== undefined) {
+          boundsToFit = [[bboxTarget.west, bboxTarget.south], [bboxTarget.east, bboxTarget.north]]
+        }
+      }
+
+      if (!boundsToFit && layersRef.current.length > 0) {
+        let combinedBbox: [number, number, number, number] | null = null
+        for (const layer of layersRef.current) {
+          if (layer.visible && layer.data) {
+            try {
+              const b = turf.bbox(layer.data)
+              if (b && b.length === 4 && isFinite(b[0])) {
+                if (!combinedBbox) {
+                  combinedBbox = [b[0], b[1], b[2], b[3]]
+                } else {
+                  combinedBbox[0] = Math.min(combinedBbox[0], b[0])
+                  combinedBbox[1] = Math.min(combinedBbox[1], b[1])
+                  combinedBbox[2] = Math.max(combinedBbox[2], b[2])
+                  combinedBbox[3] = Math.max(combinedBbox[3], b[3])
+                }
+              }
+            } catch {}
+          }
+        }
+        if (combinedBbox) {
+          boundsToFit = [[combinedBbox[0], combinedBbox[1]], [combinedBbox[2], combinedBbox[3]]]
+        }
+      }
+
+      if (boundsToFit) {
+        const w = boundsToFit[0][0]
+        const s = boundsToFit[0][1]
+        const e = boundsToFit[1][0]
+        const n = boundsToFit[1][1]
+
+        const lngSpan = Math.max(e - w, 0.01)
+        const latSpan = Math.max(n - s, 0.01)
+
+        // Expand coordinates by 18% margin on all 4 sides (Westmost, Southmost, Eastmost, Northmost)
+        const padWest = w - lngSpan * 0.18
+        const padEast = e + lngSpan * 0.18
+        const padSouth = s - latSpan * 0.18
+        const padNorth = n + latSpan * 0.18
+
+        map.fitBounds([[padWest, padSouth], [padEast, padNorth]], { padding, animate: false })
+      } else {
+        map.zoomTo(origZoom - 0.8, { animate: false })
+      }
+
+      // Synchronously render the fitted camera scene to the WebGL canvas
+      if ((map as any)._render) {
+        (map as any)._render()
+      }
+
+      const canvas = map.getCanvas()
+
+      // Restore camera view asynchronously after snapshot has been collected
+      setTimeout(() => {
+        if (mapRef.current) {
+          mapRef.current.jumpTo({ center: origCenter, zoom: origZoom, bearing: origBearing, pitch: origPitch })
+        }
+      }, 150)
+
+      return canvas
+    },
+  }), [])
 
   // ── Sync GeoJSON layers ──
 

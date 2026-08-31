@@ -212,4 +212,77 @@ async def test_gee_land_use_tools():
     assert "error" not in res_zonal
 
 
+@pytest.mark.asyncio
+async def test_selected_features_prompt_formatting():
+    map_context = {
+        "selected_features": [
+            {
+                "layerId": "layer_123",
+                "layerName": "Built Area Polygons (2023)",
+                "filePath": "/workspace/land_use_built_area_2023.geojson",
+                "featureCount": 1971,
+                "centroid": [76.75485, 30.75485],
+                "bbox": [76.685, 30.654, 76.852, 30.812],
+                "properties": {
+                    "land_cover_class": "Built Area",
+                    "year": 2023
+                }
+            }
+        ]
+    }
+    
+    selected_block = "\n\n[USER SELECTED MAP ELEMENTS / HIGHLIGHTED LAYERS]\n"
+    for sf in map_context["selected_features"]:
+        lname = sf.get("layerName") or "Selected Map Element"
+        props = sf.get("properties", {})
+        centroid = sf.get("centroid")
+        bbox = sf.get("bbox")
+        fpath = sf.get("filePath")
+        fcount = sf.get("featureCount")
+
+        selected_block += f"- Selected Element/Layer: {lname}\n"
+        if fpath:
+            selected_block += f"  File Path: {fpath}\n"
+        if fcount:
+            selected_block += f"  Feature Count: {fcount}\n"
+        if centroid:
+            selected_block += f"  Centroid: [lng={centroid[0]}, lat={centroid[1]}]\n"
+        if bbox:
+            selected_block += f"  Bounding Box: [W={bbox[0]}, S={bbox[1]}, E={bbox[2]}, N={bbox[3]}]\n"
+
+    assert "Built Area Polygons (2023)" in selected_block
+    assert "1971" in selected_block
+    assert "76.75485" in selected_block
+
+
+@pytest.mark.asyncio
+async def test_plot_server_and_multi_format_export(tmp_path):
+    from mcp_servers.plot_server import PlotServer
+    from tools.export_engine import export_artifact_multi_format
+
+    # 1. Test PlotServer chart creation
+    plot_srv = PlotServer()
+    res_plot = await plot_srv.execute("create_plot", {
+        "plot_type": "bar",
+        "title": "Land Use Breakdown",
+        "x_data": ["Built-up", "Vegetation", "Water", "Bare Ground"],
+        "y_data": [45, 30, 15, 10],
+        "_map_context": {"workspace": str(tmp_path)}
+    })
+    assert res_plot["status"] == "success"
+    assert "artifact_id" in res_plot
+
+    # 2. Test Multi-Format Exporter
+    b_docx, fn_docx, mime_docx = export_artifact_multi_format("Planning Report", "# Heading\nSome analysis text.", "docx")
+    assert len(b_docx) > 0
+    assert fn_docx == "Planning_Report.docx"
+
+    b_html, fn_html, mime_html = export_artifact_multi_format("Planning Report", "# Heading\nSome analysis text.", "html")
+    assert b"<!DOCTYPE html>" in b_html
+
+    b_xlsx, fn_xlsx, mime_xlsx = export_artifact_multi_format("Zonal Data", '{"columns": ["Zone", "Area"], "rows": [["R1", 120]]}', "xlsx")
+    assert len(b_xlsx) > 0
+
+
+
 

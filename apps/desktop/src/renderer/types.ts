@@ -111,6 +111,11 @@ export interface ChatMessage {
     citations: Array<{ url: string; title: string }>
   }
   attachments?: Array<{ fileName: string; filePath: string; mimeType: string }>
+  selected_features?: Array<{
+    layerId: string
+    layerName: string
+    properties: Record<string, any>
+  }>
 }
 
 export interface Conversation {
@@ -354,8 +359,11 @@ export interface MapContext {
   selected_features?: Array<{
     layerId: string
     layerName: string
+    filePath?: string
+    featureCount?: number
     properties: Record<string, any>
-    geometry?: any
+    bbox?: [number, number, number, number]
+    centroid?: [number, number]
   }>
 }
 

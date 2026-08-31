@@ -19,7 +19,7 @@ def get_artifacts_dir(workspace: str | None = None) -> Path:
         return ws_dir
     return ARTIFACTS_DIR
 
-ALLOWED_FORMATS = {"markdown", "table", "image", "geojson"}
+ALLOWED_FORMATS = {"markdown", "table", "image", "geojson", "html", "pdf", "docx", "txt", "xlsx", "json", "png", "jpg", "jpeg"}
 
 
 def _extract_coordinates(geometry: dict) -> list[list[float]]:
@@ -193,33 +193,33 @@ def save_artifact(
 
         file_path_rel: Optional[str] = None
 
-        if format == "image" and file_bytes:
-            ext = (file_ext or "bin").lstrip(".")
-            # Use Pillow to get image dimensions and mime type
-            try:
-                from PIL import Image
-                import io
+        if file_bytes:
+            ext = (file_ext or ("png" if format == "image" else format)).lstrip(".")
+            if format == "image":
+                try:
+                    from PIL import Image
+                    import io
 
-                img = Image.open(io.BytesIO(file_bytes))
-                width, height = img.size
-                img_format = (img.format or ext).lower()
-                mime_map = {
-                    "jpeg": "image/jpeg",
-                    "jpg": "image/jpeg",
-                    "png": "image/png",
-                    "gif": "image/gif",
-                    "webp": "image/webp",
-                    "bmp": "image/bmp",
-                    "tiff": "image/tiff",
-                }
-                mime = mime_map.get(img_format, f"image/{img_format}")
-            except Exception:
-                width, height, mime = 0, 0, f"image/{ext}"
+                    img = Image.open(io.BytesIO(file_bytes))
+                    width, height = img.size
+                    img_format = (img.format or ext).lower()
+                    mime_map = {
+                        "jpeg": "image/jpeg",
+                        "jpg": "image/jpeg",
+                        "png": "image/png",
+                        "gif": "image/gif",
+                        "webp": "image/webp",
+                        "bmp": "image/bmp",
+                        "tiff": "image/tiff",
+                    }
+                    mime = mime_map.get(img_format, f"image/{img_format}")
+                except Exception:
+                    width, height, mime = 0, 0, f"image/{ext}"
 
-            image_meta = {"width": width, "height": height, "mime": mime}
-            if meta:
-                image_meta = {**image_meta, **meta}
-            meta_json = json.dumps(image_meta)
+                image_meta = {"width": width, "height": height, "mime": mime}
+                if final_meta:
+                    image_meta = {**image_meta, **final_meta}
+                meta_json = json.dumps(image_meta)
 
             filename = f"{artifact_id}.{ext}"
             file_path_full = get_artifacts_dir(workspace) / filename
@@ -228,7 +228,6 @@ def save_artifact(
             except OSError:
                 conn.rollback()
                 raise
-            # store as relative path from ARTIFACTS_DIR parent (backend dir)
             file_path_rel = str(Path("artifacts_store") / filename)
 
             conn.execute(

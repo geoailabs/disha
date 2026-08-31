@@ -20,6 +20,8 @@ export interface ComposeOptions {
   attribution?: string
   /** Subtitle line under the title (defaults to today's date). */
   subtitle?: string
+  /** Omit outer title/footer bands for full-bleed map snapshot. */
+  noTitleBand?: boolean
 }
 
 const PAD = 16
@@ -44,8 +46,6 @@ function formatDistance(meters: number): string {
 }
 
 function defaultDate(): string {
-  // Avoid Date in headless contexts? This runs only in the renderer on a user
-  // click, so a real date is fine here.
   return new Date().toLocaleDateString('en-GB', {
     day: '2-digit',
     month: 'short',
@@ -58,11 +58,13 @@ export function composeFigure(
   opts: ComposeOptions,
 ): HTMLCanvasElement {
   const dpr = window.devicePixelRatio || 1
-  // Work in CSS pixels; scale the backing store by dpr for crisp text.
+  const tBand = opts.noTitleBand ? 0 : TITLE_BAND
+  const fBand = opts.noTitleBand ? 0 : FOOTER_BAND
+
   const mapW = source.width / dpr
   const mapH = source.height / dpr
   const outW = mapW
-  const outH = mapH + TITLE_BAND + FOOTER_BAND
+  const outH = mapH + tBand + fBand
 
   const out = document.createElement('canvas')
   out.width = Math.round(outW * dpr)
@@ -75,20 +77,22 @@ export function composeFigure(
   ctx.fillRect(0, 0, outW, outH)
 
   // ── Title band ──
-  ctx.fillStyle = '#111827'
-  ctx.font = '600 20px system-ui, -apple-system, sans-serif'
-  ctx.textBaseline = 'middle'
-  ctx.fillText(opts.title || 'Map', PAD, TITLE_BAND / 2 - 6, outW - PAD * 2)
-  ctx.fillStyle = '#6b7280'
-  ctx.font = '12px system-ui, -apple-system, sans-serif'
-  ctx.fillText(opts.subtitle || defaultDate(), PAD, TITLE_BAND / 2 + 14)
+  if (!opts.noTitleBand) {
+    ctx.fillStyle = '#111827'
+    ctx.font = '600 20px system-ui, -apple-system, sans-serif'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(opts.title || 'Map', PAD, TITLE_BAND / 2 - 6, outW - PAD * 2)
+    ctx.fillStyle = '#6b7280'
+    ctx.font = '12px system-ui, -apple-system, sans-serif'
+    ctx.fillText(opts.subtitle || defaultDate(), PAD, TITLE_BAND / 2 + 14)
+  }
 
   // ── Map image ──
-  ctx.drawImage(source, 0, TITLE_BAND, mapW, mapH)
+  ctx.drawImage(source, 0, tBand, mapW, mapH)
 
   // Everything below is drawn over the map, within its rectangle.
-  const mapTop = TITLE_BAND
-  const mapBottom = TITLE_BAND + mapH
+  const mapTop = tBand
+  const mapBottom = tBand + mapH
 
   // ── Scale bar (bottom-left) ──
   drawScaleBar(ctx, opts.centerLat, opts.zoom, PAD, mapBottom - PAD)
@@ -102,11 +106,13 @@ export function composeFigure(
   }
 
   // ── Footer / attribution ──
-  ctx.fillStyle = '#6b7280'
-  ctx.font = '10px system-ui, -apple-system, sans-serif'
-  ctx.textBaseline = 'middle'
-  const attribution = (opts.attribution || '').replace(/&copy;/g, '©').replace(/<[^>]+>/g, '')
-  ctx.fillText(attribution, PAD, mapBottom + FOOTER_BAND / 2, outW - PAD * 2)
+  if (!opts.noTitleBand) {
+    ctx.fillStyle = '#6b7280'
+    ctx.font = '10px system-ui, -apple-system, sans-serif'
+    ctx.textBaseline = 'middle'
+    const attribution = (opts.attribution || '').replace(/&copy;/g, '©').replace(/<[^>]+>/g, '')
+    ctx.fillText(attribution, PAD, mapBottom + FOOTER_BAND / 2, outW - PAD * 2)
+  }
 
   return out
 }
