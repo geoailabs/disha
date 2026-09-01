@@ -1,20 +1,24 @@
 # 🚀 Disha Feature Implementation & Architecture Guide
-## Multi-Format Artifact Exports, Plot Generation MCP Server, & Spatial Context Engine
+## Domain Hubs, Spatial Registry, Multi-Format Exports, & Spatial Context Engine
 
-This document provides a comprehensive, in-depth guide detailing how the **Interactive Map Selection Context Engine**, **Multi-Format Export Engine**, **Plot Generation MCP Server**, and **Uncropped Bounding-Box Map Composer** were designed and implemented in the **Disha AI IDE for Urban Planners**.
+This document provides a comprehensive, in-depth technical guide detailing the core architectures, subsystems, and feature implementations powering the **Disha AI Desktop IDE for Urban and Regional Planners**.
 
 ---
 
 ## 📌 Executive Summary
 
-Urban planning reports require seamless integration between chat-based AI interactions, spatial vector datasets, publication-quality map snapshots, and exportable deliverables. 
+Urban and regional planning software requires unified coordination between high-performance interactive cartography (MapLibre GL), agentic AI reasoning across diverse planning disciplines, centralized geospatial entity tracking, and production-grade exportable deliverables.
 
-We implemented five core capabilities:
-1. **Token-Optimized Spatial Context Engine**: Converts complex GeoJSON layers (which previously triggered `400 context_length_exceeded` errors at ~274,000 tokens) into lightweight spatial summary metadata (~100 tokens).
-2. **Plot & Histogram MCP Server (`PlotServer`)**: A dedicated Model Context Protocol (MCP) server that generates dark-themed publication charts (`bar`, `histogram`, `pie`, `line`, `scatter`) via Matplotlib and saves them as image artifacts.
-3. **Multi-Format Artifact Export Engine (`export_engine.py`)**: Enables single-click and chat-driven exports across **8 modalities**: `PDF`, `Word (.docx)`, `HTML`, `PNG Image`, `JPEG Image`, `Excel (.xlsx)`, `JSON`, and `TXT`.
-4. **Native `%PDF-1.4` Compiler**: Utilizes ReportLab to compile clean, native PDF documents with embedded map figures without relying on external system C-libraries (such as Pango/cairo).
-5. **Uncropped Bounding-Box Map Composer**: Calculates the exact Westmost, Southmost, Eastmost, and Northmost coordinates of target GeoJSON datasets, applies an **18% geographic margin padding on all 4 sides**, and flushes the WebGL WebGL frame buffer for zero-crop map snapshots.
+We implemented and hardened eight core platform capabilities:
+
+1. **7+1 Domain Hub Architecture & ToolResult Protocol**: Replaces unorganized flat tool collections with cohesive domain subsystems (`Spatial`, `Mobility`, `Environment`, `Planning`, `Demographics`, `Places`, `Scenarios`, and `Utility`), returning typed execution packets with automated side-effect routing.
+2. **Central Spatial & Polygon Registry**: Single source of truth for all study areas, zoning parcels, and boundaries, enforcing $\ge 90\%$ Intersection-over-Union (IoU) deduplication, geodesic ellipsoidal calculations (`pyproj.Geod`), and map layer synchronization.
+3. **Token-Optimized Spatial Context Engine**: Converts complex GeoJSON layers (which previously triggered `400 context_length_exceeded` errors at ~274,000 tokens) into compact, semantically rich spatial metadata (~100 tokens, a $\mathbf{99.96\%}$ reduction).
+4. **Multi-Format Artifact Export Engine (`export_engine.py`)**: Enables single-click and chat-driven exports across **8 modalities**: `PDF` (`ReportLab` native `%PDF-1.4`), `Word (.docx)`, `HTML`, `PNG Image`, `JPEG Image`, `Excel (.xlsx)`, `JSON`, and `TXT`.
+5. **Plot & Histogram MCP Server (`PlotServer`)**: Integrated into `UtilityHub` to generate dark- and light-themed publication charts (`bar`, `histogram`, `pie`, `line`, `scatter`) via Matplotlib and persist them directly into the artifact catalog.
+6. **Uncropped Bounding-Box Map Composer**: Calculates exact layer bounding coordinates, applies an **$18\%$ geographic margin padding on all four cardinal directions**, and flushes the WebGL frame buffer for zero-crop map snapshots with true planar aspect ratios.
+7. **GTFS Transit & Satellite Land Use Analytics**: Ingests local GTFS transit packages with automated 400m/800m geodesic walking catchment buffers, alongside Google Earth Engine (GEE) Dynamic World zonal land-use statistics.
+8. **Workspace Concurrency & Auto-Save Guardrails**: Hardened state-transition lifecycles using `isClosingRef` guards to prevent race-condition workspace corruption during project switches.
 
 ---
 
@@ -23,209 +27,258 @@ We implemented five core capabilities:
 ```mermaid
 flowchart TD
     subgraph Frontend ["Electron Renderer (React + MapLibre GL)"]
-        UserSel["User Selects GeoJSON Feature / Layer"]
+        UserSel["User Selects GeoJSON Feature / Layer Collection"]
         MapCanvas["MapLibre WebGL Canvas"]
         Composer["composeFigure() + fitBboxAndSnapshot()"]
-        ArtPanel["ArtifactsPanel (Multi-Format Buttons)"]
+        ArtPanel["ArtifactsPanel (8 Multi-Format Buttons)"]
         ChatUI["ChatPanel.tsx (Prompt & Context Pill)"]
     end
 
     subgraph Backend ["Python FastAPI Backend (:8765)"]
         WS["WebSocket Router (/api/chat/ws)"]
-        ChatRouter["routers/chat.py (_run_agent)"]
-        PlotMCP["PlotServer MCP (create_plot)"]
-        UtilMCP["UtilityServer (create_artifact)"]
+        ChatLoop["routers/chat.py (_run_agent)"]
+        SpatialReg["tools/spatial_registry.py (IoU >= 90% Deduplication)"]
+        DomainHubs["7+1 Domain Hubs (BaseDomainHub)"]
+        PlotMCP["PlotServer (create_plot)"]
         ExpEngine["tools/export_engine.py (Doc Compiler)"]
         ArtStore["tools/artifact_store.py (SQLite DB)"]
     end
 
-    subgraph LLM ["OpenAI Cloud API"]
-        GPT["GPT-5.4 / GPT-4o Agent"]
+    subgraph LLM ["AI Reasoning Engine (OpenAI API)"]
+        Agent["Autonomous Agent Loop"]
     end
 
     UserSel -->|Extract Centroid, Bbox & Summary| ChatUI
     ChatUI -->|Send Lightweight Prompt + Metadata| WS
-    WS --> ChatRouter
-    ChatRouter -->|Function Declarations| GPT
-    GPT -->|Tool Call: create_plot| PlotMCP
-    GPT -->|Tool Call: create_artifact| UtilMCP
-    PlotMCP -->|Save PNG Image| ArtStore
-    UtilMCP -->|Invoke Multi-Format Compiler| ExpEngine
+    WS --> ChatLoop
+    ChatLoop --> SpatialReg
+    ChatLoop -->|Flatten Declarations| Agent
+    Agent -->|Execute Tool Call| DomainHubs
+    DomainHubs -->|Typed ToolResult| ChatLoop
+    DomainHubs -->|Generate Plots| PlotMCP
+    PlotMCP -->|Save Image Artifact| ArtStore
     Composer -->|Capture 18% Padded Canvas| ExpEngine
-    ExpEngine -->|Generate PDF / DOCX / HTML / XLSX / JPG| ArtStore
+    ExpEngine -->|Generate PDF / DOCX / HTML / XLSX| ArtStore
     ArtStore -->|HTTP /export Endpoint| ArtPanel
+    ChatLoop -->|Auto Map Action (WebSocket)| MapCanvas
 ```
 
 ---
 
-## 📑 1. Interactive Feature Selection & Token Context Engine
+## 🏛️ 1. The 7+1 Domain Hub Architecture & ToolResult Protocol
 
-### The Problem
-When a user selected complex spatial layers (e.g. 89 built-up area polygons in Chandigarh comprising thousands of coordinate pairs), passing the raw geometry array directly inside the chat prompt exceeded the context window budget ($274,307$ tokens), resulting in API errors:
-```json
-{"error": {"message": "Input tokens exceed the configured limit of 272000 tokens.", "code": "context_length_exceeded"}}
+### The Architectural Evolution
+In earlier designs, tools were maintained as loose, uncoordinated endpoints in flat dictionary structures. This introduced namespace collisions, unclear ownership of side effects, and brittle prompt-generation logic. 
+
+Disha standardizes all analytical tools under **7 Core Planning Domains and 1 Cross-Cutting Utility Engine**, inheriting from `BaseDomainHub` in [`packages/backend/domains/protocol.py`](file:///Users/smriti/Documents/GitHub/disha/packages/backend/domains/protocol.py):
+
+```python
+class BaseDomainHub(ABC):
+    name: str
+    description: str
+    tool_names: set[str]
+
+    @abstractmethod
+    def get_declarations(self) -> list[dict[str, Any]]: ...
+
+    @abstractmethod
+    async def execute(
+        self, tool_name: str, args: dict[str, Any], context: dict[str, Any] | None = None
+    ) -> ToolResult: ...
 ```
 
+### The Standardized `ToolResult` Contract
+Each domain tool returns a typed `ToolResult` object:
+- **`data`**: Clean analytical dictionary returned directly to the model context.
+- **`map_action`**: Optional map action payload (e.g. `{"action": "add_geojson", "payload": {...}}`) dispatched over the active WebSocket.
+- **`artifact`**: Optional markdown report (e.g. `{"title": "...", "content": "...", "artifact_type": "report"}`) saved automatically to disk and SQLite without secondary tool invocations.
+- **`status` / `error`**: Execution status tracking (`"success" | "error" | "cancelled"`).
+
+### The 8 Domain Hubs Breakdown
+
+| Domain Hub | File Location | Subsystems & Responsibilities |
+|---|---|---|
+| **`SpatialHub`** | [`packages/backend/domains/spatial_hub.py`](file:///Users/smriti/Documents/GitHub/disha/packages/backend/domains/spatial_hub.py) | OpenStreetMap administrative boundaries, DataMeet national datasets, GIS geometric clipping/buffering/filtering, WMS imagery, and Central Spatial Registry queries (`list_polygons`, `get_polygon`, `check_polygon_overlap`, `calculate_land_budget`). |
+| **`MobilityHub`** | [`packages/backend/domains/mobility_hub.py`](file:///Users/smriti/Documents/GitHub/disha/packages/backend/domains/mobility_hub.py) | Street networks, Dijkstra/freight routing with bridge/tunnel Z-level modeling, GTFS transit schedules & 400m/800m walking buffers, traffic signal timing, and Origin-Destination (OD) gravity models. |
+| **`EnvironmentHub`** | [`packages/backend/domains/environment_hub.py`](file:///Users/smriti/Documents/GitHub/disha/packages/backend/domains/environment_hub.py) | Google Earth Engine (GEE) satellite land cover/NDVI analysis, Open-Meteo weather & air quality indices, solar potential, elevation contours, and fleet emissions. |
+| **`PlanningHub`** | [`packages/backend/domains/planning_hub.py`](file:///Users/smriti/Documents/GitHub/disha/packages/backend/domains/planning_hub.py) | Zoning regulation classification, planning document georeferencing, and raster image digitization. |
+| **`DemographicsHub`** | [`packages/backend/domains/demographics_hub.py`](file:///Users/smriti/Documents/GitHub/disha/packages/backend/domains/demographics_hub.py) | WorldPop population extraction, cohort-component demographic forecasts, employment density, and social infrastructure capacity. |
+| **`PlacesHub`** | [`packages/backend/domains/places_hub.py`](file:///Users/smriti/Documents/GitHub/disha/packages/backend/domains/places_hub.py) | Google Places API amenities, POI pinning, and Overture 3D building heights. |
+| **`ScenariosHub`** | [`packages/backend/domains/scenarios_hub.py`](file:///Users/smriti/Documents/GitHub/disha/packages/backend/domains/scenarios_hub.py) | Multi-criteria decision analysis (MCDA) scoring, scenario comparison matrices, and urban growth simulations. |
+| **`UtilityHub`** | [`packages/backend/domains/utility_hub.py`](file:///Users/smriti/Documents/GitHub/disha/packages/backend/domains/utility_hub.py) | Geocoding, reverse geocoding, web search, geodesic distance & area measurements, `PlotServer` charting, and artifact CRUD storage. |
+
+---
+
+## 🧭 2. Centralized Spatial & Polygon Registry
+
+Located in [`packages/backend/tools/spatial_registry.py`](file:///Users/smriti/Documents/GitHub/disha/packages/backend/tools/spatial_registry.py), the Central Spatial Registry serves as the authoritative single source of truth for all spatial entities in an urban study area.
+
+### 1. Intersection-over-Union (IoU) Deduplication ($\ge 90\%$)
+To eliminate "layer spam" when AI models or users execute repetitive boundary queries:
+$$\text{IoU}(A, B) = \frac{\text{Area}(A \cap B)}{\text{Area}(A \cup B)}$$
+- If $\text{IoU} \ge 0.90$ or normalized place names match, the system **reuses** the existing registered entry.
+- The existing layer is highlighted on the canvas with computed metrics returned to the model, preventing duplicate polygons from cluttering the map.
+
+### 2. True Geodesic WGS84 Calculations
+Unlike naive Euclidean calculations that distort planar surface areas at higher latitudes, all area and perimeter metrics are computed using the ellipsoidal WGS84 model via `pyproj.Geod(ellps="WGS84")`:
+- Computes geodesic area in square meters ($\text{m}^2$), hectares ($\text{ha}$), and square kilometers ($\text{km}^2$).
+- In accordance with Workspace Guardrail 9, calculated analytical metrics (`area_km2`, `area_hectares`, `centroid`, `bbox`) are **never stripped** from model tool results.
+
+### 3. Bidirectional Layer Synchronization
+On every chat turn, `SpatialRegistry` syncs with active map layers via `map_context["layers"]`, registering new user-drawn features and pruning removed layers in real time.
+
+---
+
+## 📑 3. Interactive Feature Selection & Token Context Engine
+
+### The Problem
+When a user selected complex spatial layers (e.g. 89 built-up area polygons comprising thousands of coordinate pairs), passing raw geometry arrays directly inside the chat prompt exceeded LLM context window budgets ($274,307$ tokens), crashing the conversation with `400 context_length_exceeded`.
+
 ### The Technical Solution
-Instead of serializing raw `geometry.coordinates`, we created a lightweight **Spatial Metadata Extractor** in `App.tsx` and `types.ts`:
+Instead of serializing raw `geometry.coordinates`, Disha computes a lightweight **Spatial Metadata Summary** in [`App.tsx`](file:///Users/smriti/Documents/GitHub/disha/apps/desktop/src/renderer/App.tsx) and [`types.ts`](file:///Users/smriti/Documents/GitHub/disha/apps/desktop/src/renderer/types.ts):
 
 1. **Client-Side Summarization (`App.tsx`)**:
-   When a map element or GeoJSON feature is selected, `App.tsx` computes:
    - `centroid`: `[lng, lat]` center point calculated via `@turf/centroid`.
    - `bbox`: `[west, south, east, north]` bounding box calculated via `@turf/bbox`.
-   - `featureCount`: Total number of features in the selected layer.
-   - `filePath`: Absolute disk path to the source GeoJSON file.
+   - `featureCount`: Total features contained in the selected layer.
+   - `filePath`: Absolute disk path to the source GeoJSON file on the local machine.
    - `properties`: Relevant key attribute summary (e.g. `land_cover_class: "Built Area"`, `year: 2023`).
 
-2. **UI Thread & Chat Thread Integration (`ChatPanel.tsx`)**:
-   - The selected map element is displayed as an interactive selection chip inside the user message bubble:
-     `📍 Selected: Built Area Polygons (2023)`
-   - The chip input state is automatically cleared upon message dispatch.
+2. **UI Selection Chip (`ChatPanel.tsx`)**:
+   - Displayed as an interactive context badge above the input prompt: `📍 Selected: Built Area Polygons (2023)`.
+   - Allows users to clear selection or select entire layer collections at once.
 
-3. **Backend Prompt Injection (`routers/chat.py`)**:
-   In `_run_agent()`, the spatial metadata is injected into the model's system prompt in a clean structured format:
+3. **Backend Injection (`routers/chat.py`)**:
+   Structured cleanly into the system prompt:
    ```text
    [USER SELECTED MAP ELEMENTS / HIGHLIGHTED LAYERS]
    - Selected Element/Layer: land_use_built_area_2023
-     File Path: D:\test\land_use_built_area_2023.geojson
+     File Path: /workspace/land_use_built_area_2023.geojson
      Feature Count: 89
      Centroid: [lng=76.77733, lat=30.72908]
      Bounding Box: [W=76.70381, S=30.66551, E=76.84961, N=30.79487]
-     Properties Summary: {"land_cover_class": "Built Area", "year": 2023}
+     Properties: {"land_cover_class": "Built Area", "year": 2023}
    ```
-   **Result**: Token consumption per feature selection plummeted from **~274,000 tokens** down to **~100 tokens** ($\mathbf{99.96\%}$ reduction).
+   **Outcome**: Token consumption dropped from **~274,000 tokens** down to **~100 tokens** ($\mathbf{99.96\%}$ reduction).
 
 ---
 
-## 📊 2. Plot & Histogram Engine (`PlotServer` MCP Server)
+## 📊 4. Plot & Histogram MCP Server (`PlotServer`)
 
-To solve the issue where chat previously claimed plots were made without actual files existing, we created a new Model Context Protocol (MCP) server: `PlotServer`.
+Implemented in [`packages/backend/mcp_servers/plot_server.py`](file:///Users/smriti/Documents/GitHub/disha/packages/backend/mcp_servers/plot_server.py) and exposed via `UtilityHub`:
 
-### Implementation Details (`packages/backend/mcp_servers/plot_server.py`)
-- **Class Structure**: Follows the repository's MCP server standard:
-  ```python
-  class PlotServer:
-      description = "Generates publication-quality charts and plots..."
-      tool_names = {"create_plot"}
-  ```
-- **Supported Plot Types**: `bar`, `histogram`, `pie`, `line`, `scatter`.
-- **Styling**: Configured with dark/light themes tailored for urban planning dashboards, featuring high-DPI rendering ($300$ DPI) and curated color palettes (`teal`, `indigo`, `coral`, `sunset`, `landuse`).
-- **Artifact Integration**: When `create_plot` is executed by the agent, Matplotlib renders the figure into a byte buffer, saves the image to `Path(workspace)/.disha/artifacts_store/`, and registers it as an image artifact in the SQLite database.
+- **Supported Chart Formats**: `bar`, `histogram`, `pie`, `line`, and `scatter`.
+- **Urban Planning Theme**: Configured with sleek dark aesthetics tailored for map IDEs (`#0f172a` canvas, `#1e293b` axes, and high-contrast color palettes like `teal`, `coral`, `indigo`, and `landuse`).
+- **High-Resolution Graphics**: Rendered at $200$–$300$ DPI into memory byte buffers, saved directly to the workspace artifact directory, and cataloged in the SQLite database as an image artifact.
 
 ---
 
-## 📄 3. Multi-Format Artifact Export Engine (`tools/export_engine.py`)
+## 📄 5. Multi-Format Artifact Export Engine (`tools/export_engine.py`)
 
-The multi-format compiler allows any planning report, spatial summary, table, or map view to be exported into 8 distinct formats.
+The multi-format compiler in [`packages/backend/tools/export_engine.py`](file:///Users/smriti/Documents/GitHub/disha/packages/backend/tools/export_engine.py) allows any planning report, spatial summary, table, or map view to be exported into 8 distinct formats:
 
-| Format | Library Used | Key Capabilities |
+| Format | Technology / Engine | Key Capabilities |
 |---|---|---|
-| **PDF (`.pdf`)** | `ReportLab` | Native `%PDF-1.4` binary stream; includes document title, formatted paragraphs, bullet lists, and embedded map figure. No external C-libraries required. |
+| **PDF (`.pdf`)** | `ReportLab` | Native `%PDF-1.4` binary stream; includes document title, formatted paragraphs, bullet lists, and embedded map figure. Pure Python, requiring zero system C-libraries (such as Pango/cairo). |
 | **Word (`.docx`)** | `python-docx` | Native Microsoft Word document formatting; includes H1/H2 headings, table grids, bullet points, and centered map image figures. |
 | **HTML (`.html`)** | `markdown` | Self-contained, responsive HTML report styled with modern CSS typography and base64-embedded map snapshots. |
 | **PNG (`.png`)** | `Pillow` (PIL) | High-resolution raster map image snapshot with legend, scale bar, and compass rose. |
 | **JPEG (`.jpg`)** | `Pillow` (PIL) | Compressed RGB JPEG map snapshot ($95\%$ quality). |
 | **Excel (`.xlsx`)** | `openpyxl` | Formatted multi-column workbook containing feature properties, attribute tables, and zonal data. |
-| **JSON (`.json`)** | Built-in `json` | Raw structured metadata and GeoJSON feature collections. |
+| **JSON (`.json`)** | Standard `json` | Raw structured metadata and GeoJSON feature collections. |
 | **TXT (`.txt`)** | Standard I/O | Plain text document export. |
 
 ---
 
-## 🗺️ 4. Uncropped Bounding-Box Map Composer
+## 🗺️ 6. Uncropped Bounding-Box Map Composer
 
-### The Challenge
-When capturing WebGL map snapshots:
-1. Fixed aspect ratio forcing (e.g. `480x270`) squished or stretched the map graphics and compass rose.
-2. WebGL canvas frame buffer clearing (`preserveDrawingBuffer`) caused race conditions.
-3. Snapshots grabbed whatever view the user's screen was zoomed into, cropping outer layer tips.
+### The Challenges Solved
+1. **Aspect Ratio Squishing**: Forcing arbitrary canvas sizes distorted geographic shapes, legends, and compass roses.
+2. **Buffer Clears**: MapLibre WebGL canvas clearing (`preserveDrawingBuffer`) caused blank exports.
+3. **Viewport Cropping**: Snapshots captured whatever arbitrary screen zoom the user had active, clipping outer boundary vertices.
 
-### The Technical Solution
+### The Solution Implementation
 
-1. **True Planar Aspect Ratio (`export_engine.py`)**:
-   Using `Pillow` (`PILImage`), `generate_pdf_export` inspects the natural pixel width ($W_{orig}$) and height ($H_{orig}$) of the captured image:
+1. **True Planar Proportions (`export_engine.py`)**:
+   Inspects the natural pixel width ($W_{orig}$) and height ($H_{orig}$) of the captured image:
    $$\text{Aspect Ratio } AR = \frac{W_{orig}}{H_{orig}}$$
-   The image dimensions in the PDF/Word document are dynamically computed to maintain exact $AR$ proportions, eliminating squishing or distortion.
+   Image dimensions inside the PDF/Word layout dynamically adapt to maintain strict $AR$ geometry.
 
-2. **Westmost, Southmost, Eastmost, Northmost Coordinate Extent (`MapView.tsx`)**:
-   We implemented `fitBboxAndSnapshot()` in `MapView.tsx`:
-   - Scans the GeoJSON layer/artifact features using `@turf/bbox` to extract:
-     $$\text{West} = \min(X), \quad \text{South} = \min(Y), \quad \text{East} = \max(X), \quad \text{North} = \max(Y)$$
-   - Calculates geographic spans: $\Delta \text{Lng} = \text{East} - \text{West}$, $\Delta \text{Lat} = \text{North} - \text{South}$.
-   - Expands the bounding box by an **$18\%$ geographic buffer margin** on all 4 sides:
-     $$\text{Pad}_{\text{West}} = \text{West} - 0.18 \times \Delta \text{Lng}$$
-     $$\text{Pad}_{\text{East}} = \text{East} + 0.18 \times \Delta \text{Lng}$$
-     $$\text{Pad}_{\text{South}} = \text{South} - 0.18 \times \Delta \text{Lat}$$
-     $$\text{Pad}_{\text{North}} = \text{North} + 0.18 \times \Delta \text{Lat}$$
+2. **$18\%$ Geographic Padding on All Four Bounds (`MapView.tsx`)**:
+   `fitBboxAndSnapshot()` in [`MapView.tsx`](file:///Users/smriti/Documents/GitHub/disha/apps/desktop/src/renderer/components/MapView.tsx) computes bounding coordinates and applies an $18\%$ buffer:
+   $$\text{Pad}_{\text{West}} = \text{West} - 0.18 \times \Delta \text{Lng}$$
+   $$\text{Pad}_{\text{East}} = \text{East} + 0.18 \times \Delta \text{Lng}$$
+   $$\text{Pad}_{\text{South}} = \text{South} - 0.18 \times \Delta \text{Lat}$$
+   $$\text{Pad}_{\text{North}} = \text{North} + 0.18 \times \Delta \text{Lat}$$
 
 3. **Synchronous WebGL Frame Flush**:
-   To prevent asynchronous race conditions where the camera reset happened before the WebGL frame painted, `fitBboxAndSnapshot` invokes `map._render()` to flush the WebGL frame buffer synchronously before reading `map.getCanvas()`. Camera restoration is scheduled 150ms later via `setTimeout`.
+   Invokes `map._render()` to force an immediate WebGL draw buffer repaint before snapshot serialization, resetting camera viewports 150ms after capture.
 
 ---
 
-## 🛠️ 5. MCP Servers vs. Tool Calls vs. Map Actions
+## 🚌 7. GTFS Transit & Satellite Land Use Analytics
 
-In the Disha architecture, AI interactions are split across three standardized channels:
+### GTFS Transit Analysis (`gtfs_server.py`)
+- **Feed Ingestion**: Parses `.zip` archives or directories containing GTFS data (`stops.txt`, `routes.txt`, `trips.txt`, `stop_times.txt`, `frequencies.txt`).
+- **Catchment Buffer Modeling**: Generates standard urban pedestrian walking sheds:
+  - **400m Buffer**: ~5-minute first-mile/last-mile walk shed.
+  - **800m Buffer**: ~10-minute primary transit catchment shed.
+- **Service Frequencies**: Computes hourly trip departures and headway metrics across 24-hour service profiles.
 
-```
-+-----------------------------------------------------------------------------------+
-|                                   DISHA AI AGENT                                  |
-+------------------------------------------+----------------------------------------+
-                                           |
-     +-------------------------------------+-----------------------------------+
-     |                                     |                                   |
-     v                                     v                                   v
-+------------------------+   +----------------------------+   +-------------------------------+
-|  MCP Domain Servers    |   |    Utility Tool Calls      |   |   Frontend Map Actions        |
-|  (Backend Logic)       |   |    (Cross-Cutting Tools)   |   |   (MapLibre Operations)       |
-+------------------------+   +----------------------------+   +-------------------------------+
-| • PlotServer           |   | • create_artifact          |   | • fly_to                      |
-|   (create_plot)        |   | • list_artifacts           |   | • fit_bounds                  |
-| • OsmServer            |   | • geocode                  |   | • add_geojson                 |
-|   (osm_boundary)       |   | • measure_distance         |   | • remove_layer                |
-| • GisServer            |   | • measure_area             |   | • style_layer                 |
-|   (gis_clip, etc.)     |   | • web_search               |   | • add_marker                  |
-+------------------------+   +----------------------------+   +-------------------------------+
-```
-
-1. **MCP Domain Servers** (`mcp_servers/*.py`):
-   Standalone Python classes instantiated in `routers/chat.py:_servers`. Their tool definitions are flattened into the OpenAI API schema via `get_declarations()`.
-   - *Example*: `PlotServer.create_plot` generates chart graphics.
-
-2. **Utility Tools** (`tools/utility.py`):
-   Cross-cutting functions inside `UtilityServer`.
-   - *Example*: `create_artifact` saves notes, analyses, reports, PDF/DOCX/HTML files, or GeoJSON datasets into SQLite and disk storage.
-
-3. **Frontend Map Actions** (`MapView.tsx` Discriminated Union):
-   Functions in `_ACTION_TOOLS` (`routers/chat.py:61`) that return an action payload over the WebSocket to mutate MapLibre GL state.
-   - *Example*: `fit_bounds` adjusts the camera frame to a bounding box.
+### GEE Dynamic World Zonal Land Use (`gee_server.py`)
+- Calculates land cover distributions across 9 discrete classes (`water`, `trees`, `grass`, `flooded_vegetation`, `crops`, `shrub_and_scrub`, `built`, `bare`, `snow_and_ice`).
+- Computes both absolute metric areas ($\text{km}^2$) and percentage distributions for custom study boundaries.
 
 ---
 
-## 📁 6. Complete File & Component Audit
+## 🔒 8. Workspace Concurrency & Auto-Save Guardrails
 
-| Modified / Created File | Type | Key Responsibility |
+To eliminate data corruption during workspace resets or project loading, Disha implements strict lifecycle guards in [`App.tsx`](file:///Users/smriti/Documents/GitHub/disha/apps/desktop/src/renderer/App.tsx):
+
+- **The `isClosingRef` Guard**: Whenever closing or switching workspaces, `isClosingRef.current = true` is asserted **prior** to state resets.
+- **Auto-Save Protection**: Asynchronous debounced saves (`project.json` and `documents.json`) abort immediately if `isClosingRef.current` is set, preventing blank default state from overwriting saved project data.
+- **Artifacts Double-Effect Guard**: `fetchArtifacts` verifies `workspacePath` presence before issuing network calls, clearing state synchronously when closed.
+
+---
+
+## 📁 9. Complete Component & File Audit
+
+| File Path | Type | Architecture Role & Responsibilities |
 |---|---|---|
-| [`packages/backend/mcp_servers/plot_server.py`](file:///d:/ILGC/disha/packages/backend/mcp_servers/plot_server.py) | **[NEW]** MCP Server | Implements `PlotServer` exposing `create_plot` tool for rendering Matplotlib charts. |
-| [`packages/backend/tools/export_engine.py`](file:///d:/ILGC/disha/packages/backend/tools/export_engine.py) | **[NEW]** Tool Module | Multi-format document compiler (`DOCX`, `PDF`, `HTML`, `PNG`, `JPG`, `XLSX`). |
-| [`packages/backend/tools/artifact_store.py`](file:///d:/ILGC/disha/packages/backend/tools/artifact_store.py) | Modified | Extended `ALLOWED_FORMATS` to support 8 export extensions and binary byte saving. |
-| [`packages/backend/tools/utility.py`](file:///d:/ILGC/disha/packages/backend/tools/utility.py) | Modified | Updated `create_artifact` ToolDeclaration schema to support all multi-format options. |
-| [`packages/backend/routers/artifacts.py`](file:///d:/ILGC/disha/packages/backend/routers/artifacts.py) | Modified | Added `POST/GET /api/artifacts/{id}/export?format={fmt}` HTTP endpoint. |
-| [`packages/backend/routers/chat.py`](file:///d:/ILGC/disha/packages/backend/routers/chat.py) | Modified | Registered `PlotServer` and updated `SYSTEM_PROMPT` Rule 20. |
-| [`packages/backend/requirements.txt`](file:///d:/ILGC/disha/packages/backend/requirements.txt) | Modified | Added dependencies: `matplotlib>=3.8.0`, `openpyxl>=3.1.0`, `reportlab>=4.0`. |
-| [`apps/desktop/src/renderer/components/ArtifactsPanel.tsx`](file:///d:/ILGC/disha/apps/desktop/src/renderer/components/ArtifactsPanel.tsx) | Modified | Added multi-format export buttons, `extractBbox`, and `handleExportWithMap`. |
-| [`apps/desktop/src/renderer/components/MapView.tsx`](file:///d:/ILGC/disha/apps/desktop/src/renderer/components/MapView.tsx) | Modified | Implemented `fitBboxAndSnapshot` with 18% padding margin and synchronous `_render()`. |
-| [`apps/desktop/src/renderer/lib/compose-figure.ts`](file:///d:/ILGC/disha/apps/desktop/src/renderer/lib/compose-figure.ts) | Modified | Added `noTitleBand` option for full-bleed map snapshots. |
-| [`apps/desktop/src/renderer/App.tsx`](file:///d:/ILGC/disha/apps/desktop/src/renderer/App.tsx) | Modified | Memoized spatial selection metadata and wired `onComposeMapFigure` & `onFitBounds`. |
-| [`apps/desktop/src/renderer/components/ChatPanel.tsx`](file:///d:/ILGC/disha/apps/desktop/src/renderer/components/ChatPanel.tsx) | Modified | Attached selection metadata chip to chat bubble thread and sent message payloads. |
-| [`apps/desktop/src/renderer/types.ts`](file:///d:/ILGC/disha/apps/desktop/src/renderer/types.ts) | Modified | Updated `ChatMessage` and `MapContext` interfaces with `selected_features`. |
-| [`packages/backend/tests/test_mcp_servers.py`](file:///d:/ILGC/disha/packages/backend/tests/test_mcp_servers.py) | Modified | Added unit tests for selection prompt formatting, `PlotServer`, and `export_engine`. |
-| [`README.md`](file:///d:/ILGC/disha/README.md) | Modified | Updated project documentation with feature selection and export capabilities. |
+| [`packages/backend/domains/protocol.py`](file:///Users/smriti/Documents/GitHub/disha/packages/backend/domains/protocol.py) | Protocol | Defines `BaseDomainHub` ABC and typed `ToolResult` data contracts. |
+| [`packages/backend/domains/spatial_hub.py`](file:///Users/smriti/Documents/GitHub/disha/packages/backend/domains/spatial_hub.py) | Hub | Consolidates GIS operations, boundary queries, WMS, and spatial registry tools. |
+| [`packages/backend/domains/mobility_hub.py`](file:///Users/smriti/Documents/GitHub/disha/packages/backend/domains/mobility_hub.py) | Hub | Consolidates road networks, routing, GTFS transit, ITS, and OD flows. |
+| [`packages/backend/domains/environment_hub.py`](file:///Users/smriti/Documents/GitHub/disha/packages/backend/domains/environment_hub.py) | Hub | Consolidates GEE satellite analytics, weather, emissions, and solar potential. |
+| [`packages/backend/domains/planning_hub.py`](file:///Users/smriti/Documents/GitHub/disha/packages/backend/domains/planning_hub.py) | Hub | Consolidates zoning standards, image georeferencing, and digitization. |
+| [`packages/backend/domains/demographics_hub.py`](file:///Users/smriti/Documents/GitHub/disha/packages/backend/domains/demographics_hub.py) | Hub | Consolidates WorldPop data, cohort projections, and employment density. |
+| [`packages/backend/domains/places_hub.py`](file:///Users/smriti/Documents/GitHub/disha/packages/backend/domains/places_hub.py) | Hub | Consolidates Google Places lookups and Overture 3D building models. |
+| [`packages/backend/domains/scenarios_hub.py`](file:///Users/smriti/Documents/GitHub/disha/packages/backend/domains/scenarios_hub.py) | Hub | Consolidates planning scenarios, growth forecasts, and MCDA scoring. |
+| [`packages/backend/domains/utility_hub.py`](file:///Users/smriti/Documents/GitHub/disha/packages/backend/domains/utility_hub.py) | Hub | Consolidates geocoding, search, measurements, plotting, and artifacts. |
+| [`packages/backend/tools/spatial_registry.py`](file:///Users/smriti/Documents/GitHub/disha/packages/backend/tools/spatial_registry.py) | Core Tool | Central polygon registry with IoU deduplication and geodesic metrics. |
+| [`packages/backend/tools/export_engine.py`](file:///Users/smriti/Documents/GitHub/disha/packages/backend/tools/export_engine.py) | Core Tool | Multi-format document compiler (`PDF`, `DOCX`, `HTML`, `PNG`, `JPG`, `XLSX`). |
+| [`packages/backend/mcp_servers/plot_server.py`](file:///Users/smriti/Documents/GitHub/disha/packages/backend/mcp_servers/plot_server.py) | Server | Publication chart generator rendering dark/light styled figures. |
+| [`packages/backend/tools/artifact_store.py`](file:///Users/smriti/Documents/GitHub/disha/packages/backend/tools/artifact_store.py) | Storage | SQLite database and filesystem storage for multi-format artifacts. |
+| [`packages/backend/routers/chat.py`](file:///Users/smriti/Documents/GitHub/disha/packages/backend/routers/chat.py) | Router | WebSocket chat agent loop, tool dispatching, and system prompt definitions. |
+| [`apps/desktop/src/renderer/App.tsx`](file:///Users/smriti/Documents/GitHub/disha/apps/desktop/src/renderer/App.tsx) | Frontend | Root application state, workspace guardrails, and feature selection handlers. |
+| [`apps/desktop/src/renderer/components/MapView.tsx`](file:///Users/smriti/Documents/GitHub/disha/apps/desktop/src/renderer/components/MapView.tsx) | Frontend | MapLibre map engine, layer styling, and uncropped snapshot composer. |
+| [`apps/desktop/src/renderer/components/ArtifactsPanel.tsx`](file:///Users/smriti/Documents/GitHub/disha/apps/desktop/src/renderer/components/ArtifactsPanel.tsx) | Frontend | Artifact catalog and multi-format export UI with figure injection. |
+| [`apps/desktop/src/renderer/components/ChatPanel.tsx`](file:///Users/smriti/Documents/GitHub/disha/apps/desktop/src/renderer/components/ChatPanel.tsx) | Frontend | Streaming chat UI, context selection badge, and map action handlers. |
 
 ---
 
-## 🧪 Verification & Test Coverage
+## 🧪 10. Verification & Test Suite
 
-All automated test suites and type-checking scripts passed with $0$ errors:
-- **TypeScript Typecheck**: `npx tsc --noEmit` passed with 0 errors.
-- **Backend Pytest Suite**: `pytest tests/test_mcp_servers.py` passed clean ($8/8$ tests passed in $3.66$s).
-- **Git Status**: All changes remain local in the working tree (**no commits or pushes executed** per instructions).
+Disha maintains strict automated verification pipelines across both backend and frontend layers:
+
+- **Backend Pytest Suite**:
+  ```bash
+  cd packages/backend
+  .buildenv/bin/pytest tests/
+  ```
+  Runs 30 unit tests covering domain hubs, spatial registry IoU matching, GTFS catchment generation, multi-format exports, and WebSocket tool execution (**30/30 passing**).
+
+- **Frontend Static Analysis**:
+  ```bash
+  pnpm --filter @disha/desktop exec tsc --noEmit
+  ```
+  Validates TypeScript type safety, discriminating union actions, and component contracts with 0 errors.

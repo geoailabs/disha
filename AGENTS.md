@@ -130,8 +130,9 @@ In dev, `apps/desktop/src/main/index.ts:startBackend` is a no-op — uvicorn run
 cd packages/backend
 .buildenv/bin/pytest tests/
 
-# Frontend typecheck
+# Frontend typecheck & full Vite bundler build verification
 pnpm --filter @disha/desktop exec tsc --noEmit
+pnpm --filter @disha/desktop build
 ```
 
 ## Key files to read first (in order)
@@ -151,4 +152,5 @@ pnpm --filter @disha/desktop exec tsc --noEmit
 - **Adding a map action?** Use the `add-map-action` skill — touches the backend action contract in `chat.py` and the frontend handler in `MapView.tsx` together.
 - **Designing a new feature?** Formulate a step-by-step implementation plan before modifying code.
 - **Debugging the agent loop?** Inspect `packages/backend/routers/chat.py:_run_agent()` — streaming tool-call deltas accumulate in `tool_calls_acc`, execute via domain hubs, and loop until `finish_reason == "stop"`.
-- **Before claiming a change works:** Run backend unit tests (`.buildenv/bin/pytest tests/`) and frontend typecheck (`pnpm --filter @disha/desktop exec tsc --noEmit`). Type-check passing alone is not the same as runtime correctness.
+- **Before claiming a change works:** Run backend unit tests (`.buildenv/bin/pytest tests/`), frontend typecheck (`pnpm --filter @disha/desktop exec tsc --noEmit`), and full bundler build (`pnpm --filter @disha/desktop build`). Type-check passing alone is not the same as runtime correctness.
+

@@ -549,6 +549,10 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       setMapReady(false)
       layerRevisionRef.current.clear()
       map.remove()
+      mapRef.current = null
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   useImperativeHandle(ref, () => ({
     getCanvas: () => mapRef.current?.getCanvas() ?? null,
     resize: () => mapRef.current?.resize(),

@@ -187,4 +187,4 @@ class PlotServer:
                 "plot_type": plot_type,
             }
         except Exception as exc:
-            return {"error": f"Failed to generate plot: {str(exc)}"}
+            return {"status": "error", "error": f"Failed to generate plot: {str(exc)}"}

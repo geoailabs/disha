@@ -11,30 +11,33 @@ import logging
 from typing import Any
 
 from domains.protocol import BaseDomainHub, ToolResult
+from mcp_servers.plot_server import PlotServer
 from tools.utility import UtilityServer
 
 logger = logging.getLogger(__name__)
 
 
 class UtilityHub(BaseDomainHub):
-    """Domain Hub for Platform Utilities, Search, Geocoding & Artifacts."""
+    """Domain Hub for Platform Utilities, Search, Geocoding, Plotting & Artifacts."""
 
     name = "utility"
-    description = "Web search, geocoding, distance/area measurement, and artifact storage."
+    description = "Web search, geocoding, distance/area measurement, plots/charts, and artifact storage."
 
     def __init__(self, db_path: str | None = None) -> None:
         self.utility_server = UtilityServer(db_path=db_path)
+        self.plot_server = PlotServer()
         # Exclude planning digitization tools which live in PlanningHub
         self.tool_names = {
             name for name in self.utility_server.tool_names
             if name not in ("autogeoreference_image", "georeference_active_document", "digitize_image_features")
-        }
+        } | self.plot_server.tool_names
 
     def get_declarations(self) -> list[dict[str, Any]]:
         decls = [
             d for d in self.utility_server.get_declarations()
             if d.name in self.tool_names
         ]
+        decls.extend(self.plot_server.get_declarations())
         return [
             {
                 "type": "function",
@@ -54,6 +57,10 @@ class UtilityHub(BaseDomainHub):
         context: dict[str, Any] | None = None,
     ) -> ToolResult:
         context = context or {}
+        if tool_name in self.plot_server.tool_names:
+            res = await self.plot_server.execute(tool_name, {**args, **context})
+            return ToolResult(status=res.get("status", "success"), data=res)
+
         res = await self.utility_server.execute(tool_name, {**args, **context})
 
         map_action = None

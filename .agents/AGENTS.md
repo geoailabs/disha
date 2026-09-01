@@ -21,8 +21,14 @@ This file documents rules and guidelines for pair programming on this repository
 * **Verify Declaration Hoisting:** Avoid referencing lexical variables (`const` or `let` arrow functions and hooks) before they are initialized in the component layout. Always place auxiliary helper functions and hooks higher up in the component definition than the functions referencing them.
 * **Double-Check Redeclarations:** Never duplicate component-scoped ref or state declarations. Keep variable names clean and inspect for block-scope redeclaration errors.
 
-### 5. Runtime Execution & Dev Server Checks
-* **Validate dev builds before final delivery:** Do not rely solely on static checks (e.g., `tsc --noEmit`). If React code has been modified, run the dev server (`pnpm dev` or similar dev script) or start a browser subagent to verify that the app builds, renders successfully, and exhibits no runtime crashes or blank screens in the console.
+### 5. Mandatory Production Bundler & Dev Build Verification
+* **Never Rely Solely on `tsc --noEmit`:** TypeScript's static type checker does NOT guarantee that the code parses cleanly under Vite, esbuild, and Babel. When editing `.tsx` or `.ts` files in `@disha/desktop`, ALWAYS run:
+  ```bash
+  pnpm --filter @disha/desktop build
+  ```
+  This executes `electron-vite build`. If this fails, the app will crash with a red screen or blank viewport in Electron.
+* **Dev Server Validation:** Verify that `pnpm dev` hot-reloads cleanly with zero red-screen Vite parse errors before considering any task complete.
+
 
 ### 6. Workspace Transition Auto-Save Race Condition
 * **Root cause pattern:** In `App.tsx`, `resetWorkspaceState()` resets `layers`, `conversations`, `bookmarks`, `openDocs`, etc. These are all dependency-array entries of the debounced auto-save `useEffect`s. Because React state updates are asynchronous, `workspacePath` is still non-null when those effects re-run after a reset. This causes the auto-save to write **empty data** to `project.json` and `documents.json`, silently corrupting the workspace.
@@ -61,3 +67,8 @@ This file documents rules and guidelines for pair programming on this repository
 * **Substantive Reports Only:** Automated artifact persistence (Rule 20) and backend interceptors must only save substantive planning reports, demographic profiles, weather & air quality forecast cards, scenario evaluations, and GIS summaries.
 * **Prohibit Error/Failure Artifacts:** Never save error messages, tool failure alerts, failed request traces, or clarifying prompts as artifacts.
 * **In-Place Deduplication:** All artifact storage must enforce `(title, artifact_type)` deduplication in `packages/backend/tools/artifact_store.py` to prevent duplicate sidebar entries when updating or refining existing findings.
+
+### 11. Hook & AST Boundary Integrity in Large Components
+* **Bracket & Lifecycle Hook Integrity:** Large components (such as `MapView.tsx` at 2,400+ lines, `ChatPanel.tsx`, and `App.tsx`) have tightly nested React hooks. When adding, replacing, or refactoring hooks (`useEffect`, `useCallback`, `useImperativeHandle`), ALWAYS check that adjacent hooks retain their closing brackets and dependency arrays (e.g. `}, [])`).
+* **Inspect Diff Bounds:** Before saving edits, inspect 5–10 lines before and after the replacement block to ensure no cleanup callbacks (`return () => { ... }`) or enclosing function scopes were inadvertently truncated.
+

@@ -45,11 +45,24 @@ from mcp_servers.od_server import ODServer
 from mcp_servers.scenario_server import ScenarioServer
 from mcp_servers.its_server import ITSServer
 from mcp_servers.emissions_server import EmissionsServer
-from mcp_servers.plot_server import PlotServer
+from domains import (
+    BaseDomainHub,
+    DemographicsHub,
+    EnvironmentHub,
+    MobilityHub,
+    PlacesHub,
+    PlanningHub,
+    ScenariosHub,
+    SpatialHub,
+    ToolResult,
+    UtilityHub,
+)
 from tools.utility import UtilityServer
 from tools.config import get_model as _get_model
 from tools.google import google_maps_key_var
 from tools.action_utils import send_action as _send_action
+from tools.spatial_registry import spatial_registry
+
 
 try:
     from shapely.geometry import shape as _shape
@@ -96,27 +109,19 @@ def _env_google_maps_api_key() -> str:
 _env_key = _env_openai_api_key()
 _client = AsyncOpenAI(api_key=_env_key) if _env_key else None
 
-_servers = {
-    "osm": OSMServer(),
-    "gis": GISServer(),
-    "weather": WeatherServer(),
-    "zoning": ZoningServer(),
-    "demographics": DemographicsServer(),
-    "overture": OvertureServer(),
-    "google_places": GooglePlacesServer(),
-    "google_env": GoogleEnvironmentServer(),
-    "wms": WMSServer(),
-    "gee": GEEServer(),
-    "datameet": DatameetServer(),
-    "network": NetworkServer(),
-    "gtfs": GTFSServer(),
-    "od": ODServer(),
-    "scenario": ScenarioServer(),
-    "its": ITSServer(),
-    "emissions": EmissionsServer(),
-    "plot": PlotServer(),
-    "utility": UtilityServer(db_path=DB_PATH),
+_util_hub = UtilityHub(db_path=DB_PATH)
+_hubs: dict[str, BaseDomainHub] = {
+    "spatial": SpatialHub(db_path=DB_PATH),
+    "mobility": MobilityHub(),
+    "environment": EnvironmentHub(),
+    "planning": PlanningHub(utility_server=_util_hub.utility_server),
+    "demographics": DemographicsHub(),
+    "places": PlacesHub(),
+    "scenarios": ScenariosHub(),
+    "utility": _util_hub,
 }
+# Backward compatibility alias
+_servers = _hubs
 
 # ── Action tool names (sent directly to frontend as map actions) ──────────────
 
@@ -295,10 +300,9 @@ SYSTEM_PROMPT = (
     "(using osm_boundary or osm_boundary_union), always mention explicitly in your chat response "
     "which administrative level (e.g., admin_level=5 for district/county, admin_level=8 for city/municipality) "
     "was used or chosen.\n"
-    "19. JUNCTIONS AND POI PINNING: When pinning a specific point of interest, landmark, chowk, junction, or address (like 'Fountain Chowk' or 'Airport Chowk'), ALWAYS first call the `geocode` tool with the full descriptive name and containing context (e.g. 'Fountain Chowk, Sector 43, Chandigarh') to resolve its exact point coordinate. DO NOT call `osm_boundary` or `osm_search` for a specific junction/chowk unless you want to search for adjacent amenities or the city boundary. To display the pinned point on the map, call `add_marker` at the resolved coordinate. When the user asks to route/cross through waypoints, ensure each waypoint is geocoded and explicitly passed in the routing tool's `waypoints` argument, and pass the corresponding color or label if customized.\n"
+    "19. JUNCTIONS AND POI PINNING: When pinning a specific point of interest, landmark, intersection, square, roundabout, junction, or address (e.g. 'Times Square, New York' or 'Airport Interchange, Sector 43'), ALWAYS first call the `geocode` tool with the full descriptive name and containing city/state context to resolve its exact point coordinate. DO NOT call `osm_boundary` or `osm_search` for a specific junction/intersection unless you want to search for adjacent amenities or the broader boundary. To display the pinned point on the map, call `add_marker` at the resolved coordinate. When the user asks to route/cross through waypoints, ensure each waypoint is geocoded and explicitly passed in the routing tool's `waypoints` argument, and pass the corresponding color or label if customized.\n"
     "20. AUTOMATIC ARTIFACT & MULTI-FORMAT EXPORT PERSISTENCE: Whenever you generate ANY planning report, summary card, demographic profile, plot/histogram, or structured analysis, call `create_artifact` with a descriptive title and format ('pdf', 'docx', 'html', 'png', 'jpg', 'xlsx', 'txt', 'json', 'markdown', 'table', 'geojson'). You CAN create PNG, JPEG, PDF, Word (.docx), HTML, and Excel (.xlsx) artifacts directly using `create_artifact`. For charts and histograms, call `create_plot` to generate clean plot image artifacts.\n"
-    "21. ATTRIBUTE FILTERING & VECTOR SUBSETS: When the user asks to filter/extract/isolate specific features from a loaded layer or dataset (e.g. 'filter coastal districts in Tamil Nadu and Kerala', 'show only commercial parcels', 'extract expressways'), ALWAYS call `gis_filter` with the layer_name or path, target values array, and output_layer_name. Do NOT try to highlight features one by one, do NOT paste raw geometries in chat, and do NOT claim you cannot filter without asking the user for a file."
-)
+    "21. ATTRIBUTE FILTERING & VECTOR SUBSETS: When the user asks to filter, extract, or isolate specific features from a loaded layer or dataset (e.g. filtering districts by region/state name, selecting commercial zoning parcels, isolating expressways from a road network), ALWAYS call `gis_filter` with the layer_name or path, target values array, and output_layer_name. Do NOT try to highlight features one by one, do NOT paste raw geometries in chat, and do NOT claim you cannot filter without asking the user for a file."
 )
 
 
