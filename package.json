@@ -21,7 +21,8 @@
     "test": "pnpm run test:unit && pnpm run test:smoke",
     "package": "pnpm run test:unit && pnpm run build:backend && pnpm run test:smoke && pnpm --filter @disha/desktop package",
     "release:mac": "pnpm run test:unit && pnpm run build:backend && pnpm run test:smoke && pnpm --filter @disha/desktop release:mac",
-    "release:win": "pnpm run test:unit && pnpm run build:backend && pnpm run test:smoke && pnpm --filter @disha/desktop release:win"
+    "release:win": "pnpm run test:unit && pnpm run build:backend && pnpm run test:smoke && pnpm --filter @disha/desktop release:win",
+    "release:linux": "pnpm run test:unit && pnpm run build:backend && pnpm run test:smoke && pnpm --filter @disha/desktop release:linux"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

@@ -14,7 +14,8 @@
     "build": "electron-vite build",
     "package": "electron-vite build && electron-builder",
     "release:mac": "electron-vite build && electron-builder --mac --publish always",
-    "release:win": "electron-vite build && electron-builder --win --publish always"
+    "release:win": "electron-vite build && electron-builder --win --publish always",
+    "release:linux": "electron-vite build && electron-builder --linux --publish always"
   },
   "dependencies": {
     "@turf/turf": "^7.3.4",

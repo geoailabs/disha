@@ -15,6 +15,13 @@ win:
     - nsis
     - zip
   artifactName: "Disha-${version}-${arch}.${ext}"
+linux:
+  target:
+    - AppImage
+    - deb
+    - zip
+  category: Development
+  artifactName: "Disha-${version}-${arch}.${ext}"
 extraResources:
   - from: ../../packages/backend/dist/backend
     to: backend
