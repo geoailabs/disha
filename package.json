@@ -1,5 +1,9 @@
 {
   "name": "disha",
+  "author": {
+    "name": "GeoAI Labs",
+    "email": "hello@geoailabs.com"
+  },
   "private": true,
   "repository": {
     "type": "git",
