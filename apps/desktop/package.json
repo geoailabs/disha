@@ -2,7 +2,10 @@
   "name": "@disha/desktop",
   "version": "0.1.0",
   "description": "Geospatial AI-driven IDE for urban planners",
-  "author": "GeoAI Labs",
+  "author": {
+    "name": "GeoAI Labs",
+    "email": "hello@geoailabs.com"
+  },
   "private": true,
   "main": "./out/main/index.js",
   "repository": {
