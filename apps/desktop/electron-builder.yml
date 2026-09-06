@@ -22,6 +22,7 @@ linux:
     - zip
   category: Development
   artifactName: "Disha-${version}-${arch}.${ext}"
+  maintainer: "GeoAI Labs <hello@geoailabs.com>"
 extraResources:
   - from: ../../packages/backend/dist/backend
     to: backend
