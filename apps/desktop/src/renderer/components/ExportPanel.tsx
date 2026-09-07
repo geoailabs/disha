@@ -14,12 +14,14 @@ interface ExportPanelProps {
   layers: GeoJSONLayer[]
   workspacePath: string | null
   onExportMapPng: (title?: string) => void
+  onExportMapJpeg?: (title?: string) => void
   onExportLayer: (layerId: string) => void
   onExportPdf: (title?: string) => void
   onExportClippedRegion: (name: string) => void
   onPreviewBoundary: (geom: BoundaryGeometry | null) => void
   onSaveByRegion: (displayName: string, boundaryGeom: BoundaryGeometry) => void
   onSavePngToArtifact: (title: string) => void
+  onSaveJpgToArtifact?: (title: string) => void
   onSavePdfToArtifact: (title: string) => void
   onSuggestExportTitle: () => string
 }
@@ -28,12 +30,14 @@ export default function ExportPanel({
   layers,
   workspacePath,
   onExportMapPng,
+  onExportMapJpeg,
   onExportLayer,
   onExportPdf,
   onExportClippedRegion,
   onPreviewBoundary,
   onSaveByRegion,
   onSavePngToArtifact,
+  onSaveJpgToArtifact,
   onSavePdfToArtifact,
   onSuggestExportTitle,
 }: ExportPanelProps) {
@@ -127,6 +131,13 @@ export default function ExportPanel({
         <button
           type="button"
           className="export-btn"
+          onClick={() => onExportMapJpeg ? onExportMapJpeg(artifactTitle.trim() || undefined) : onExportMapPng(artifactTitle.trim() || undefined)}
+        >
+          Download JPEG
+        </button>
+        <button
+          type="button"
+          className="export-btn"
           onClick={() => onExportPdf(artifactTitle.trim() || undefined)}
         >
           Download PDF
@@ -142,6 +153,14 @@ export default function ExportPanel({
           onClick={() => onSavePngToArtifact(artifactTitle.trim())}
         >
           Save PNG
+        </button>
+        <button
+          type="button"
+          className="export-btn"
+          disabled={!artifactTitle.trim()}
+          onClick={() => onSaveJpgToArtifact ? onSaveJpgToArtifact(artifactTitle.trim()) : onSavePngToArtifact(artifactTitle.trim())}
+        >
+          Save JPEG
         </button>
         <button
           type="button"

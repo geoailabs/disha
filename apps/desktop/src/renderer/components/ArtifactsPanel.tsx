@@ -44,6 +44,8 @@ interface ArtifactPreview extends Omit<Artifact, 'content'> {
 interface ArtifactsPanelProps {
   workspacePath?: string
   revision?: number
+  selectedArtifactId?: number | null
+  onSelectArtifactId?: (id: number | null) => void
   onAddToMap: (geojson: object, name: string) => void
   onComposeMapFigure?: (title: string, options?: { noTitleBand?: boolean }) => HTMLCanvasElement | null
   onFitBounds?: (bounds: { west: number; south: number; east: number; north: number }, padding?: number) => void
@@ -55,6 +57,8 @@ interface ArtifactsPanelProps {
 export default function ArtifactsPanel({
   workspacePath,
   revision,
+  selectedArtifactId,
+  onSelectArtifactId,
   onAddToMap,
   onComposeMapFigure,
   onFitBounds,
@@ -63,9 +67,16 @@ export default function ArtifactsPanel({
   onLeftResizeStart,
 }: ArtifactsPanelProps) {
   const [artifacts, setArtifacts] = useState<ArtifactPreview[]>([])
-  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [selectedId, setSelectedId] = useState<number | null>(selectedArtifactId ?? null)
   const [fullArtifact, setFullArtifact] = useState<Artifact | null>(null)
   const [loadingFull, setLoadingFull] = useState(false)
+
+  // Sync external selectedArtifactId changes into selectedId state
+  useEffect(() => {
+    if (selectedArtifactId !== undefined && selectedArtifactId !== null) {
+      setSelectedId(selectedArtifactId)
+    }
+  }, [selectedArtifactId])
 
   const containerRef = useRef<HTMLDivElement>(null)
   const [isWide, setIsWide] = useState(false)
@@ -346,7 +357,9 @@ export default function ArtifactsPanel({
   }
 
   const handleToggleSelect = (id: number): void => {
-    setSelectedId((prev) => (prev === id ? null : id))
+    const next = selectedId === id ? null : id
+    setSelectedId(next)
+    onSelectArtifactId?.(next)
   }
 
 
@@ -377,7 +390,57 @@ export default function ArtifactsPanel({
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
                   rehypePlugins={[rehypeHighlight]}
-                  components={headingComponents}
+                  components={{
+                    ...headingComponents,
+                    img: ({ src, alt, ...props }) => {
+                      let resolvedSrc = src || ''
+                      if (
+                        resolvedSrc.startsWith('artifacts_store/') ||
+                        resolvedSrc.startsWith('artifacts_store\\') ||
+                        resolvedSrc.startsWith('artifacts_store')
+                      ) {
+                        const filename = resolvedSrc.replace(/\\/g, '/').split('/').pop() || ''
+                        const idMatch = filename.match(/^(\d+)\./)
+                        if (idMatch) {
+                          resolvedSrc = `${API_BASE}/${idMatch[1]}/download${workspacePath ? `?workspace=${encodeURIComponent(workspacePath)}` : ''}`
+                        }
+                      } else if (!resolvedSrc.startsWith('http://') && !resolvedSrc.startsWith('https://') && !resolvedSrc.startsWith('data:')) {
+                        const numMatch = resolvedSrc.match(/^(\d+)(\.\w+)?$/)
+                        if (numMatch) {
+                          resolvedSrc = `${API_BASE}/${numMatch[1]}/download${workspacePath ? `?workspace=${encodeURIComponent(workspacePath)}` : ''}`
+                        } else {
+                          const target = (resolvedSrc || alt || '').trim().toLowerCase()
+                          const found = artifacts.find((a) => {
+                            const atitle = (a.title || '').trim().toLowerCase()
+                            if (!atitle) return false
+                            return (
+                              atitle === target ||
+                              (alt && atitle === alt.trim().toLowerCase()) ||
+                              (target.length > 2 && atitle.includes(target)) ||
+                              (alt && alt.length > 2 && atitle.includes(alt.trim().toLowerCase())) ||
+                              (target.length > 2 && target.includes(atitle)) ||
+                              (alt && alt.length > 2 && alt.trim().toLowerCase().includes(atitle))
+                            )
+                          })
+                          if (found) {
+                            resolvedSrc = `${API_BASE}/${found.id}/download${workspacePath ? `?workspace=${encodeURIComponent(workspacePath)}` : ''}`
+                          }
+                        }
+                      }
+                      return (
+                        <div className="figure-container" style={{ textAlign: 'center', margin: '16px 0' }}>
+                          <img
+                            src={resolvedSrc}
+                            alt={alt || 'Figure'}
+                            className="map-img"
+                            style={{ maxWidth: '100%', height: 'auto', borderRadius: 8, border: '1px solid #334155' }}
+                            {...props}
+                          />
+                          {alt && <p className="caption" style={{ fontSize: '0.85rem', color: '#94a3b8', fontStyle: 'italic', marginTop: 6 }}>Figure: {alt}</p>}
+                        </div>
+                      )
+                    },
+                  }}
                 >
                   {content}
                 </ReactMarkdown>
@@ -554,8 +617,16 @@ export default function ArtifactsPanel({
       )
     }
 
-    if (fmt === 'image') {
+    const isImageFormat = ['image', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(fmt.toLowerCase()) || 
+                          Boolean(artifact.file_path && /\.(png|jpe?g|webp|gif|svg)$/i.test(artifact.file_path))
+
+    if (isImageFormat) {
       const downloadUrl = getUrl(`/${id}/download`)
+      const fileExt = artifact.file_path
+        ? artifact.file_path.split('.').pop()?.toLowerCase() || 'png'
+        : (fmt === 'jpg' || fmt === 'jpeg' ? 'jpg' : (fmt === 'image' ? 'png' : fmt.toLowerCase()))
+      const isJpg = fileExt === 'jpg' || fileExt === 'jpeg' || fmt.toLowerCase() === 'jpg' || fmt.toLowerCase() === 'jpeg'
+      const displayFmt = isJpg ? 'JPEG' : (fileExt || fmt || 'PNG').toUpperCase()
       return (
         <div className="artifact-detail">
           <img
@@ -565,7 +636,9 @@ export default function ArtifactsPanel({
              onClick={() => window.open(downloadUrl, '_blank')}
           />
           <div className="artifact-actions">
-            <a className="download-btn" href={downloadUrl} download>Download</a>
+            <a className="download-btn" href={downloadUrl} download={`${aTitle.replace(/[^a-z0-9-_]/gi, '_')}.${isJpg ? 'jpg' : fileExt}`}>
+              Download {displayFmt}
+            </a>
           </div>
           <span className="artifact-date">{new Date(artifact.created_at).toLocaleDateString()}</span>
         </div>
@@ -613,20 +686,86 @@ export default function ArtifactsPanel({
       )
     }
     // PDF, DOCX, HTML, XLSX, TXT, JSON and fallback formats
-    const downloadUrl = getUrl(`/${id}/export?format=${fmt}`)
     return (
       <div className="artifact-detail">
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          rehypePlugins={[rehypeHighlight]}
-          components={headingComponents}
-        >
-          {content}
-        </ReactMarkdown>
-        <div className="artifact-actions" style={{ marginTop: 16 }}>
+        <div className="artifact-detail-markdown">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            rehypePlugins={[rehypeHighlight]}
+            components={{
+              ...headingComponents,
+              img: ({ src, alt, ...props }) => {
+                let resolvedSrc = src || ''
+                if (
+                  resolvedSrc.startsWith('artifacts_store/') ||
+                  resolvedSrc.startsWith('artifacts_store\\') ||
+                  resolvedSrc.startsWith('artifacts_store')
+                ) {
+                  const filename = resolvedSrc.replace(/\\/g, '/').split('/').pop() || ''
+                  const idMatch = filename.match(/^(\d+)\./)
+                  if (idMatch) {
+                    resolvedSrc = `${API_BASE}/${idMatch[1]}/download${workspacePath ? `?workspace=${encodeURIComponent(workspacePath)}` : ''}`
+                  }
+                } else if (!resolvedSrc.startsWith('http://') && !resolvedSrc.startsWith('https://') && !resolvedSrc.startsWith('data:')) {
+                  const numMatch = resolvedSrc.match(/^(\d+)(\.\w+)?$/)
+                  if (numMatch) {
+                    resolvedSrc = `${API_BASE}/${numMatch[1]}/download${workspacePath ? `?workspace=${encodeURIComponent(workspacePath)}` : ''}`
+                  } else {
+                    const target = (resolvedSrc || alt || '').trim().toLowerCase()
+                    const found = artifacts.find((a) => {
+                      const atitle = (a.title || '').trim().toLowerCase()
+                      if (!atitle) return false
+                      return (
+                        atitle === target ||
+                        (alt && atitle === alt.trim().toLowerCase()) ||
+                        (target.length > 2 && atitle.includes(target)) ||
+                        (alt && alt.length > 2 && atitle.includes(alt.trim().toLowerCase())) ||
+                        (target.length > 2 && target.includes(atitle)) ||
+                        (alt && alt.length > 2 && alt.trim().toLowerCase().includes(atitle))
+                      )
+                    })
+                    if (found) {
+                      resolvedSrc = `${API_BASE}/${found.id}/download${workspacePath ? `?workspace=${encodeURIComponent(workspacePath)}` : ''}`
+                    }
+                  }
+                }
+                return (
+                  <div className="figure-container" style={{ textAlign: 'center', margin: '16px 0' }}>
+                    <img
+                      src={resolvedSrc}
+                      alt={alt || 'Figure'}
+                      className="map-img"
+                      style={{ maxWidth: '100%', height: 'auto', borderRadius: 8, border: '1px solid #334155' }}
+                      {...props}
+                    />
+                    {alt && <p className="caption" style={{ fontSize: '0.85rem', color: '#94a3b8', fontStyle: 'italic', marginTop: 6 }}>Figure: {alt}</p>}
+                  </div>
+                )
+              },
+            }}
+          >
+            {content}
+          </ReactMarkdown>
+        </div>
+        <div className="artifact-actions" style={{ marginTop: 16, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {artifact.file_path && (
+            <a
+              className="download-btn"
+              href={getUrl(`/${id}/download`)}
+              download
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', fontSize: '0.85rem', fontWeight: 600, borderRadius: 6, background: '#1e40af', color: '#ffffff', textDecoration: 'none' }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+              Download {fmt.toUpperCase()} File
+            </a>
+          )}
           <button
             className="download-btn pdf-btn"
-            onClick={() => handleExportWithMap(id, fmt)}
+            onClick={() => handleExportWithMap(id, 'pdf')}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', fontSize: '0.85rem', fontWeight: 600, borderRadius: 6, background: '#3b82f6', color: '#ffffff', border: 'none', cursor: 'pointer' }}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -634,7 +773,20 @@ export default function ArtifactsPanel({
               <polyline points="7 10 12 15 17 10"></polyline>
               <line x1="12" y1="15" x2="12" y2="3"></line>
             </svg>
-            Download {fmt.toUpperCase()}
+            Export PDF
+          </button>
+          <button
+            className="download-btn docx-btn"
+            onClick={() => handleExportWithMap(id, 'docx')}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', fontSize: '0.85rem', fontWeight: 600, borderRadius: 6, background: '#2563eb', color: '#ffffff', border: 'none', cursor: 'pointer' }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+            </svg>
+            Export Word (.docx)
           </button>
         </div>
         <span className="artifact-date">{new Date(artifact.created_at).toLocaleDateString()}</span>
@@ -684,15 +836,17 @@ export default function ArtifactsPanel({
                 value={format}
                 onChange={(e) => setFormat(e.target.value as any)}
               >
-                <option value="pdf">PDF</option>
-                <option value="docx">Word (.docx)</option>
-                <option value="html">HTML</option>
-                <option value="xlsx">Excel (.xlsx)</option>
+                <option value="pdf">PDF Document</option>
+                <option value="docx">Word Document (.docx)</option>
                 <option value="markdown">Markdown</option>
-                <option value="table">Table</option>
+                <option value="png">PNG Image</option>
+                <option value="jpeg">JPEG Image</option>
+                <option value="html">HTML Report</option>
+                <option value="xlsx">Excel Sheet (.xlsx)</option>
+                <option value="table">Table (CSV/JSON)</option>
                 <option value="geojson">GeoJSON</option>
                 <option value="json">JSON</option>
-                <option value="txt">Text</option>
+                <option value="txt">Plain Text</option>
               </select>
               <textarea
                 className="artifact-textarea"
@@ -723,20 +877,32 @@ export default function ArtifactsPanel({
                 <p className="hint">Save notes, analyses, and reports here.</p>
               </div>
             )}
-            {artifacts.map((a) => (
-              <div
-                key={a.id}
-                className={`artifact-item ${selectedId === a.id ? 'selected' : ''} ${dragOverArtId === a.id ? `drag-over-${dropArtPosition}` : ''}`}
-                onClick={() => handleToggleSelect(a.id)}
-                draggable={true}
-                onDragStart={(e) => handleArtDragStart(a.id, e)}
-                onDragOver={(e) => handleArtDragOver(a.id, e)}
-                onDrop={(e) => handleArtDrop(a.id, e)}
-                onDragEnd={handleArtDragEnd}
-                style={{ cursor: 'grab' }}
-              >
-                <div className="artifact-item-header">
-                  <span className="artifact-type-badge">{a.format ?? a.artifact_type}</span>
+            {artifacts.map((a) => {
+              const fmtRaw = (a.format || a.artifact_type || 'note').toLowerCase()
+              let badge = fmtRaw.toUpperCase()
+              if (fmtRaw === 'jpg' || fmtRaw === 'jpeg') badge = 'JPEG'
+              else if (fmtRaw === 'png') badge = 'PNG'
+              else if (fmtRaw === 'markdown' || fmtRaw === 'md') badge = 'MD'
+              else if (fmtRaw === 'geojson') badge = 'GEOJSON'
+              else if (fmtRaw === 'docx') badge = 'DOCX'
+              else if (fmtRaw === 'pdf') badge = 'PDF'
+              else if (fmtRaw === 'table') badge = 'TABLE'
+              else if (fmtRaw === 'xlsx') badge = 'EXCEL'
+
+              return (
+                <div
+                  key={a.id}
+                  className={`artifact-item ${selectedId === a.id ? 'selected' : ''} ${dragOverArtId === a.id ? `drag-over-${dropArtPosition}` : ''}`}
+                  onClick={() => handleToggleSelect(a.id)}
+                  draggable={true}
+                  onDragStart={(e) => handleArtDragStart(a.id, e)}
+                  onDragOver={(e) => handleArtDragOver(a.id, e)}
+                  onDrop={(e) => handleArtDrop(a.id, e)}
+                  onDragEnd={handleArtDragEnd}
+                  style={{ cursor: 'grab' }}
+                >
+                  <div className="artifact-item-header">
+                    <span className="artifact-type-badge">{badge}</span>
                   {editingArtId === a.id ? (
                     <input
                       type="text"
@@ -797,7 +963,7 @@ export default function ArtifactsPanel({
                   ) : null
                 )}
               </div>
-            ))}
+            )})}
           </div>
         </div>
       )}
@@ -835,7 +1001,13 @@ export default function ArtifactsPanel({
             <div className="artifacts-detail-content">
               <div className="artifacts-detail-header">
                 <h2 className="artifacts-detail-title">{fullArtifact.title}</h2>
-                <span className="artifacts-detail-badge">{fullArtifact.format ?? fullArtifact.artifact_type}</span>
+                <span className="artifacts-detail-badge">
+                  {fullArtifact.file_path && /\.(jpe?g|jpg)$/i.test(fullArtifact.file_path)
+                    ? 'JPEG'
+                    : fullArtifact.format === 'jpg' || fullArtifact.format === 'jpeg'
+                    ? 'JPEG'
+                    : (fullArtifact.format ?? fullArtifact.artifact_type ?? 'PNG').toUpperCase()}
+                </span>
               </div>
               {renderDetail(fullArtifact)}
             </div>

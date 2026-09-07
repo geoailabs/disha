@@ -229,7 +229,10 @@ export type MapAction =
         east?: number
       }
     }
-  | { type: 'refresh_artifacts'; payload: Record<string, never> }
+  | { type: 'export_map_png'; payload: { title?: string; save_to_artifacts?: boolean; artifact_id?: number } }
+  | { type: 'export_map_jpeg'; payload: { title?: string; save_to_artifacts?: boolean; artifact_id?: number } }
+  | { type: 'export_map_pdf'; payload: { title?: string; save_to_artifacts?: boolean; artifact_id?: number } }
+  | { type: 'refresh_artifacts'; payload: { id?: number } | Record<string, never> }
   | { type: 'switch_basemap'; payload: { basemap: string } }
   | { type: 'add_wms_layer'; payload: { url: string; layer_name: string; title: string } }
   | { type: 'add_gee_layer'; payload: { url: string; dataset: string; vis_params: any; title: string } }

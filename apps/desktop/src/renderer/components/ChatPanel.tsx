@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react'
+import { useState, useRef, useEffect, useCallback, forwardRef, useImperativeHandle, memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
@@ -158,15 +158,38 @@ function ResearchBubble({
       )}
 
       {phase === 'done' && markdown && (
-        <div className="research-report">
+        <div className="research-done-section">
+          {/* Action row — Read report / Download PDF / Download MD */}
           <div className="research-actions">
-            <button className="research-toggle" onClick={onToggleExpand}>
-              {expanded ? '▲ Hide full report' : '▼ View full report'}
+            <button
+              type="button"
+              className="research-action-btn primary"
+              onClick={onToggleExpand}
+            >
+              <span className="btn-icon">{expanded ? '▲' : '▼'}</span>
+              <span>{expanded ? 'Hide full report' : 'Read full report'}</span>
             </button>
-            <button className="research-dl-btn" onClick={onDownloadMd}>Download .md</button>
-            <button className="research-dl-btn pdf" onClick={onDownloadPdf}>Download PDF</button>
+            <button
+              type="button"
+              className="research-action-btn"
+              onClick={onDownloadPdf}
+              title="Download research report as PDF"
+            >
+              <span className="btn-icon">⬇</span>
+              <span>Download PDF</span>
+            </button>
+            <button
+              type="button"
+              className="research-action-btn"
+              onClick={onDownloadMd}
+              title="Download research report as Markdown"
+            >
+              <span className="btn-icon">⬇</span>
+              <span>Download MD</span>
+            </button>
           </div>
 
+          {/* Collapsible full report */}
           {expanded && (
             <div className="research-full-report">
               <ReactMarkdown
@@ -179,14 +202,28 @@ function ResearchBubble({
             </div>
           )}
 
+          {/* Sources / Citations list */}
           {citations.length > 0 && (
             <div className="research-citations">
-              <span className="citations-label">Sources:</span>
-              {citations.map((c, i) => (
-                <a key={i} href={c.url} target="_blank" rel="noreferrer" className="citation-link">
-                  {c.title || c.url}
-                </a>
-              ))}
+              <div className="research-citations-header">
+                <span className="citations-icon">🔗</span>
+                <span className="citations-title">Sources consulted ({citations.length})</span>
+              </div>
+              <ul className="research-citations-list">
+                {citations.map((cite, i) => (
+                  <li key={i} className="citation-item">
+                    <a
+                      href={cite.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="citation-link"
+                      title={cite.url}
+                    >
+                      {cite.title || cite.url}
+                    </a>
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
         </div>
@@ -208,7 +245,9 @@ interface ChatPanelProps {
   documentImage?: DocumentImage | null
   injectedMessage?: { text: string; nonce: number } | null
   onComposeMapFigure?: (title: string) => HTMLCanvasElement | null
+  onRemoveSelectedFeature?: (index: number) => void
   onClearSelectedFeatures?: () => void
+  onNavigateArtifact?: (target: string | number) => void
 }
 
 function CodePre({ children, ...props }: React.HTMLAttributes<HTMLPreElement>) {
@@ -265,6 +304,191 @@ const headingComponents = {
   h6: ({ children, ...props }: any) => <h6 id={getSlug(children)} {...props}>{children}</h6>,
 }
 
+function parseArtifactTarget(str: string): { isArtifact: boolean; id?: number; label: string; ext?: string } {
+  const clean = str.trim()
+  if (!clean) return { isArtifact: false, label: '' }
+  // Match artifacts_store/21.docx, artifacts_store\21.docx, artifacts_store/15.png, etc.
+  const storeMatch = clean.match(/^artifacts_store[\\/](?:(\d+)(?:\.([a-zA-Z0-9]+))?|([^.\s]+(?:\.[a-zA-Z0-9]+)?))/i)
+  if (storeMatch) {
+    const id = storeMatch[1] ? Number(storeMatch[1]) : undefined
+    const ext = (storeMatch[2] || clean.split('.').pop() || '').toLowerCase()
+    return { isArtifact: true, id, label: clean, ext }
+  }
+  // Match artifact://21 or artifact:21
+  const protoMatch = clean.match(/^artifact(?::\/\/|:\s*)(\d+)/i)
+  if (protoMatch) {
+    return { isArtifact: true, id: Number(protoMatch[1]), label: clean }
+  }
+  // Match Artifact ID 21 or ID=21
+  const idMatch = clean.match(/^(?:artifact\s*id|id)\s*[:=]?\s*#?(\d+)/i)
+  if (idMatch) {
+    return { isArtifact: true, id: Number(idMatch[1]), label: clean }
+  }
+  // Match direct file pattern like 21.docx or 15.png
+  const directMatch = clean.match(/^(\d+)\.(docx|pdf|png|jpe?g|xlsx|html|json|geojson|md|txt)$/i)
+  if (directMatch) {
+    return { isArtifact: true, id: Number(directMatch[1]), label: clean, ext: directMatch[2].toLowerCase() }
+  }
+  return { isArtifact: false, label: clean }
+}
+
+function getArtifactIcon(ext?: string, label?: string): string {
+  const target = (ext || label || '').toLowerCase()
+  if (/\.(png|jpe?g|webp|gif|svg)$/i.test(target) || ['png', 'jpg', 'jpeg', 'image'].includes(target)) return '🖼️'
+  if (/\.(docx|doc)$/i.test(target) || ['docx', 'doc'].includes(target)) return '📄'
+  if (/\.(pdf)$/i.test(target) || ['pdf'].includes(target)) return '📑'
+  if (/\.(geojson|kml|shp)$/i.test(target) || ['geojson'].includes(target)) return '🗺️'
+  if (/\.(xlsx|csv|xls)$/i.test(target) || ['xlsx', 'csv', 'table'].includes(target)) return '📊'
+  if (/\.(html|htm)$/i.test(target) || ['html'].includes(target)) return '🌐'
+  if (/\.(md|markdown|txt)$/i.test(target) || ['md', 'markdown'].includes(target)) return '📝'
+  return '📦'
+}
+
+function autoLinkArtifacts(text: string): string {
+  if (!text) return ''
+  // Wrap unadorned artifacts_store paths into backticks so they render as interactive chips
+  return text.replace(
+    /(?<![`\[(])\b(artifacts_store[\\/][a-zA-Z0-9_.-]+)/gi,
+    '`$1`'
+  )
+}
+
+interface ChatMessageItemProps {
+  msg: ChatMessage
+  researchExpanded: boolean
+  onToggleExpand: () => void
+  onDownloadMd: (md: string) => void
+  onDownloadPdf: (md: string) => void
+  onNavigateArtifact?: (target: string | number) => void
+}
+
+const ChatMessageItem = memo(function ChatMessageItem({
+  msg,
+  researchExpanded,
+  onToggleExpand,
+  onDownloadMd,
+  onDownloadPdf,
+  onNavigateArtifact,
+}: ChatMessageItemProps) {
+  if (msg.role === 'assistant' && !msg.content.trim() && !msg.research) return null
+  const processedContent = msg.role === 'assistant' ? autoLinkArtifacts(msg.content) : msg.content
+  return (
+    <div className={`chat-msg ${msg.role}`}>
+      <div className="chat-msg-role">{msg.role === 'user' ? 'You' : 'Assistant'}</div>
+      <div className="chat-msg-body">
+        {msg.research ? (
+          <ResearchBubble
+            phase={msg.research.phase}
+            steps={msg.research.steps}
+            reasoning={msg.research.reasoning}
+            markdown={msg.research.markdown}
+            citations={msg.research.citations}
+            expanded={researchExpanded}
+            onToggleExpand={onToggleExpand}
+            onDownloadMd={() => onDownloadMd(msg.research?.markdown || '')}
+            onDownloadPdf={() => onDownloadPdf(msg.research?.markdown || '')}
+          />
+        ) : msg.role === 'assistant' ? (
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            rehypePlugins={[rehypeHighlight]}
+            components={{
+              pre: CodePre,
+              ...headingComponents,
+              code: ({ inline, className, children, ...props }: any) => {
+                const codeText = String(children || '').trim()
+                const parsed = parseArtifactTarget(codeText)
+                if (parsed.isArtifact && onNavigateArtifact) {
+                  const icon = getArtifactIcon(parsed.ext, codeText)
+                  return (
+                    <button
+                      type="button"
+                      className="chat-artifact-chip"
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        onNavigateArtifact(parsed.id ?? codeText)
+                      }}
+                      title={`Click to view artifact: ${codeText}`}
+                    >
+                      <span className="chat-artifact-icon">{icon}</span>
+                      <span className="chat-artifact-code">{codeText}</span>
+                      <span className="chat-artifact-action">Open ↗</span>
+                    </button>
+                  )
+                }
+                return (
+                  <code className={className} {...props}>
+                    {children}
+                  </code>
+                )
+              },
+              a: ({ href, children, ...props }: any) => {
+                const hrefStr = (href || '').toString()
+                const textStr = typeof children === 'string' ? children : (Array.isArray(children) ? children.join('') : '')
+                const parsed = parseArtifactTarget(hrefStr || textStr)
+                if (parsed.isArtifact && onNavigateArtifact) {
+                  const icon = getArtifactIcon(parsed.ext, hrefStr || textStr)
+                  return (
+                    <button
+                      type="button"
+                      className="chat-artifact-link-btn"
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        onNavigateArtifact(parsed.id ?? hrefStr ?? textStr)
+                      }}
+                      title={`Click to view artifact: ${hrefStr || textStr}`}
+                    >
+                      <span className="chat-artifact-icon">{icon}</span>
+                      <span className="chat-artifact-text">{textStr || hrefStr}</span>
+                      <span className="chat-artifact-arrow">↗</span>
+                    </button>
+                  )
+                }
+                return (
+                  <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+                    {children}
+                  </a>
+                )
+              },
+            }}
+          >
+            {processedContent}
+          </ReactMarkdown>
+        ) : (
+          <p>{msg.content}</p>
+        )}
+        {msg.attachments && msg.attachments.length > 0 && (
+          <div className="chat-msg-attachments">
+            {msg.attachments.map((att, idx) => (
+              <div key={idx} className="chat-msg-attachment-item" title={att.filePath}>
+                <span className="attachment-icon">
+                  {att.mimeType?.startsWith('image/') ? '🖼️' : '📄'}
+                </span>
+                <span className="attachment-name">{att.fileName}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {msg.selected_features && msg.selected_features.length > 0 && (
+          <div className="chat-msg-attachments">
+            {msg.selected_features.map((feat, idx) => {
+              const label = feat.properties.layer_name || feat.properties.stop_name || feat.properties.name || feat.layerName || 'Selected Map Element'
+              return (
+                <div key={idx} className="chat-msg-attachment-item" style={{ borderColor: 'rgba(59,130,246,0.5)', background: 'rgba(59,130,246,0.15)' }} title={JSON.stringify(feat.properties, null, 2)}>
+                  <span className="attachment-icon">📍</span>
+                  <span className="attachment-name" style={{ color: '#60a5fa', fontWeight: 500 }}>{label}</span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+})
+
 interface ClarifyingQuestion {
   question: string
   options: string[]
@@ -289,7 +513,9 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
   documentImage,
   injectedMessage,
   onComposeMapFigure,
+  onRemoveSelectedFeature,
   onClearSelectedFeatures,
+  onNavigateArtifact,
 }, ref) => {
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
@@ -684,30 +910,50 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
     }
   }, [])
 
-  const connectWebSocket = useCallback((): Promise<WebSocket> => {
+  const connectWebSocket = useCallback((retries = 3, delay = 600): Promise<WebSocket> => {
     return new Promise((resolve, reject) => {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        resolve(wsRef.current)
-        return
-      }
-      const ws = new WebSocket(BACKEND_WS)
-      historySentRef.current = false
-      ws.addEventListener('message', handleWsMessage)
-      ws.addEventListener('open', () => {
-        wsRef.current = ws
-        resolve(ws)
-      })
-      ws.addEventListener('error', () =>
-        reject(new Error('WebSocket connection failed')),
-      )
-      ws.addEventListener('close', () => {
-        wsRef.current = null
+      const attempt = (remaining: number) => {
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          resolve(wsRef.current)
+          return
+        }
+        const ws = new WebSocket(BACKEND_WS)
         historySentRef.current = false
-        setIsStreaming(false)
-        setToolStatus(null)
-        inFlightRef.current = null
-        setActiveQuestion(null)
-      })
+
+        const onOpen = () => {
+          cleanup()
+          wsRef.current = ws
+          resolve(ws)
+        }
+
+        const onError = () => {
+          cleanup()
+          if (remaining > 1) {
+            setTimeout(() => attempt(remaining - 1), delay)
+          } else {
+            reject(new Error('WebSocket connection failed'))
+          }
+        }
+
+        const cleanup = () => {
+          ws.removeEventListener('open', onOpen)
+          ws.removeEventListener('error', onError)
+        }
+
+        ws.addEventListener('message', handleWsMessage)
+        ws.addEventListener('open', onOpen)
+        ws.addEventListener('error', onError)
+        ws.addEventListener('close', () => {
+          wsRef.current = null
+          historySentRef.current = false
+          setIsStreaming(false)
+          setToolStatus(null)
+          inFlightRef.current = null
+          setActiveQuestion(null)
+        })
+      }
+
+      attempt(retries)
     })
   }, [handleWsMessage])
 
@@ -1932,68 +2178,17 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
             </div>
           </div>
         )}
-        {messages.map((msg, i) => {
-          // Don't render placeholder/empty assistant turns unless they contain inline research metadata
-          if (msg.role === 'assistant' && !msg.content.trim() && !msg.research) return null
-          return (
-            <div key={i} className={`chat-msg ${msg.role}`}>
-              <div className="chat-msg-role">{msg.role === 'user' ? 'You' : 'Assistant'}</div>
-              <div className="chat-msg-body">
-                {msg.research ? (
-                  <ResearchBubble
-                    phase={msg.research.phase}
-                    steps={msg.research.steps}
-                    reasoning={msg.research.reasoning}
-                    markdown={msg.research.markdown}
-                    citations={msg.research.citations}
-                    expanded={researchExpanded}
-                    onToggleExpand={() => setResearchExpanded((v) => !v)}
-                    onDownloadMd={() => downloadResearchMd(msg.research?.markdown || '')}
-                    onDownloadPdf={() => downloadResearchPdf(msg.research?.markdown || '')}
-                  />
-                ) : msg.role === 'assistant' ? (
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    rehypePlugins={[rehypeHighlight]}
-                    components={{
-                      pre: CodePre,
-                      ...headingComponents
-                    }}
-                  >
-                    {msg.content}
-                  </ReactMarkdown>
-                ) : (
-                  <p>{msg.content}</p>
-                )}
-                {msg.attachments && msg.attachments.length > 0 && (
-                  <div className="chat-msg-attachments">
-                    {msg.attachments.map((att, idx) => (
-                      <div key={idx} className="chat-msg-attachment-item" title={att.filePath}>
-                        <span className="attachment-icon">
-                          {att.mimeType?.startsWith('image/') ? '🖼️' : '📄'}
-                        </span>
-                        <span className="attachment-name">{att.fileName}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {msg.selected_features && msg.selected_features.length > 0 && (
-                  <div className="chat-msg-attachments">
-                    {msg.selected_features.map((feat, idx) => {
-                      const label = feat.properties.layer_name || feat.properties.stop_name || feat.properties.name || feat.layerName || 'Selected Map Element'
-                      return (
-                        <div key={idx} className="chat-msg-attachment-item" style={{ borderColor: 'rgba(59,130,246,0.5)', background: 'rgba(59,130,246,0.15)' }} title={JSON.stringify(feat.properties, null, 2)}>
-                          <span className="attachment-icon">📍</span>
-                          <span className="attachment-name" style={{ color: '#60a5fa', fontWeight: 500 }}>{label}</span>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-          )
-        })}
+        {messages.map((msg, i) => (
+          <ChatMessageItem
+            key={i}
+            msg={msg}
+            researchExpanded={researchExpanded}
+            onToggleExpand={() => setResearchExpanded((v) => !v)}
+            onDownloadMd={(md) => downloadResearchMd(md)}
+            onDownloadPdf={(md) => downloadResearchPdf(md)}
+            onNavigateArtifact={onNavigateArtifact}
+          />
+        ))}
 
         {activeQuestion && (
           <div className="chat-question-lockbox">
@@ -2125,7 +2320,16 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
                   <span className="chat-attachment-name" style={{ color: '#60a5fa', fontWeight: 500 }}>
                     {label}
                   </span>
-                  {onClearSelectedFeatures && (
+                  {onRemoveSelectedFeature ? (
+                    <button
+                      type="button"
+                      className="chat-attachment-remove"
+                      onClick={() => onRemoveSelectedFeature(idx)}
+                      title={`Deselect ${label}`}
+                    >
+                      &times;
+                    </button>
+                  ) : onClearSelectedFeatures ? (
                     <button
                       type="button"
                       className="chat-attachment-remove"
@@ -2134,7 +2338,7 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
                     >
                       &times;
                     </button>
-                  )}
+                  ) : null}
                 </div>
               )
             })}

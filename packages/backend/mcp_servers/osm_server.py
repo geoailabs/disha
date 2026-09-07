@@ -784,7 +784,16 @@ out skel qt;
             return {"error": "Shapely not installed; union requires shapely"}
 
         try:
-            merged = unary_union([shape(r["geometry"]) for r in resolved])
+            from shapely.validation import make_valid
+            shapes = []
+            for r in resolved:
+                s = shape(r["geometry"])
+                if not s.is_valid:
+                    s = make_valid(s)
+                shapes.append(s)
+            merged = unary_union(shapes)
+            if not merged.is_valid:
+                merged = make_valid(merged)
             if merged.is_empty:
                 return {"error": "Union produced empty geometry"}
             merged_geom = mapping(merged)

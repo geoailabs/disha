@@ -220,26 +220,33 @@ function App() {
   const handleSelectFeature = useCallback(
     (entry: SelectedFeatureEntry | null, shiftKey: boolean) => {
       if (!entry) {
-        // null = clear all (plain click on empty map or Escape)
-        setSelectedFeatures([])
+        // null = clear all (plain click on empty map without shift or Escape)
+        if (!shiftKey) {
+          setSelectedFeatures([])
+        }
         return
       }
       if (!shiftKey) {
         setSelectedFeatures([entry])
         return
       }
-      // Shift+click: toggle by geometry identity
+      // Shift+click: toggle by layerId or feature geometry identity
       setSelectedFeatures((prev) => {
         const idx = prev.findIndex(
           (e) =>
             e.layerId === entry.layerId &&
-            JSON.stringify(e.feature.geometry) === JSON.stringify(entry.feature.geometry),
+            (e.layerId === entry.layerId ||
+             JSON.stringify(e.feature.geometry) === JSON.stringify(entry.feature.geometry)),
         )
         return idx === -1 ? [...prev, entry] : prev.filter((_, i) => i !== idx)
       })
     },
     [],
   )
+
+  const handleRemoveSelectedFeature = useCallback((index: number) => {
+    setSelectedFeatures((prev) => prev.filter((_, i) => i !== index))
+  }, [])
 
 
   const [layers, setLayers] = useState<GeoJSONLayer[]>([])
@@ -271,6 +278,7 @@ function App() {
     north: number
   } | null>(null)
   const [artifactsRevision, setArtifactsRevision] = useState(0)
+  const [selectedArtifactId, setSelectedArtifactId] = useState<number | null>(null)
   const [scenarios, setScenarios] = useState<Scenario[]>([])
   const [activeScenarioId, setActiveScenarioId] = useState<string | null>(null)
 
@@ -1406,6 +1414,19 @@ function App() {
     })
   }, [composeMapFigure])
 
+  const handleExportMapJpeg = useCallback((title?: string) => {
+    const figure = composeMapFigure(title || suggestExportTitleRef.current())
+    if (!figure) return
+    figure.toBlob((blob) => {
+      if (!blob) return
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = `map-${Date.now()}.jpg`
+      a.click()
+      URL.revokeObjectURL(a.href)
+    }, 'image/jpeg', 0.94)
+  }, [composeMapFigure])
+
   const handleExportPdf = useCallback(async (title?: string) => {
     const figure = composeMapFigure(title || suggestExportTitleRef.current())
     if (!figure) return
@@ -1413,7 +1434,7 @@ function App() {
     pdf.save(`map-report-${Date.now()}.pdf`)
   }, [composeMapFigure, composedToPdf])
 
-  const handleSavePngToArtifact = useCallback(async (title: string) => {
+  const handleSavePngToArtifact = useCallback(async (title: string, artifactId?: number) => {
     const figure = composeMapFigure(title)
     if (!figure) return
     figure.toBlob(async (blob) => {
@@ -1421,9 +1442,12 @@ function App() {
       const form = new FormData()
       form.append('title', title)
       form.append('artifact_type', 'sketch')
-      form.append('format', 'image')
+      form.append('format', 'png')
       form.append('content', '')
-      form.append('file', blob, `${title.replace(/[^a-z0-9-_]/gi, '_')}.png`)
+      if (artifactId) {
+        form.append('artifact_id', String(artifactId))
+      }
+      form.append('file', blob, `${artifactId ? String(artifactId) : title.replace(/[^a-z0-9-_]/gi, '_')}.png`)
       if (workspacePath) {
         form.append('workspace', workspacePath)
       }
@@ -1433,10 +1457,36 @@ function App() {
       } catch {
         /* backend unavailable */
       }
-    })
+    }, 'image/png')
   }, [composeMapFigure, workspacePath])
 
-  const handleSavePdfToArtifact = useCallback(async (title: string) => {
+  const handleSaveJpgToArtifact = useCallback(async (title: string, artifactId?: number) => {
+    const figure = composeMapFigure(title)
+    if (!figure) return
+    figure.toBlob(async (blob) => {
+      if (!blob) return
+      const form = new FormData()
+      form.append('title', title)
+      form.append('artifact_type', 'sketch')
+      form.append('format', 'jpg')
+      form.append('content', '')
+      if (artifactId) {
+        form.append('artifact_id', String(artifactId))
+      }
+      form.append('file', blob, `${artifactId ? String(artifactId) : title.replace(/[^a-z0-9-_]/gi, '_')}.jpg`)
+      if (workspacePath) {
+        form.append('workspace', workspacePath)
+      }
+      try {
+        await fetch('http://localhost:8765/api/artifacts/upload', { method: 'POST', body: form })
+        setArtifactsRevision((n) => n + 1)
+      } catch {
+        /* backend unavailable */
+      }
+    }, 'image/jpeg', 0.92)
+  }, [composeMapFigure, workspacePath])
+
+  const handleSavePdfToArtifact = useCallback(async (title: string, artifactId?: number) => {
     const figure = composeMapFigure(title)
     if (!figure) return
     const pdf = await composedToPdf(figure)
@@ -1445,9 +1495,12 @@ function App() {
     const form = new FormData()
     form.append('title', title)
     form.append('artifact_type', 'sketch')
-    form.append('format', 'image')
+    form.append('format', 'pdf')
     form.append('content', '')
-    form.append('file', blob, `${title.replace(/[^a-z0-9-_]/gi, '_')}.pdf`)
+    if (artifactId) {
+      form.append('artifact_id', String(artifactId))
+    }
+    form.append('file', blob, `${artifactId ? String(artifactId) : title.replace(/[^a-z0-9-_]/gi, '_')}.pdf`)
     if (workspacePath) {
       form.append('workspace', workspacePath)
     }
@@ -1987,6 +2040,46 @@ function App() {
       void clipLayersToBboxAndSave(String(output_base_name || 'clipped'), explicit)
       return
     }
+    if (action.type === 'export_map_png') {
+      const title = action.payload?.title || suggestExportTitle()
+      const artifactId = action.payload?.artifact_id
+      if (action.payload?.save_to_artifacts) {
+        void handleSavePngToArtifact(title, artifactId)
+      } else {
+        handleExportMapPng(title)
+      }
+      return
+    }
+    if (action.type === 'export_map_jpeg' || (action as any).type === 'export_map_jpg') {
+      const title = action.payload?.title || suggestExportTitle()
+      const artifactId = (action.payload as any)?.artifact_id
+      if (action.payload?.save_to_artifacts) {
+        void handleSaveJpgToArtifact(title, artifactId)
+      } else {
+        const figure = composeMapFigure(title)
+        if (figure) {
+          figure.toBlob((blob) => {
+            if (!blob) return
+            const a = document.createElement('a')
+            a.href = URL.createObjectURL(blob)
+            a.download = `${title.replace(/[^a-z0-9-_]/gi, '_')}.jpg`
+            a.click()
+            URL.revokeObjectURL(a.href)
+          }, 'image/jpeg', 0.92)
+        }
+      }
+      return
+    }
+    if (action.type === 'export_map_pdf') {
+      const title = action.payload?.title || suggestExportTitle()
+      const artifactId = action.payload?.artifact_id
+      if (action.payload?.save_to_artifacts) {
+        void handleSavePdfToArtifact(title, artifactId)
+      } else {
+        void handleExportPdf(title)
+      }
+      return
+    }
     if (action.type === 'add_wms_layer') {
       const { url, layer_name, title } = action.payload
       // Deduplicate: if this exact WMS url+layer is already loaded, just make
@@ -2093,6 +2186,9 @@ function App() {
     }
     if (action.type === 'refresh_artifacts') {
       setArtifactsRevision((n) => n + 1)
+      if (action.payload?.id != null) {
+        setSelectedArtifactId(Number(action.payload.id))
+      }
       setAppMode('artifacts')
       return
     }
@@ -2911,6 +3007,67 @@ function App() {
     window.electronAPI.onFullscreenChange((fs) => setIsFullscreen(fs))
   }, [])
 
+  const handleNavigateArtifact = useCallback(async (target: string | number) => {
+    if (typeof target === 'number') {
+      setSelectedArtifactId(target)
+      setAppMode('artifacts')
+      setArtifactsRevision((n) => n + 1)
+      return
+    }
+    const str = String(target).trim()
+    if (!str) return
+
+    // Pure number string
+    if (/^\d+$/.test(str)) {
+      setSelectedArtifactId(Number(str))
+      setAppMode('artifacts')
+      setArtifactsRevision((n) => n + 1)
+      return
+    }
+
+    // Pattern like artifacts_store/21.docx, artifacts_store\21.docx, 21.docx, artifact://21
+    const idMatch = str.match(/(?:artifacts_store[\\/]|artifact:\/\/|artifact:\s*|#)?(\d+)(?:\.[a-zA-Z0-9]+)?/i)
+    if (idMatch && idMatch[1]) {
+      const artId = Number(idMatch[1])
+      setSelectedArtifactId(artId)
+      setAppMode('artifacts')
+      setArtifactsRevision((n) => n + 1)
+      return
+    }
+
+    // Search by title / path in artifacts list
+    try {
+      const url = `http://localhost:8765/api/artifacts${workspacePath ? `?workspace=${encodeURIComponent(workspacePath)}` : ''}`
+      const res = await fetch(url)
+      if (res.ok) {
+        const list = await res.json()
+        const cleanTarget = str.replace(/^artifacts_store[\\/]/i, '').toLowerCase()
+        const found = list.find((a: any) => {
+          const title = (a.title || '').toLowerCase()
+          const fp = (a.file_path || '').toLowerCase()
+          return (
+            title === cleanTarget ||
+            fp.endsWith(cleanTarget) ||
+            (cleanTarget.length > 2 && title.includes(cleanTarget)) ||
+            (title.length > 2 && cleanTarget.includes(title))
+          )
+        })
+        if (found) {
+          setSelectedArtifactId(found.id)
+          setAppMode('artifacts')
+          setArtifactsRevision((n) => n + 1)
+          return
+        }
+      }
+    } catch (err) {
+      console.error('Failed to resolve artifact by name:', err)
+    }
+
+    // Fallback: switch to artifacts view and refresh
+    setAppMode('artifacts')
+    setArtifactsRevision((n) => n + 1)
+  }, [workspacePath])
+
   const workspaceLabel = workspacePath ? workspacePath.split('/').pop() : 'Open Workspace'
   const workspaceName = workspacePath
     ? (workspacePath.includes('/') ? workspacePath.split('/').pop() : workspacePath.split('\\').pop())
@@ -3168,12 +3325,14 @@ function App() {
                 layers={layers}
                 workspacePath={workspacePath}
                 onExportMapPng={handleExportMapPng}
+                onExportMapJpeg={handleExportMapJpeg}
                 onExportLayer={handleExportLayerFile}
                 onExportPdf={handleExportPdf}
                 onExportClippedRegion={(name) => void clipLayersToBboxAndSave(name)}
                 onPreviewBoundary={handlePreviewBoundary}
                 onSaveByRegion={handleSaveByRegion}
                 onSavePngToArtifact={handleSavePngToArtifact}
+                onSaveJpgToArtifact={handleSaveJpgToArtifact}
                 onSavePdfToArtifact={handleSavePdfToArtifact}
                 onSuggestExportTitle={suggestExportTitle}
               />
@@ -3371,6 +3530,8 @@ function App() {
               <ArtifactsPanel
                 workspacePath={workspacePath ?? undefined}
                 revision={artifactsRevision}
+                selectedArtifactId={selectedArtifactId}
+                onSelectArtifactId={setSelectedArtifactId}
                 showSidebar={showArtifactsSidebar}
                 sidebarWidth={leftWidth}
                 onLeftResizeStart={onResizeStart('left')}
@@ -3423,7 +3584,9 @@ function App() {
                 documentImage={appMode === 'document' ? documentImage : null}
                 injectedMessage={injectedMessage}
                 onComposeMapFigure={composeMapFigure}
+                onRemoveSelectedFeature={handleRemoveSelectedFeature}
                 onClearSelectedFeatures={() => setSelectedFeatures([])}
+                onNavigateArtifact={handleNavigateArtifact}
               />
             </ErrorBoundary>
           </aside>

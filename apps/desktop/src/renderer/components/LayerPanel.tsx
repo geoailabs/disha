@@ -375,6 +375,28 @@ export default function LayerPanel({
 
   // Selection handler — Cmd/Ctrl or Shift for multi-select, plain click = single select (toggle if already sole)
   const handleSelect = (layerId: string, e: React.MouseEvent) => {
+    const isMulti = e.shiftKey || e.ctrlKey || e.metaKey
+    const targetLayer = layers.find((l) => l.id === layerId)
+    if (targetLayer && onSelectFeature) {
+      const layerFeatures = targetLayer.data?.features || []
+      const fullFeature = {
+        type: 'Feature' as const,
+        geometry:
+          layerFeatures.length > 1
+            ? {
+                type: 'MultiPolygon' as const,
+                coordinates: layerFeatures.map((f: any) => f.geometry?.coordinates).filter(Boolean),
+              }
+            : layerFeatures[0]?.geometry || { type: 'Point' as const, coordinates: [0, 0] },
+        properties: {
+          ...(layerFeatures[0]?.properties || {}),
+          layer_name: targetLayer.name,
+          total_feature_count: layerFeatures.length,
+        },
+      }
+      onSelectFeature({ feature: fullFeature as any, layerId: targetLayer.id, layerName: targetLayer.name }, isMulti)
+    }
+
     onSelectedLayerIdsChange((prev) => {
       const next = new Set(prev)
       if (e.ctrlKey || e.metaKey) {

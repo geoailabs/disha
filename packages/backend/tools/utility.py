@@ -99,7 +99,7 @@ class UtilityServer:
     description = "Cross-cutting utility tools (search, geocoding, measurements, artifacts)"
     tool_names = {
         "web_search", "geocode", "measure_distance", "measure_area",
-        "create_artifact", "list_artifacts", "get_artifact",
+        "create_artifact", "edit_artifact", "list_artifacts", "get_artifact",
         "extract_attribute_table", "georeference_active_document",
         "digitize_image_features", "ask_clarifying_question",
         "autogeoreference_image",
@@ -167,33 +167,86 @@ class UtilityServer:
             ToolDeclaration(
                 name="create_artifact",
                 description=(
-                    "Save a note, analysis, report, or geospatial export as a project artifact. "
-                    "Supported formats: 'jpeg', 'png', 'jpg', 'pdf', 'docx', 'html', 'xlsx', 'txt', 'json', 'markdown', 'table', 'geojson'. "
-                    "You CAN create JPEG, PNG, PDF, Word (.docx), HTML, and Excel (.xlsx) artifacts directly using this tool."
+                    "Create and compile a brand NEW project artifact, report, or document. "
+                    "ALWAYS call this tool whenever the user asks to create, make, generate, or compile a document, report, or Word file (.docx). "
+                    "Every call to create_artifact generates a clean, independent new document with a unique artifact ID. "
+                    "Use format='docx' to compile a Word document (.docx), format='pdf' for a PDF report, "
+                    "format='html' for HTML, format='markdown' for markdown notes, format='geojson' for map layers. "
+                    "Pass the complete structured markdown (headings #, ##, text, tables, and embedded ![Figure: Caption](artifacts_store/ID.png) images) in the 'content' field."
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
-                        "title": {"type": "string"},
-                        "content": {
+                        "title": {
                             "type": "string",
-                            "description": (
-                                "For markdown: the markdown text. "
-                                "For table: JSON string '{\"columns\":[...],\"rows\":[[...]]}'. "
-                                "For geojson: a GeoJSON Feature or FeatureCollection JSON string."
-                            ),
-                        },
-                        "artifact_type": {
-                            "type": "string",
-                            "description": "Semantic label: note, analysis, report, or sketch",
+                            "description": "Title of the new document (e.g. 'Delhi Boundary Catchment Report')",
                         },
                         "format": {
                             "type": "string",
-                            "enum": ["png", "jpg", "jpeg", "pdf", "docx", "html", "xlsx", "txt", "json", "markdown", "table", "geojson"],
-                            "description": "Payload format (png, jpg, jpeg, pdf, docx, html, xlsx, txt, json, markdown, table, geojson). Defaults to 'markdown'.",
+                            "enum": ["docx", "pdf", "html", "markdown", "table", "geojson", "xlsx", "txt", "json", "png", "jpg", "jpeg"],
+                            "description": "Payload format. Use 'docx' for Word documents, 'pdf' for PDF reports, 'markdown' for notes, 'geojson' for layers.",
+                        },
+                        "artifact_type": {
+                            "type": "string",
+                            "enum": ["report", "analysis", "note", "sketch"],
+                            "description": "Semantic type: 'report', 'analysis', 'note', or 'sketch'.",
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": (
+                                "The full document body in Markdown. For Word (.docx) and PDF, include all headings (#, ##), paragraphs, lists, tables, and image figures formatted as ![Figure: Caption](artifacts_store/ID.png)."
+                            ),
                         },
                     },
-                    "required": ["title", "content", "artifact_type"],
+                    "required": ["title", "format", "content"],
+                },
+            ),
+            ToolDeclaration(
+                name="edit_artifact",
+                description=(
+                    "Edit or update a SPECIFIC existing document previously created in the workspace. "
+                    "ONLY use this tool if the user explicitly asks to edit, update, modify, or append to an EXISTING report by title or ID (e.g., 'edit document ID 2', 'update the transit section in the report'). "
+                    "Never use edit_artifact when the user is asking to create or generate a new report."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "number",
+                            "description": "The exact artifact ID to edit (required when editing by ID).",
+                        },
+                        "title": {
+                            "type": "string",
+                            "description": "Exact title of the existing artifact to edit.",
+                        },
+                        "section_heading": {
+                            "type": "string",
+                            "description": "Heading or section name under which to insert/update content (e.g., 'Transit Coverage', 'Executive Summary', 'Zoning Findings').",
+                        },
+                        "action": {
+                            "type": "string",
+                            "enum": ["insert_under_heading", "append", "prepend", "replace_section", "replace_all"],
+                            "description": "How to apply the update. Defaults to 'insert_under_heading'.",
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Text, markdown paragraphs, analysis findings, or description to insert.",
+                        },
+                        "include_map_figure": {
+                            "type": "boolean",
+                            "description": "If true, embeds a map figure snapshot reference under the heading.",
+                        },
+                        "figure_caption": {
+                            "type": "string",
+                            "description": "Optional caption for the embedded map figure or image.",
+                        },
+                        "format": {
+                            "type": "string",
+                            "enum": ["pdf", "docx", "markdown", "html", "xlsx", "table", "geojson"],
+                            "description": "Target compiled document format (pdf, docx, markdown).",
+                        },
+                    },
+                    "required": ["content"],
                 },
             ),
             ToolDeclaration(
@@ -388,6 +441,8 @@ class UtilityServer:
             return self._measure_area(args)
         if tool_name == "create_artifact":
             return self._create_artifact(args)
+        if tool_name == "edit_artifact":
+            return self._edit_artifact(args)
         if tool_name == "list_artifacts":
             return self._list_artifacts(args)
         if tool_name == "get_artifact":
@@ -593,6 +648,134 @@ class UtilityServer:
             }
         except ValueError as e:
             return {"error": str(e)}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def _edit_artifact(self, args: dict) -> dict:
+        try:
+            import re
+            from tools.artifact_store import read_artifact, save_artifact
+            from tools.export_engine import export_artifact_multi_format
+            from database import get_connection
+
+            art_id = args.get("id")
+            title = args.get("title")
+            section_heading = args.get("section_heading")
+            action = args.get("action", "insert_under_heading")
+            new_text = args.get("content", "").strip()
+            include_map_figure = args.get("include_map_figure", False)
+            figure_caption = args.get("figure_caption", "")
+            target_format = args.get("format")
+            map_context = args.get("_map_context", {})
+            workspace = map_context.get("workspace") if map_context else None
+
+            conn = get_connection(workspace)
+            target_row = None
+            try:
+                if art_id:
+                    target_row = read_artifact(int(art_id), workspace)
+                elif title:
+                    r = conn.execute(
+                        "SELECT * FROM artifacts WHERE title LIKE ? ORDER BY updated_at DESC LIMIT 1",
+                        (f"%{title}%",)
+                    ).fetchone()
+                    if r:
+                        target_row = dict(r)
+                if not target_row:
+                    return {"error": "Target artifact not found. Please specify the exact 'id' or 'title' of the existing document to edit."}
+            finally:
+                conn.close()
+
+            doc_title = title or target_row["title"]
+            doc_format = (target_format or target_row["format"]).lower()
+            doc_type = target_row["artifact_type"]
+            existing_content = target_row.get("content") or f"# {doc_title}\n\n"
+
+            # Prepare block to insert
+            block_parts = []
+            if include_map_figure or figure_caption:
+                cap = figure_caption or f"Map Snapshot for {doc_title}"
+                block_parts.append(f"![Figure: {cap}](map_snapshot)\n*{cap}*\n")
+            if new_text:
+                block_parts.append(new_text)
+
+            insertion_block = "\n\n".join(block_parts)
+
+            # Apply section-aware modification
+            updated_content = existing_content
+            if section_heading:
+                # Search for heading (e.g. # Heading, ## Heading, ### Heading)
+                pattern = re.compile(rf'^(#+\s+{re.escape(section_heading.strip())}.*?)$', re.MULTILINE | re.IGNORECASE)
+                match = pattern.search(existing_content)
+
+                if match:
+                    heading_pos = match.end()
+                    if action == "replace_section":
+                        # Find next heading of same or higher level
+                        next_heading = re.search(r'\n#+\s+', existing_content[heading_pos:])
+                        end_pos = heading_pos + next_heading.start() if next_heading else len(existing_content)
+                        updated_content = (
+                            existing_content[:match.start()]
+                            + f"## {section_heading}\n\n"
+                            + insertion_block
+                            + existing_content[end_pos:]
+                        )
+                    else:
+                        # insert_under_heading / append to this section
+                        updated_content = (
+                            existing_content[:heading_pos]
+                            + f"\n\n{insertion_block}\n"
+                            + existing_content[heading_pos:]
+                        )
+                else:
+                    # Section heading doesn't exist yet -> append it at end
+                    updated_content = (
+                        existing_content.rstrip()
+                        + f"\n\n## {section_heading}\n\n"
+                        + insertion_block
+                        + "\n"
+                    )
+            else:
+                if action == "append":
+                    updated_content = existing_content.rstrip() + "\n\n" + insertion_block + "\n"
+                elif action == "prepend":
+                    updated_content = insertion_block + "\n\n" + existing_content
+                elif action == "replace_all":
+                    updated_content = insertion_block
+                else:
+                    updated_content = existing_content.rstrip() + "\n\n" + insertion_block + "\n"
+
+            # Generate export bytes for binary formats (pdf, docx)
+            file_bytes = None
+            file_ext = None
+            if doc_format in ("pdf", "docx", "html", "xlsx", "txt", "json"):
+                file_bytes, filename, mime = export_artifact_multi_format(
+                    title=doc_title,
+                    content=updated_content,
+                    format_target=doc_format,
+                    workspace=workspace,
+                )
+                file_ext = doc_format
+
+            result = save_artifact(
+                title=doc_title,
+                artifact_type=doc_type,
+                format=doc_format,
+                content=updated_content,
+                file_bytes=file_bytes,
+                file_ext=file_ext,
+                artifact_id=target_row["id"],
+                workspace=workspace,
+            )
+
+            return {
+                "status": "updated",
+                "id": result["id"],
+                "title": result["title"],
+                "format": result["format"],
+                "section_heading": section_heading,
+                "message": f"Successfully updated '{doc_title}' ({doc_format.upper()}) under section '{section_heading or 'General'}'.",
+            }
         except Exception as e:
             return {"error": str(e)}
 

@@ -424,9 +424,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       zoom: initialState.zoom,
       bearing: initialState.bearing || 0,
       pitch: initialState.pitch || 0,
-      // PNG/PDF export reads the canvas via toBlob/toDataURL. WebGL clears the
-      // back-buffer after each frame composite by default, which makes those
-      // reads return blank pixels. Trade ~10–20% GPU memory for working export.
+      preserveDrawingBuffer: true,
       canvasContextAttributes: { preserveDrawingBuffer: true },
     })
 
@@ -613,13 +611,13 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
         const lngSpan = Math.max(e - w, 0.01)
         const latSpan = Math.max(n - s, 0.01)
 
-        // Expand coordinates by 18% margin on all 4 sides (Westmost, Southmost, Eastmost, Northmost)
-        const padWest = w - lngSpan * 0.18
-        const padEast = e + lngSpan * 0.18
-        const padSouth = s - latSpan * 0.18
-        const padNorth = n + latSpan * 0.18
+        // Expand coordinates by 15% margin on all 4 sides (Westmost, Southmost, Eastmost, Northmost)
+        const padWest = w - lngSpan * 0.15
+        const padEast = e + lngSpan * 0.15
+        const padSouth = s - latSpan * 0.15
+        const padNorth = n + latSpan * 0.15
 
-        map.fitBounds([[padWest, padSouth], [padEast, padNorth]], { padding, animate: false })
+        map.fitBounds([[padWest, padSouth], [padEast, padNorth]], { padding: Math.max(padding, 40), animate: false })
       } else {
         map.zoomTo(origZoom - 0.8, { animate: false })
       }
@@ -1872,7 +1870,12 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
           // Plain/Shift click: select or toggle feature for off-screen indicator
           const ids = renderLayerIds()
           if (ids.length) {
-            const feats = map.queryRenderedFeatures(e.point, { layers: ids })
+            const box = 5
+            const queryTarget: [maplibregl.PointLike, maplibregl.PointLike] = [
+              [e.point.x - box, e.point.y - box],
+              [e.point.x + box, e.point.y + box],
+            ]
+            const feats = map.queryRenderedFeatures(queryTarget, { layers: ids })
             if (feats.length > 0) {
               const feat = feats[0]
               // Find which layer this feature belongs to
@@ -1934,13 +1937,13 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
                   { feature: fullFeature, layerId: matchingLayer.id, layerName: matchingLayer.name },
                   e.originalEvent.shiftKey,
                 )
-              } else {
+              } else if (!e.originalEvent.shiftKey) {
                 onSelectFeature?.(null, false)
               }
-            } else {
+            } else if (!e.originalEvent.shiftKey) {
               onSelectFeature?.(null, false)
             }
-          } else {
+          } else if (!e.originalEvent.shiftKey) {
             onSelectFeature?.(null, false)
           }
         }

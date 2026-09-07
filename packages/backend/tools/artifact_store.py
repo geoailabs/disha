@@ -71,6 +71,56 @@ def _compute_bbox(geojson: dict) -> list[float]:
     return [min(lons), min(lats), max(lons), max(lats)]
 
 
+def _render_chart_from_json(title: str, json_str: str) -> Optional[bytes]:
+    """Auto-render a matplotlib chart from JSON string containing labels/values or x_data/y_data."""
+    try:
+        data = json.loads(json_str.strip())
+        if not isinstance(data, dict):
+            return None
+        labels = data.get("labels") or data.get("x_data") or data.get("categories") or []
+        values = data.get("values") or data.get("y_data") or data.get("counts") or data.get("data") or []
+        if not labels or not values:
+            return None
+
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import io
+
+        fig, ax = plt.subplots(figsize=(8, 4.8), dpi=200)
+        fig.patch.set_facecolor('#0f172a')
+        ax.set_facecolor('#1e293b')
+
+        ptype = data.get("plot_type") or ("pie" if "pie" in title.lower() or "distribution" in title.lower() else "bar")
+        if ptype == "pie":
+            colors = plt.cm.tab10.colors
+            wedges, texts, autotexts = ax.pie(
+                values,
+                labels=labels,
+                autopct='%1.1f%%',
+                startangle=140,
+                colors=colors[:len(labels)],
+                textprops=dict(color="#f8fafc", fontsize=9.5),
+                wedgeprops=dict(width=0.45, edgecolor='#0f172a', linewidth=1.5),
+            )
+            for at in autotexts:
+                at.set_color('#ffffff')
+                at.set_weight('bold')
+        else:
+            ax.bar(labels, values, color="#0284c7", width=0.55, edgecolor='#0f172a')
+            ax.tick_params(colors='#94a3b8', labelsize=9)
+            ax.grid(True, linestyle='--', alpha=0.15, color='#cbd5e1')
+
+        ax.set_title(title, color='#f8fafc', fontsize=12, fontweight='bold', pad=12)
+        plt.tight_layout()
+        buf = io.BytesIO()
+        plt.savefig(buf, format="png", dpi=200, facecolor=fig.get_facecolor(), bbox_inches="tight")
+        plt.close(fig)
+        return buf.getvalue()
+    except Exception:
+        return None
+
+
 def save_artifact(
     title: str,
     artifact_type: str,
@@ -80,10 +130,13 @@ def save_artifact(
     file_bytes: Optional[bytes] = None,
     file_ext: Optional[str] = None,
     meta: Optional[dict] = None,
+    artifact_id: Optional[int] = None,
+    overwrite: bool = False,
     workspace: Optional[str] = None,
 ) -> dict:
-    """Create an artifact row + optional file. Returns the full row as a dict."""
-    if format not in ALLOWED_FORMATS:
+    """Create or update an artifact row + optional file. Returns the full row as a dict."""
+    fmt = format.lower()
+    if fmt not in ALLOWED_FORMATS:
         raise ValueError(
             f"Invalid format '{format}'. Must be one of: {', '.join(sorted(ALLOWED_FORMATS))}"
         )
@@ -91,12 +144,36 @@ def save_artifact(
     # --- Validate / enrich per format ---
     final_content: str = content or ""
     final_meta: Optional[dict] = meta.copy() if meta else None
+    actual_file_bytes: Optional[bytes] = file_bytes
+    is_img = fmt in ("image", "png", "jpg", "jpeg", "webp", "gif")
 
-    if format == "markdown":
+    # If image content is provided as base64 data string, decode it
+    if is_img and not actual_file_bytes and content:
+        import base64
+        trimmed = content.strip()
+        if trimmed.startswith("data:image/") and ";base64," in trimmed:
+            b64_str = trimmed.split(";base64,")[1]
+            try:
+                actual_file_bytes = base64.b64decode(b64_str)
+            except Exception:
+                pass
+        elif len(trimmed) > 100 and not trimmed.startswith(("{", "<", "#", "http")):
+            try:
+                actual_file_bytes = base64.b64decode(trimmed)
+            except Exception:
+                pass
+
+        # If image content is JSON with chart data (labels/values), auto-render plot image
+        if not actual_file_bytes and (trimmed.startswith("{") or trimmed.startswith("[")):
+            rendered = _render_chart_from_json(title, trimmed)
+            if rendered:
+                actual_file_bytes = rendered
+
+    if fmt == "markdown":
         # content stored as-is; no file needed
         pass
 
-    elif format == "table":
+    elif fmt == "table":
         if not content:
             raise ValueError("Table artifact requires 'content' with JSON {columns, rows}.")
         try:
@@ -118,7 +195,7 @@ def save_artifact(
             final_meta = row_meta
         final_content = content
 
-    elif format == "geojson":
+    elif fmt == "geojson":
         if not content:
             raise ValueError("GeoJSON artifact requires 'content' with a GeoJSON string.")
         try:
@@ -145,62 +222,100 @@ def save_artifact(
             final_meta = geo_meta
         final_content = content
 
-    elif format == "image":
-        if not file_bytes:
-            raise ValueError("Image artifact requires 'file_bytes'.")
-        # content must be non-NULL per DB schema; store empty string
-        final_content = ""
+    elif is_img:
+        # Keep any description/content text or default to empty string
+        final_content = (content or "") if not (content or "").startswith("data:image/") else ""
 
     # --- Insert or update row ---
     meta_json = json.dumps(final_meta) if final_meta is not None else None
 
     conn = get_connection(workspace)
     try:
-        # Check for existing artifact with the same title and artifact_type
-        if format != "image":
+        # Case 1: Specific artifact_id provided (e.g. updating pre-reserved export ID)
+        if artifact_id is not None:
+            existing = conn.execute(
+                "SELECT id, title, artifact_type, format, content, meta, file_path, created_at, updated_at "
+                "FROM artifacts WHERE id = ?",
+                (artifact_id,),
+            ).fetchone()
+            if existing:
+                file_path_rel = existing["file_path"]
+                if actual_file_bytes:
+                    ext = (file_ext or ("docx" if fmt == "docx" else ("pdf" if fmt == "pdf" else ("jpg" if fmt in ("jpg", "jpeg") else ("png" if fmt in ("png", "image") else fmt))))).lstrip(".")
+                    if is_img:
+                        try:
+                            from PIL import Image
+                            import io
+                            img = Image.open(io.BytesIO(actual_file_bytes))
+                            width, height = img.size
+                            img_format = (img.format or ext).lower()
+                            mime_map = {"jpeg": "image/jpeg", "jpg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
+                            mime = mime_map.get(img_format, f"image/{img_format}")
+                        except Exception:
+                            width, height, mime = 0, 0, f"image/{ext}"
+                        img_meta = {"width": width, "height": height, "mime": mime}
+                        final_meta = {**img_meta, **(final_meta or {})}
+                        meta_json = json.dumps(final_meta)
+
+                    filename = f"{artifact_id}.{ext}"
+                    file_path_full = get_artifacts_dir(workspace) / filename
+                    file_path_full.write_bytes(actual_file_bytes)
+                    file_path_rel = str(Path("artifacts_store") / filename)
+
+                conn.execute(
+                    "UPDATE artifacts SET content = ?, format = ?, meta = ?, file_path = ?, title = COALESCE(?, title), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (final_content, fmt, meta_json, file_path_rel, title, artifact_id),
+                )
+                conn.commit()
+                updated = conn.execute("SELECT * FROM artifacts WHERE id = ?", (artifact_id,)).fetchone()
+                return dict(updated)
+
+        # Case 2: Explicit overwrite requested by title + artifact_type
+        if overwrite:
             existing = conn.execute(
                 "SELECT id, title, artifact_type, format, content, meta, file_path, created_at, updated_at "
                 "FROM artifacts WHERE title = ? AND artifact_type = ? ORDER BY id DESC LIMIT 1",
                 (title, artifact_type),
             ).fetchone()
             if existing:
-                # If content and format are identical, return existing artifact without creating duplicates
-                if (existing["content"] or "") == final_content and existing["format"] == format:
-                    return dict(existing)
-                # Same title and type with updated content -> update in place
+                art_id = existing["id"]
+                file_path_rel = existing["file_path"]
+                if actual_file_bytes:
+                    ext = (file_ext or ("docx" if fmt == "docx" else ("pdf" if fmt == "pdf" else fmt))).lstrip(".")
+                    filename = f"{art_id}.{ext}"
+                    file_path_full = get_artifacts_dir(workspace) / filename
+                    file_path_full.write_bytes(actual_file_bytes)
+                    file_path_rel = str(Path("artifacts_store") / filename)
+
                 conn.execute(
-                    "UPDATE artifacts SET content = ?, format = ?, meta = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    (final_content, format, meta_json, existing["id"]),
+                    "UPDATE artifacts SET content = ?, format = ?, meta = ?, file_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (final_content, fmt, meta_json, file_path_rel, art_id),
                 )
                 conn.commit()
-                updated = conn.execute(
-                    "SELECT id, title, artifact_type, format, content, meta, file_path, created_at, updated_at "
-                    "FROM artifacts WHERE id = ?",
-                    (existing["id"],),
-                ).fetchone()
+                updated = conn.execute("SELECT * FROM artifacts WHERE id = ?", (art_id,)).fetchone()
                 return dict(updated)
 
+        # Case 3: Create clean new artifact row
         cursor = conn.execute(
             "INSERT INTO artifacts (title, content, artifact_type, format, meta) "
             "VALUES (?, ?, ?, ?, ?)",
-            (title, final_content, artifact_type, format, meta_json),
+            (title, final_content, artifact_type, fmt, meta_json),
         )
         artifact_id = cursor.lastrowid
-        # For image format, defer commit until after file write so we don't
-        # leave an orphaned row if the disk write fails.
-        if format != "image":
+        # Defer commit for images until file write succeeds
+        if not is_img:
             conn.commit()
 
         file_path_rel: Optional[str] = None
 
-        if file_bytes:
-            ext = (file_ext or ("png" if format == "image" else format)).lstrip(".")
-            if format == "image":
+        if actual_file_bytes:
+            ext = (file_ext or ("docx" if fmt == "docx" else ("pdf" if fmt == "pdf" else ("jpg" if fmt in ("jpg", "jpeg") else ("png" if fmt in ("png", "image") else fmt))))).lstrip(".")
+            if is_img:
                 try:
                     from PIL import Image
                     import io
 
-                    img = Image.open(io.BytesIO(file_bytes))
+                    img = Image.open(io.BytesIO(actual_file_bytes))
                     width, height = img.size
                     img_format = (img.format or ext).lower()
                     mime_map = {
@@ -224,7 +339,7 @@ def save_artifact(
             filename = f"{artifact_id}.{ext}"
             file_path_full = get_artifacts_dir(workspace) / filename
             try:
-                file_path_full.write_bytes(file_bytes)
+                file_path_full.write_bytes(actual_file_bytes)
             except OSError:
                 conn.rollback()
                 raise
@@ -281,3 +396,18 @@ def delete_artifact(artifact_id: int, workspace: Optional[str] = None) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def list_artifacts(workspace: Optional[str] = None) -> list[dict]:
+    """Return all artifact rows with previews and file paths."""
+    conn = get_connection(workspace)
+    try:
+        rows = conn.execute(
+            "SELECT id, title, artifact_type, format, meta, "
+            "SUBSTR(content, 1, 200) as preview, file_path, created_at, updated_at "
+            "FROM artifacts ORDER BY position ASC, updated_at DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+

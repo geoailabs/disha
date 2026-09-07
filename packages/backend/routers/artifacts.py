@@ -48,10 +48,11 @@ async def upload_artifact(
     format: str = Form("image"),
     content: str = Form(""),
     meta: str = Form(""),
+    artifact_id: int | None = Form(None),
     file: UploadFile = File(None),
     workspace: str | None = Form(None),
 ):
-    """Create an artifact via multipart form — intended for image uploads."""
+    """Create or update an artifact via multipart form — intended for image/figure uploads."""
     try:
         file_bytes = await file.read() if file else None
         file_ext = Path(file.filename).suffix.lstrip(".") if file and file.filename else None
@@ -64,6 +65,7 @@ async def upload_artifact(
             file_bytes=file_bytes,
             file_ext=file_ext,
             meta=meta_dict,
+            artifact_id=artifact_id,
             workspace=workspace,
         )
         return result
@@ -100,26 +102,39 @@ async def download_artifact(artifact_id: int, workspace: str | None = Query(None
     row = read_artifact(artifact_id, workspace)
     if not row:
         raise HTTPException(status_code=404, detail="Artifact not found")
-    fmt = row.get("format", "markdown")
+    fmt = (row.get("format") or "markdown").lower()
+    fp = row.get("file_path")
 
-    if fmt == "image":
-        fp = row.get("file_path")
-        if not fp:
-            raise HTTPException(status_code=404, detail="No file for this artifact")
-        filename = Path(fp).name
-        full_path = get_artifacts_dir(workspace) / filename
-        if not full_path.exists():
-            raise HTTPException(status_code=404, detail="File missing from disk")
-        mime = (json.loads(row["meta"]) if row.get("meta") else {}).get(
-            "mime", "application/octet-stream"
-        )
-        return FileResponse(str(full_path), media_type=mime, filename=Path(fp).name)
+    is_img = fmt in ("image", "png", "jpg", "jpeg", "webp", "gif", "svg")
+
+    if fp or is_img:
+        if fp:
+            filename = Path(fp).name
+            full_path = get_artifacts_dir(workspace) / filename
+            if full_path.exists():
+                mime = (json.loads(row["meta"]) if row.get("meta") else {}).get(
+                    "mime"
+                )
+                if not mime:
+                    mime_map = {
+                        "png": "image/png",
+                        "jpg": "image/jpeg",
+                        "jpeg": "image/jpeg",
+                        "webp": "image/webp",
+                        "pdf": "application/pdf",
+                        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    }
+                    mime = mime_map.get(fmt, "application/octet-stream")
+                return FileResponse(str(full_path), media_type=mime, filename=Path(fp).name)
 
     # Text formats: serve as their native file type
     ext_map = {
         "markdown": ("md", "text/markdown"),
         "table": ("csv", "text/csv"),
         "geojson": ("geojson", "application/geo+json"),
+        "json": ("json", "application/json"),
+        "html": ("html", "text/html"),
+        "txt": ("txt", "text/plain"),
     }
     ext, media_type = ext_map.get(fmt, ("txt", "text/plain"))
     content = row.get("content", "")
@@ -147,27 +162,33 @@ async def download_artifact(artifact_id: int, workspace: str | None = Query(None
 
 @router.get("/{artifact_id}/docx")
 async def download_artifact_docx(artifact_id: int, workspace: str | None = Query(None)):
-    import tempfile
-    from tools.doc_exporter import markdown_to_docx
-    from fastapi.responses import FileResponse
+    from tools.export_engine import generate_docx_export
+    from fastapi.responses import FileResponse, Response
 
     row = read_artifact(artifact_id, workspace)
     if not row:
         raise HTTPException(status_code=404, detail="Artifact not found")
-    
-    content = row.get("content", "")
+
     title = row.get("title") or "artifact"
-    title_safe = title.replace(" ", "_").replace("/", "-")[:40]
-    
-    with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
-        tmp_path = tmp.name
-        
+    title_safe = "".join(c for c in title if c.isalnum() or c in (" ", "_", "-")).strip().replace(" ", "_") or "export"
+
+    # 1. If physical docx file already exists on disk, serve it directly
+    if row.get("file_path"):
+        fp = Path(workspace or ".") / row["file_path"] if workspace else Path(row["file_path"])
+        if fp.is_file() and fp.suffix.lower() == ".docx" and fp.stat().st_size > 100:
+            return FileResponse(
+                str(fp),
+                media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                filename=f"{title_safe}.docx"
+            )
+
+    content = row.get("content", "")
     try:
-        markdown_to_docx(content, tmp_path)
-        return FileResponse(
-            tmp_path,
+        docx_bytes = generate_docx_export(title, content, workspace=workspace)
+        return Response(
+            content=docx_bytes,
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            filename=f"{title_safe}.docx"
+            headers={"Content-Disposition": f'attachment; filename="{title_safe}.docx"'}
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate Word document: {str(e)}")

@@ -17,6 +17,18 @@ import os
 import sys
 from pathlib import Path
 
+# Task pipeline orchestrator (heap + queue based document compilation)
+try:
+    from tools.task_pipeline import (
+        classify_tool_calls,
+        needs_pipeline,
+        patch_content_with_real_paths,
+        inject_new_artifact_instruction,
+    )
+    _PIPELINE_AVAILABLE = True
+except ImportError:
+    _PIPELINE_AVAILABLE = False
+
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from openai import AsyncOpenAI
@@ -45,24 +57,23 @@ from mcp_servers.od_server import ODServer
 from mcp_servers.scenario_server import ScenarioServer
 from mcp_servers.its_server import ITSServer
 from mcp_servers.emissions_server import EmissionsServer
-from domains import (
-    BaseDomainHub,
-    DemographicsHub,
-    EnvironmentHub,
-    MobilityHub,
-    PlacesHub,
-    PlanningHub,
-    ScenariosHub,
-    SpatialHub,
-    ToolResult,
-    UtilityHub,
-)
+from mcp_servers.plot_server import PlotServer
 from tools.utility import UtilityServer
 from tools.config import get_model as _get_model
 from tools.google import google_maps_key_var
 from tools.action_utils import send_action as _send_action
 from tools.spatial_registry import spatial_registry
-
+from domains import (
+    SpatialHub,
+    MobilityHub,
+    EnvironmentHub,
+    PlanningHub,
+    DemographicsHub,
+    PlacesHub,
+    ScenariosHub,
+    UtilityHub,
+    ToolResult,
+)
 
 try:
     from shapely.geometry import shape as _shape
@@ -70,6 +81,17 @@ except ImportError:
     _shape = None
 
 router = APIRouter()
+
+_hubs = {
+    "spatial": SpatialHub(),
+    "mobility": MobilityHub(),
+    "environment": EnvironmentHub(),
+    "planning": PlanningHub(),
+    "demographics": DemographicsHub(),
+    "places": PlacesHub(),
+    "scenarios": ScenariosHub(),
+    "utility": UtilityHub(),
+}
 
 _stop_event_var: contextvars.ContextVar[asyncio.Event | None] = contextvars.ContextVar("chat_stop_event", default=None)
 
@@ -109,19 +131,27 @@ def _env_google_maps_api_key() -> str:
 _env_key = _env_openai_api_key()
 _client = AsyncOpenAI(api_key=_env_key) if _env_key else None
 
-_util_hub = UtilityHub(db_path=DB_PATH)
-_hubs: dict[str, BaseDomainHub] = {
-    "spatial": SpatialHub(db_path=DB_PATH),
-    "mobility": MobilityHub(),
-    "environment": EnvironmentHub(),
-    "planning": PlanningHub(utility_server=_util_hub.utility_server),
-    "demographics": DemographicsHub(),
-    "places": PlacesHub(),
-    "scenarios": ScenariosHub(),
-    "utility": _util_hub,
+_servers = {
+    "osm": OSMServer(),
+    "gis": GISServer(),
+    "weather": WeatherServer(),
+    "zoning": ZoningServer(),
+    "demographics": DemographicsServer(),
+    "overture": OvertureServer(),
+    "google_places": GooglePlacesServer(),
+    "google_env": GoogleEnvironmentServer(),
+    "wms": WMSServer(),
+    "gee": GEEServer(),
+    "datameet": DatameetServer(),
+    "network": NetworkServer(),
+    "gtfs": GTFSServer(),
+    "od": ODServer(),
+    "scenario": ScenarioServer(),
+    "its": ITSServer(),
+    "emissions": EmissionsServer(),
+    "plot": PlotServer(),
+    "utility": UtilityServer(db_path=DB_PATH),
 }
-# Backward compatibility alias
-_servers = _hubs
 
 # ── Action tool names (sent directly to frontend as map actions) ──────────────
 
@@ -129,8 +159,8 @@ _ACTION_TOOLS = {
     "fly_to", "fit_bounds", "add_marker", "add_markers", "clear_markers",
     "draw_line", "draw_polygon", "draw_circle", "add_geojson",
     "highlight_features", "set_layer_style", "style_layer", "toggle_layer", "remove_layer",
-    "save_bookmark", "go_to_bookmark", "export_region_clip", "switch_basemap", "add_geojson_file",
-    "add_gee_layer", "add_raster_overlay",
+    "save_bookmark", "go_to_bookmark", "export_region_clip", "export_map_png", "export_map_jpeg", "export_map_pdf",
+    "switch_basemap", "add_geojson_file", "add_gee_layer", "add_raster_overlay",
 }
 
 # ── System prompt ─────────────────────────────────────────────────────────────
@@ -147,7 +177,7 @@ DOCUMENT_SYSTEM_PROMPT = (
     "Do NOT estimate coordinates manually. Instead, trace features by identifying their visual coordinate vertices (x,y percentages from 0.0 to 1.0) "
     "and call digitize_image_features to automatically translate them to real coordinates using the affine matrix. "
     "You may also query OSM/Overture in the georeferenced area to fetch matching digital vectors. "
-    "You may save detailed analyses using the create_artifact tool."
+    "You may save detailed analyses using the create_artifact tool and generate charts, histograms, or demographic distributions using create_plot."
 )
 
 SYSTEM_PROMPT = (
@@ -181,14 +211,16 @@ SYSTEM_PROMPT = (
     "optionally by a property), gis_nearest (closest feature to a point), "
     "gis_spatial_join (tag points with the polygon they fall in), "
     "gis_filter (filter features from a loaded layer or dataset by attribute values e.g. district/state names, and render a new filtered layer on the map)\n"
-    "- Bookmarks: save_bookmark, go_to_bookmark, export_region_clip\n"
+    "- Bookmarks & Export: save_bookmark, go_to_bookmark, export_region_clip (clips vector layers to GeoJSON), export_map_png (exports/downloads composed map as PNG image figure), export_map_jpeg (exports/downloads composed map as JPEG image figure), export_map_pdf (exports/downloads composed map as PDF report figure)\n"
     "- Zoning: analyze_zones, detect_zone_overlaps\n"
-    "- Demographics & Employment: get_demographics (estimate population), project_population (forecast population growth), get_employment_density (estimate baseline jobs using custom TAZ grids or local multi-source proxy), project_employment (forecast future job growth and land demand area in hectares)\n"
-    "- Artifacts: create_artifact (format: markdown/table/geojson), list_artifacts, get_artifact, extract_attribute_table\n"
+    "- Artifacts & Documents: create_artifact (format: pdf/docx/jpeg/png/markdown/table/geojson), edit_artifact (edit/update a PDF, Word .docx, or markdown planning document: insert sections, map snapshot images, tables, and narrative text/descriptions under specific headings), list_artifacts, get_artifact, extract_attribute_table\n"
+    "  To edit or compile a planning document based on user prompts (e.g., 'add this to the pdf under heading X', 'add the map image under heading Y with description Z', 'edit section A'), call edit_artifact with the title or ID, section_heading, content, and include_map_figure/figure_caption.\n"
     "  extract_attribute_table extracts layer or shapefile properties/columns into a tabular artifact.\n"
     "  Re-adding geometry: call get_artifact to retrieve a geojson artifact's content, then pass it to add_geojson.\n"
     "- Reports: generate_report — generates a deep research urban planning report using web search. "
     "Use when user asks to generate/create/write a report or planning analysis.\n"
+    "- Plots & Charts: create_plot (generate publication-ready bar, pie, histogram, line, scatter charts from numeric data/distribution arrays and save them directly as high-resolution image artifacts in the project workspace). "
+    "Whenever the user asks for any chart, graph, or demographic/spatial distribution (e.g., 'pie chart of population', 'bar chart of land use', 'traffic distribution'), you MUST call create_plot with the appropriate plot_type ('pie', 'bar', 'histogram', 'line', 'scatter'), title, x_data (categories/slice labels), and y_data (numeric counts/percentages).\n"
     "- Street Network (NetworkX): fetch_street_network (automatically pull connected roads within current map bounds or coordinates to the workspace), "
     "analyze_street_network (topology metrics & bottleneck centrality on a road layer/file), "
     "find_shortest_path (Dijkstra routing between coordinates on a road layer/file), "
@@ -300,9 +332,42 @@ SYSTEM_PROMPT = (
     "(using osm_boundary or osm_boundary_union), always mention explicitly in your chat response "
     "which administrative level (e.g., admin_level=5 for district/county, admin_level=8 for city/municipality) "
     "was used or chosen.\n"
-    "19. JUNCTIONS AND POI PINNING: When pinning a specific point of interest, landmark, intersection, square, roundabout, junction, or address (e.g. 'Times Square, New York' or 'Airport Interchange, Sector 43'), ALWAYS first call the `geocode` tool with the full descriptive name and containing city/state context to resolve its exact point coordinate. DO NOT call `osm_boundary` or `osm_search` for a specific junction/intersection unless you want to search for adjacent amenities or the broader boundary. To display the pinned point on the map, call `add_marker` at the resolved coordinate. When the user asks to route/cross through waypoints, ensure each waypoint is geocoded and explicitly passed in the routing tool's `waypoints` argument, and pass the corresponding color or label if customized.\n"
-    "20. AUTOMATIC ARTIFACT & MULTI-FORMAT EXPORT PERSISTENCE: Whenever you generate ANY planning report, summary card, demographic profile, plot/histogram, or structured analysis, call `create_artifact` with a descriptive title and format ('pdf', 'docx', 'html', 'png', 'jpg', 'xlsx', 'txt', 'json', 'markdown', 'table', 'geojson'). You CAN create PNG, JPEG, PDF, Word (.docx), HTML, and Excel (.xlsx) artifacts directly using `create_artifact`. For charts and histograms, call `create_plot` to generate clean plot image artifacts.\n"
-    "21. ATTRIBUTE FILTERING & VECTOR SUBSETS: When the user asks to filter, extract, or isolate specific features from a loaded layer or dataset (e.g. filtering districts by region/state name, selecting commercial zoning parcels, isolating expressways from a road network), ALWAYS call `gis_filter` with the layer_name or path, target values array, and output_layer_name. Do NOT try to highlight features one by one, do NOT paste raw geometries in chat, and do NOT claim you cannot filter without asking the user for a file."
+    "19. PLOT & CHART GENERATION: Call `create_plot` ONLY when a visual chart, graph, or multi-category breakdown is explicitly requested (e.g. 'bar chart of land use comparison', 'ward population distribution', 'trip modal split'). Provide at least 2 distinct categories in x_data and numeric counts in y_data. NEVER call `create_plot` for a single scalar value (e.g. stating 'Delhi population: 11.3 million' is a formatted number/table in markdown, NOT a 1-slice 100% pie chart). NEVER insert a chart/plot image where a map image was requested (e.g. do not put a population chart under a catchment heading).\n"
+    "20. REGIONAL & METROPOLITAN BOUNDARIES (e.g. NCR / Delhi NCR, Greater London, Tri-State, MMR): When asked to display a metropolitan region consisting of multiple contiguous districts or states (e.g. 'Delhi NCR' or 'National Capital Region', which spans NCT Delhi and adjoining Haryana, Uttar Pradesh, and Rajasthan districts), retrieve and merge the contiguous district/state boundaries (using osm_boundary_union or import_datameet_boundary) so they form a clean boundary. If asked to mark both a central core (e.g. Delhi) and the broader metropolitan region (e.g. NCR) in different colors, add them as two separate distinct layers and style them with contrasting colors (e.g. green outline/fill for Delhi, blue or orange for NCR) using set_layer_style.\n"
+    "21. JUNCTIONS AND POI PINNING: When pinning a specific point of interest, landmark, chowk, junction, or address (like 'Fountain Chowk' or 'Airport Chowk'), ALWAYS first call the `geocode` tool with the full descriptive name and containing context (e.g. 'Fountain Chowk, Sector 43, Chandigarh') to resolve its exact point coordinate. DO NOT call `osm_boundary` or `osm_search` for a specific junction/chowk unless you want to search for adjacent amenities or the city boundary. To display the pinned point on the map, call `add_marker` at the resolved coordinate. When the user asks to route/cross through waypoints, ensure each waypoint is geocoded and explicitly passed in the routing tool's `waypoints` argument, and pass the corresponding color or label if customized.\n"
+    "22. AUTOMATIC ARTIFACT & MULTI-FORMAT EXPORT PERSISTENCE: Whenever you generate ANY planning report, summary card, demographic profile, plot/histogram, or structured analysis, call `create_artifact` with a descriptive title and format ('pdf', 'docx', 'html', 'png', 'jpg', 'xlsx', 'txt', 'json', 'markdown', 'table', 'geojson'). You CAN create PNG, JPEG, PDF, Word (.docx), HTML, and Excel (.xlsx) artifacts directly using `create_artifact`. For charts and histograms, call `create_plot` to generate clean plot image artifacts.\n"
+    "23. ATTRIBUTE FILTERING & VECTOR SUBSETS: When the user asks to filter/extract/isolate specific features from a loaded layer or dataset (e.g. 'filter coastal districts in Tamil Nadu and Kerala', 'show only commercial parcels', 'extract expressways'), ALWAYS call `gis_filter` with the layer_name or path, target values array, and output_layer_name. Do NOT try to highlight features one by one, do NOT paste raw geometries in chat, and do NOT claim you cannot filter without asking the user for a file.\n"
+    "24. MULTI-SELECTED LAYERS IN CHAT CONTEXT: When the user Shift-clicks or selects multiple layers on the map or in the layers sidebar panel, all selected layers appear under [USER SELECTED MAP ELEMENTS / HIGHLIGHTED LAYERS] with their layer names, centroids, and attributes. When the user asks to analyze, compare, overlay, buffer, intersect, or compute stats/charts for 'these layers', 'selected regions', or 'both areas', directly reference and process ALL selected layers by their exact names/attributes in your spatial GIS tools (e.g. gis_intersection, gis_difference, gis_area, gis_union) and demographic/plotting tools (create_plot).\n"
+    "25. ZERO PLACEHOLDER POLICY IN ARTIFACTS / DOCUMENTS:\n"
+    "  (a) STRICT PROHIBITION: NEVER emit placeholder sentences like 'Built-up land cover polygons for X should be inserted here as a map figure when the layer is available in the current map context', 'Insert image here', 'Map to be loaded', or 'Figure placeholder'.\n"
+    "  (b) If the user asks to mark or extract a map feature (e.g. boundary, catchment, built-up area, zoning, transit), you MUST execute the respective tool (`osm_boundary`, `analyze_transit_catchment`/`gis_buffer`, `get_land_cover`/`osm_search`), adjust view with `fit_bounds`, export the map via `export_map_jpeg(save_to_artifacts=True)` to get the real artifact image path, and embed that path directly in the markdown as `![Caption](artifacts_store/<ID>.jpg)`.\n"
+    "  (c) Every section requesting visual content MUST have its corresponding real image artifact generated and embedded.\n"
+    "26. MULTI-STEP TASK EXECUTION — SEQUENTIAL PIPELINE (FETCH → EXPORT → COMPILE):\n"
+    "  CRITICAL: The backend BLOCKS create_artifact if image references are missing or are placeholders.\n"
+    "  You MUST follow this exact sequential flow across multiple tool-call rounds:\n"
+    "  ROUND 1: osm_boundary_union(['Chandigarh','Panchkula','Mohali']) + fit_bounds\n"
+    "  ROUND 2: export_map_jpeg(title='Tricity Area Map', save_to_artifacts=True) → returns file_path e.g. artifacts_store/42.jpg\n"
+    "  ROUND 3: osm_boundary('Chandigarh') + fit_bounds\n"
+    "  ROUND 4: export_map_jpeg(title='Chandigarh Map', save_to_artifacts=True) → returns file_path e.g. artifacts_store/43.jpg\n"
+    "  ROUND 5: osm_boundary('Panchkula') + fit_bounds + export_map_jpeg(title='Panchkula Map', save_to_artifacts=True) → artifacts_store/44.jpg\n"
+    "  ROUND 6: osm_boundary('Mohali') + fit_bounds + export_map_jpeg(title='Mohali Map', save_to_artifacts=True) → artifacts_store/45.jpg\n"
+    "  ROUND 7: create_plot(plot_type='pie', title='Population Distribution - Tricity', x_data=['Chandigarh','Panchkula','Mohali'], y_data=[1200000,560000,800000]) → returns file_path artifacts_store/46.png\n"
+    "  ROUND 8: create_artifact(title='Chandigarh report', format='docx', content='# Chandigarh report\\n\\n## Tricity Area\\n\\n![Tricity Area](artifacts_store/42.jpg)\\n\\n![Chandigarh](artifacts_store/43.jpg)\\n\\n![Panchkula](artifacts_store/44.jpg)\\n\\n![Mohali](artifacts_store/45.jpg)\\n\\n## Population Distribution\\n\\n![Population Distribution - Tricity](artifacts_store/46.png)')\n"
+    "  RULES:\n"
+    "  - Each export_map_jpeg call MUST have save_to_artifacts=True\n"
+    "  - The file_path returned by each export_map_jpeg tool call is the EXACT path to use in ![...](path) in the document\n"
+    "  - NEVER write artifacts_store/0.jpg or any path that was not returned by a tool call in this session\n"
+    "  - NEVER use (map_snapshot) or (placeholder) as image references — these will be BLOCKED\n"
+    "  - You MUST call osm_boundary/osm_boundary_union BEFORE each export_map_jpeg to show the correct region\n"
+    "  - You have 35 rounds to complete the pipeline — use them all if needed\n"
+    "27. ACTIVE EXECUTION OVER CACHED ASSUMPTIONS:\n"
+    "  - When the user asks to generate, create, or compile a report with maps and data, always perform the active tool sequence to produce fresh, accurate visual layers and images for that specific request.\n"
+    "  - Do NOT assume prior inventory items are complete if the user requests specific distinct maps. Each requested visual view must have its own distinct exported map figure.\n"
+    "  - NEVER fabricate artifact IDs or file paths in chat text without executing the tool to create them.\n"
+    "28. ALWAYS CREATE FRESH DOCUMENTS:\n"
+    "  - EVERY call to create_artifact generates a BRAND NEW document with a new unique ID. NEVER reference an existing artifact_id in create_artifact — always create fresh.\n"
+    "  - Do NOT check list_artifacts before creating. Just call create_artifact directly and a new document will be created.\n"
+    "  - The same prompt asked twice will create two separate documents — that is the intended behavior.\n"
 )
 
 
@@ -1005,7 +1070,7 @@ def _build_tools() -> list[dict]:
             "properties": {"name": {"type": "string"}},
             "required": ["name"],
         }),
-        ("export_region_clip", "Clip all loaded layers to a bounding box and save as GeoJSON", {
+        ("export_region_clip", "Clip all loaded layers to a bounding box and save as a GeoJSON file in workspace", {
             "type": "object",
             "properties": {
                 "output_base_name": {"type": "string"},
@@ -1013,6 +1078,27 @@ def _build_tools() -> list[dict]:
                 "north": {"type": "number"}, "east": {"type": "number"},
             },
             "required": ["output_base_name"],
+        }),
+        ("export_map_png", "Export and download the current composed map figure as a publication-ready high-resolution PNG image (with title block, scale bar, legend, and north arrow). Also optionally saves it into the Artifacts panel.", {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Optional title for the exported map figure"},
+                "save_to_artifacts": {"type": "boolean", "description": "If true, saves as an image artifact in the Artifacts tab instead of triggering a direct browser download"},
+            },
+        }),
+        ("export_map_jpeg", "Export and download the current composed map figure as a JPEG image (with title block, scale bar, legend, and north arrow). Also optionally saves it into the Artifacts panel.", {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Optional title for the exported map figure"},
+                "save_to_artifacts": {"type": "boolean", "description": "If true, saves as a JPG/JPEG artifact in the Artifacts tab instead of triggering a direct browser download"},
+            },
+        }),
+        ("export_map_pdf", "Export and download the current composed map figure as a landscape A4 PDF report figure (with title block, scale bar, legend, and north arrow). Also optionally saves it into the Artifacts panel.", {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Optional title for the exported map figure"},
+                "save_to_artifacts": {"type": "boolean", "description": "If true, saves as a PDF artifact in the Artifacts tab instead of triggering a direct browser download"},
+            },
         }),
         ("switch_basemap", "Switch the map's background basemap (street, satellite, dark, light, terrain, topo, humanitarian)", {
             "type": "object",
@@ -1099,7 +1185,116 @@ async def _execute_tool(
             client=client
         )
 
-    # 3. Map action tools (send directly to frontend)
+    # 3a. create_artifact interceptor — enforce map-export-before-document contract
+    #
+    # If the AI calls create_artifact for a docx/pdf but the content references
+    # images that need to be generated (marked as map_snapshot, placeholder, or
+    # no real artifacts_store path), BLOCK and return an instruction to export first.
+    # This covers the case where the model calls exports in a prior round but then
+    # creates the doc without the real paths — or skips exports entirely.
+    if name == "create_artifact":
+        fmt = args.get("format", "markdown")
+        content = args.get("content", "")
+        if fmt in ("docx", "pdf", "html") and content:
+            import re as _re
+            # Detect if content asks for maps/images but only has placeholder refs
+            _has_real_path = bool(_re.search(r'artifacts_store/\d+\.(jpg|jpeg|png|pdf)', content, _re.IGNORECASE))
+            _has_placeholder = bool(_re.search(
+                r'!\[[^\]]*\]\((map_snapshot|placeholder[^)]*|image_here[^)]*|#[^)]*|\.\.\.)\)',
+                content, _re.IGNORECASE
+            ))
+            # Detect if the request MENTIONS map/image content but has NO embedded images at all
+            _has_image_syntax = bool(_re.search(r'!\[', content))
+            _mentions_map = bool(_re.search(
+                r'\b(map|image|figure|boundary|tricity|chandigarh|panchkula|mohali|chart|pie|plot)\b',
+                content, _re.IGNORECASE
+            ))
+            # Count how many distinct export_map calls appear in the current message history
+            _recent_exports: list[dict] = []
+            if messages:
+                for _m in reversed(messages[-30:]):
+                    if _m.get("role") == "tool":
+                        try:
+                            _r = json.loads(_m.get("content", "{}"))
+                            if isinstance(_r, dict) and _r.get("file_path", "").startswith("artifacts_store/") and \
+                               _r.get("format") in ("jpg", "jpeg", "png"):
+                                _recent_exports.append(_r)
+                        except Exception:
+                            pass
+
+            # If content has placeholder refs → model is hallucinating paths
+            if _has_placeholder:
+                missing_exports = []
+                # Extract what images are referenced in the content
+                for _m in _re.findall(r'!\[([^\]]+)\]\([^)]+\)', content):
+                    missing_exports.append(_m)
+                return json.dumps({
+                    "status": "blocked",
+                    "error": "PIPELINE VIOLATION: create_artifact was called with placeholder image references. You MUST call export_map_jpeg(save_to_artifacts=True) for EACH required map view FIRST, then call create_artifact with the real artifact_store/ID.jpg paths.",
+                    "required_action": (
+                        "1. For each required map view (Tricity merged, Chandigarh, Panchkula, Mohali), call:\n"
+                        "   a. osm_boundary or osm_boundary_union to fetch the boundary\n"
+                        "   b. fit_bounds to frame the view\n"
+                        "   c. export_map_jpeg(title='<name>', save_to_artifacts=True) → note the returned file_path\n"
+                        "2. For any charts: call create_plot(...) → note the returned file_path\n"
+                        "3. THEN call create_artifact with the full document content using the REAL paths returned above.\n"
+                        "   Example: ![Tricity Area](artifacts_store/42.jpg)"
+                    ),
+                    "placeholder_refs_found": missing_exports,
+                })
+
+            # If content mentions maps but has no image syntax at all → model skipped exports
+            if _mentions_map and not _has_image_syntax and fmt == "docx":
+                return json.dumps({
+                    "status": "blocked",
+                    "error": "PIPELINE VIOLATION: You are creating a Word document that should include map images, but no image references (![...](artifacts_store/...)) were found in the content. You must export the required map views first.",
+                    "required_action": (
+                        "For each required map view, call export_map_jpeg(title='...', save_to_artifacts=True) first, "
+                        "then embed the returned file_path as ![Caption](artifacts_store/ID.jpg) in the document content, "
+                        "then call create_artifact."
+                    ),
+                })
+
+    # 3b. Map export tools with automatic artifact reservation
+
+    if name in ("export_map_png", "export_map_jpeg", "export_map_pdf"):
+        save_to_art = args.get("save_to_artifacts", True)
+        title = args.get("title") or "Map Export"
+        fmt = "jpg" if name == "export_map_jpeg" else ("png" if name == "export_map_png" else "pdf")
+        workspace = map_context.get("workspace") if map_context else None
+
+        if save_to_art:
+            from tools.artifact_store import save_artifact as _save_artifact
+            art_row = _save_artifact(
+                title=title,
+                artifact_type="sketch",
+                format=fmt,
+                content="",
+                workspace=workspace,
+            )
+            art_id = art_row["id"]
+            file_path_rel = art_row.get("file_path") or f"artifacts_store/{art_id}.{fmt}"
+
+            args_with_id = {**args, "title": title, "artifact_id": art_id, "save_to_artifacts": True}
+            if not await _send_action_if_allowed(ws, name, args_with_id):
+                return json.dumps({"status": "cancelled"})
+
+            await _send_action_if_allowed(ws, "refresh_artifacts", {"id": art_id})
+
+            return json.dumps({
+                "status": "success",
+                "artifact_id": art_id,
+                "file_path": file_path_rel,
+                "title": title,
+                "format": fmt,
+                "message": f"Exported map figure '{title}' (Artifact ID: {art_id}, Path: {file_path_rel}). Reference in markdown documents using: ![{title}]({file_path_rel})",
+            })
+        else:
+            if not await _send_action_if_allowed(ws, name, args):
+                return json.dumps({"status": "cancelled"})
+            return json.dumps({"status": "success", "message": f"'{name}' triggered download on map."})
+
+    # 4. Map action tools (send directly to frontend)
     if name in _ACTION_TOOLS:
         if name == "draw_polygon":
             coords = args.get("coordinates")
@@ -1170,6 +1365,15 @@ async def _execute_tool(
             except Exception as _ae:
                 logger.warning(f"Failed to auto-save artifact for tool '{name}': {_ae}")
 
+        # Auto-refresh artifacts on frontend when an artifact or plot tool executes
+        if name in ("create_artifact", "edit_artifact", "create_plot", "save_artifact"):
+            try:
+                res_dict = json.loads(result.to_json()) if hasattr(result, "to_json") else (result if isinstance(result, dict) else json.loads(str(result)))
+                created_id = res_dict.get("id") or (res_dict.get("artifact", {}).get("id") if isinstance(res_dict.get("artifact"), dict) else None)
+                await _send_action_if_allowed(ws, "refresh_artifacts", {"id": created_id} if created_id else {})
+            except Exception:
+                await _send_action_if_allowed(ws, "refresh_artifacts", {})
+
         return result.to_json()
 
     return json.dumps({"error": f"Unknown tool: {name}"})
@@ -1188,7 +1392,7 @@ async def _run_agent(
     """Run the tool-calling loop until the model stops calling tools or errors."""
     if tools is None:
         tools = _TOOLS
-    max_rounds = 10
+    max_rounds = 35  # Complex pipelines (4 boundaries + 4 exports + chart + doc) need many rounds
 
     for _ in range(max_rounds):
         if _is_cancelled():
@@ -1256,20 +1460,121 @@ async def _run_agent(
             # If no tool calls, we're done. Tool calls MUST be answered even if
             # finish_reason == "stop" — leaving them unanswered breaks the next turn.
             if not tool_calls_acc:
+                # ── Hallucination Detector ─────────────────────────────────────────
+                # If the model generated chat text CLAIMING an artifact was saved
+                # (e.g. "I created the Word document ... artifacts_store/32.docx")
+                # WITHOUT actually calling create_artifact as a tool — it hallucinated.
+                # 
+                # OLD behaviour (REMOVED): auto-create a garbage document from the chat text.
+                #   → This produced documents containing only the AI's chat response text,
+                #     not the actual maps/charts the user requested.
+                #
+                # NEW behaviour: detect the hallucination and inject a correction message
+                #   that forces the AI to perform the real tool calls in the next round.
+                if accumulated_text:
+                    import re as _re_hall
+                    _art_claim = _re_hall.search(
+                        r'artifacts_store/\d+\.(docx|pdf|html|xlsx|md|txt)',
+                        accumulated_text, _re_hall.IGNORECASE
+                    )
+                    # Check if create_artifact / edit_artifact was ACTUALLY called and succeeded
+                    # in the current turn (search only recent tool messages from this round)
+                    _really_created = False
+                    for _m in reversed(messages):
+                        role = _m.get("role")
+                        # Stop scanning when we hit the last user message (start of this turn)
+                        if role == "user":
+                            break
+                        if role == "tool":
+                            _tc = _m.get("content", "")
+                            # create_artifact returns {"status": "created", "id": N, "format": "docx", ...}
+                            # edit_artifact returns {"status": "updated", "id": N, ...}
+                            if (
+                                ('"status": "created"' in _tc or '"status": "updated"' in _tc)
+                                and '"format"' in _tc
+                                and '"id"' in _tc
+                            ):
+                                _really_created = True
+                                break
+
+                    if _art_claim and not _really_created:
+                        logger.warning(
+                            "[Hallucination Detected] Model claimed artifact was saved but "
+                            "did not call create_artifact. Injecting correction message."
+                        )
+                        # Inject a system correction into the message history so the next
+                        # loop iteration forces the model to actually call the tools.
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                "[SYSTEM CORRECTION] You claimed to have created a document "
+                                f"('{_art_claim.group(0)}') but you did NOT call the "
+                                "`create_artifact` tool. No document was actually saved. "
+                                "You MUST now follow the sequential pipeline:\n"
+                                "1. Call osm_boundary_union / osm_boundary + fit_bounds to load the correct boundary\n"
+                                "2. Call export_map_jpeg(title='...', save_to_artifacts=True) for EACH required map view\n"
+                                "3. Call create_plot(...) for any charts\n"
+                                "4. THEN call create_artifact with the real artifact paths returned by the above tools.\n"
+                                "Start NOW — do NOT respond with text first. Call the tools immediately."
+                            ),
+                        })
+                        # Do NOT break — continue the loop to give the model a chance to fix itself
+                        continue
+
+
+
                 break
 
-            # Execute tool calls and collect results
-            for tc in tool_calls_acc.values():
+            # ── Pipeline Orchestrator (Heap + Queue) ────────────────────────────
+            # When the model requests BOTH asset generation (map exports, plots)
+            # AND document compilation (create_artifact) in the same turn, we MUST
+            # run asset tools FIRST so their real file paths exist before the Word/PDF
+            # is compiled.  This is the "queue drains before heap is closed" contract.
+
+            tc_list = list(tool_calls_acc.values())
+
+            # Strip stale artifact IDs so create_artifact always creates fresh docs
+            if _PIPELINE_AVAILABLE:
+                tc_list = inject_new_artifact_instruction(tc_list)
+
+            use_pipeline = _PIPELINE_AVAILABLE and needs_pipeline(tc_list)
+
+            if use_pipeline:
+                asset_calls, document_calls = classify_tool_calls(tc_list)
+                ordered_calls = asset_calls + document_calls
+                logger.info(
+                    f"[Pipeline] Queue phase: {[t['name'] for t in asset_calls]} "
+                    f"| Heap phase: {[t['name'] for t in document_calls]}"
+                )
+            else:
+                ordered_calls = tc_list
+
+            # Collect asset results so we can patch document content
+            asset_results: dict[str, dict] = {}
+            asset_phase_done = False if use_pipeline else True
+
+            for tc in ordered_calls:
                 if _is_cancelled():
                     raise asyncio.CancelledError()
+
                 tool_name = tc["name"]
-                args_raw = tc["arguments"] or ""
+                args_raw = tc.get("arguments") or ""
                 try:
                     args = json.loads(args_raw) if args_raw else {}
                     args_error = None
                 except json.JSONDecodeError as e:
                     args = {}
                     args_error = str(e)
+
+                # When transitioning from asset phase to document phase, patch content
+                if use_pipeline and not asset_phase_done and tool_name in ("create_artifact", "edit_artifact"):
+                    asset_phase_done = True
+                    if asset_results and args.get("content"):
+                        patched = patch_content_with_real_paths(args["content"], asset_results)
+                        if patched != args["content"]:
+                            logger.info(f"[Pipeline] Patched {len(asset_results)} asset path(s) into document content")
+                            args["content"] = patched
+                            tc = {**tc, "arguments": json.dumps(args)}
 
                 await ws.send_text(json.dumps({"type": "tool_use", "tool": tool_name, "args": args}))
 
@@ -1283,14 +1588,19 @@ async def _run_agent(
                     })
                 else:
                     result_str = await _execute_tool(tool_name, args, ws, messages=messages, map_context=map_context, client=client, active_image=active_image)
+
+                # Record asset tool results for path patching
+                if use_pipeline and tool_name in ("export_map_png", "export_map_jpeg", "export_map_pdf", "create_plot"):
+                    try:
+                        asset_results[tc["id"]] = json.loads(result_str)
+                    except Exception:
+                        pass
+
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc["id"],
                     "content": result_str,
                 })
-
-            if finish_reason == "stop":
-                break
 
         except asyncio.CancelledError:
             # Handle task cancellation
@@ -1482,7 +1792,7 @@ async def chat_websocket(websocket: WebSocket):
                         georef_target_image = att
 
             is_document_mode = (image_data is not None) or has_attached_image
-            system = DOCUMENT_SYSTEM_PROMPT if is_document_mode else SYSTEM_PROMPT
+            system = f"{SYSTEM_PROMPT}\n\n{DOCUMENT_SYSTEM_PROMPT}" if is_document_mode else SYSTEM_PROMPT
 
             # Retrieve relevant text segments from RAG index if present
             workspace = map_context.get("workspace") if map_context else None
@@ -1491,7 +1801,7 @@ async def chat_websocket(websocket: WebSocket):
                 try:
                     matched_chunks = await query_rag_index_async(
                         query=user_content,
-                        api_key=effective_api_key,
+                        api_key=api_key,
                         workspace=workspace
                     )
                     if matched_chunks:
@@ -1527,6 +1837,7 @@ async def chat_websocket(websocket: WebSocket):
                             clean_props = {k: v for k, v in props.items() if v is not None}
                             selected_block += f"  Properties: {json.dumps(clean_props)}\n"
                     user_content += selected_block
+
             tools = _TOOLS
 
             # Build unified message content parts for vision model

@@ -18,12 +18,13 @@ logger = logging.getLogger(__name__)
 
 
 class UtilityHub(BaseDomainHub):
-    """Domain Hub for Platform Utilities, Search, Geocoding, Plotting & Artifacts."""
+    """Domain Hub for Platform Utilities, Search, Geocoding, Plots & Artifacts."""
 
     name = "utility"
-    description = "Web search, geocoding, distance/area measurement, plots/charts, and artifact storage."
+    description = "Web search, geocoding, distance/area measurement, plot generation, and artifact storage."
 
     def __init__(self, db_path: str | None = None) -> None:
+        from mcp_servers.plot_server import PlotServer
         self.utility_server = UtilityServer(db_path=db_path)
         self.plot_server = PlotServer()
         # Exclude planning digitization tools which live in PlanningHub
@@ -36,8 +37,7 @@ class UtilityHub(BaseDomainHub):
         decls = [
             d for d in self.utility_server.get_declarations()
             if d.name in self.tool_names
-        ]
-        decls.extend(self.plot_server.get_declarations())
+        ] + self.plot_server.get_declarations()
         return [
             {
                 "type": "function",
@@ -59,7 +59,9 @@ class UtilityHub(BaseDomainHub):
         context = context or {}
         if tool_name in self.plot_server.tool_names:
             res = await self.plot_server.execute(tool_name, {**args, **context})
-            return ToolResult(status=res.get("status", "success"), data=res)
+            art_id = res.get("artifact_id")
+            map_action = {"action": "refresh_artifacts", "payload": {"id": art_id} if art_id else {}}
+            return ToolResult(status=res.get("status", "success"), data=res, map_action=map_action)
 
         res = await self.utility_server.execute(tool_name, {**args, **context})
 
@@ -96,8 +98,9 @@ class UtilityHub(BaseDomainHub):
 
             return ToolResult(status="success", data=summary, map_action=map_action)
 
-        # ── 2. Artifact Creation side effects ──
-        if tool_name in ("create_artifact", "extract_attribute_table"):
-            map_action = {"action": "refresh_artifacts", "payload": {}}
+        # ── 2. Artifact Creation & Editing side effects ──
+        if tool_name in ("create_artifact", "edit_artifact", "extract_attribute_table"):
+            created_id = res.get("id") if isinstance(res, dict) else None
+            map_action = {"action": "refresh_artifacts", "payload": {"id": created_id} if created_id else {}}
 
         return ToolResult(status=res.get("status", "success"), data=res, map_action=map_action, artifact=artifact)
