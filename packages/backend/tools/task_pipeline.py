@@ -72,43 +72,62 @@ def patch_content_with_real_paths(
     asset_results: dict[str, dict],
 ) -> str:
     """
-    Replace placeholder image references in markdown content with real
-    artifact paths returned from asset tool executions.
-
-    asset_results: maps tool_call_id → parsed result dict from _execute_tool
+    Replace placeholder image references or unresolved targets in markdown content
+    with real artifact paths returned from asset tool executions.
     """
     if not content:
         return content
 
-    # Build a map of placeholders → real paths from asset results
-    # Each asset result may contain: {artifact_id, file_path, title}
-    real_paths: list[str] = []
+    assets: list[dict] = []
     for tc_id, result in asset_results.items():
         if isinstance(result, dict):
             fpath = result.get("file_path")
             if fpath and fpath.startswith("artifacts_store/"):
-                real_paths.append(fpath)
+                assets.append(result)
 
-    if not real_paths:
+    if not assets:
         return content
 
-    # Pattern 1: Replace generic placeholder markers like ![...](map_snapshot)
-    # or ![...](artifacts_store/placeholder.jpg)
-    placeholder_pattern = re.compile(
-        r'!\[([^\]]*)\]\((map_snapshot|placeholder[^)]*|artifacts_store/0\.\w+)\)',
-        re.IGNORECASE,
-    )
+    # All generated real paths
+    known_real_paths = {a["file_path"] for a in assets}
 
-    real_path_iter = iter(real_paths)
+    img_pattern = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
+    used_asset_indices: set[int] = set()
 
-    def _replace_placeholder(m):
-        try:
-            rpath = next(real_path_iter)
-            return f"![{m.group(1)}]({rpath})"
-        except StopIteration:
-            return m.group(0)
+    def _match_asset_for_ref(alt: str, src: str) -> Optional[str]:
+        # If src is already one of the freshly generated asset paths and not reused, keep it
+        if src in known_real_paths:
+            return None
 
-    content = placeholder_pattern.sub(_replace_placeholder, content)
+        comb_text = f"{alt} {src}".lower().replace("_", " ").replace("-", " ")
+        
+        # 1. Match by specific keywords in title
+        for idx, a in enumerate(assets):
+            if idx in used_asset_indices:
+                continue
+            title = (a.get("title") or "").lower().replace("_", " ").replace("-", " ")
+            title_words = [w for w in title.split() if len(w) > 3 and w not in ("area", "map", "figure", "boundary", "plot", "chart", "distribution")]
+            if any(w in comb_text for w in title_words):
+                used_asset_indices.add(idx)
+                return a["file_path"]
+
+        # 2. Match sequentially for generic placeholders or filenames
+        for idx, a in enumerate(assets):
+            if idx not in used_asset_indices:
+                used_asset_indices.add(idx)
+                return a["file_path"]
+
+        return None
+
+    def _replace_img(m: re.Match) -> str:
+        alt = m.group(1)
+        src = m.group(2)
+        matched_path = _match_asset_for_ref(alt, src)
+        if matched_path:
+            return f"![{alt}]({matched_path})"
+        return m.group(0)
+
+    content = img_pattern.sub(_replace_img, content)
     return content
 
 

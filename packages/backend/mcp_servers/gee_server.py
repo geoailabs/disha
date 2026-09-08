@@ -23,11 +23,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
 
 from llm.base import ToolDeclaration
+
+logger = logging.getLogger(__name__)
 
 # ── Process-level GEE init cache ─────────────────────────────────────────────
 # True  → GEE is initialized and ready
@@ -335,15 +338,18 @@ class GEEServer:
                 name="extract_land_use_polygons",
                 description=(
                     "Extract specific land cover classes (e.g. 'Built Area', 'Trees', 'Water', 'Crops') "
-                    "into vector GeoJSON polygons for spatial joins, zoning analysis, or offline GIS mapping."
+                    "into vector GeoJSON polygons loaded directly on the map. Supports clipping to an official "
+                    "administrative city/district boundary using `place_name` or `geojson`, and custom layer `color`."
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
-                        "target_class": {"type": "string", "description": "Class name to extract (e.g. 'Built Area', 'Trees', 'Water', 'Crops', 'Grass')."},
-                        "geojson": {"type": "object", "description": "Optional boundary polygon to constrain extraction."},
-                        "lat": {"type": "number", "description": "Latitude for circular bounding region."},
-                        "lng": {"type": "number", "description": "Longitude for circular bounding region."},
+                        "target_class": {"type": "string", "description": "Class name to extract (e.g. 'Built Area', 'Trees', 'Water', 'Crops', 'Grass'). Default 'Built Area'."},
+                        "place_name": {"type": "string", "description": "City or region name (e.g. 'Chandigarh', 'Mohali', 'Panchkula') to automatically clip built-up area to its official administrative boundary."},
+                        "geojson": {"type": "object", "description": "Optional explicit boundary polygon to constrain extraction."},
+                        "color": {"type": "string", "description": "Color for the extracted polygon layer (e.g. 'blue', '#2563EB', 'yellow', 'red', 'green')."},
+                        "lat": {"type": "number", "description": "Latitude for circular bounding region (if place_name or geojson is not provided)."},
+                        "lng": {"type": "number", "description": "Longitude for circular bounding region (if place_name or geojson is not provided)."},
                         "radius_km": {"type": "number", "description": "Radius in km for bounding region (default 5 km)."},
                         "year": {"type": "integer", "description": "Year to analyze (default 2023)."},
                     },
@@ -1037,6 +1043,8 @@ class GEEServer:
     async def _extract_land_use_polygons(self, args: dict) -> dict:
         target_input = str(args.get("target_class", "Built Area")).strip().lower()
         geojson_input = args.get("geojson")
+        place_name = (args.get("place_name") or args.get("city") or args.get("location") or args.get("name") or "").strip()
+        custom_color = args.get("color")
         lat = args.get("lat")
         lng = args.get("lng")
         radius_km = float(args.get("radius_km") or 5.0)
@@ -1068,7 +1076,39 @@ class GEEServer:
                     break
 
         class_name = dw_display_names[target_idx] if 0 <= target_idx < len(dw_display_names) else "Built Area"
-        class_color = dw_colors[target_idx] if 0 <= target_idx < len(dw_colors) else "#C4281B"
+        
+        # Color mapping support (e.g. blue, red, yellow, or hex)
+        COLOR_MAP = {
+            "blue": "#2563EB",
+            "darkblue": "#1E40AF",
+            "lightblue": "#60A5FA",
+            "red": "#DC2626",
+            "yellow": "#EAB308",
+            "green": "#16A34A",
+            "orange": "#F97316",
+            "purple": "#9333EA",
+            "cyan": "#06B6D4",
+        }
+        if custom_color:
+            class_color = COLOR_MAP.get(str(custom_color).lower().strip(), str(custom_color))
+        else:
+            class_color = dw_colors[target_idx] if 0 <= target_idx < len(dw_colors) else "#C4281B"
+
+        # If place_name is provided and geojson_input is not, auto-resolve boundary
+        if not geojson_input and place_name:
+            try:
+                from tools.spatial_registry import spatial_registry
+                poly = spatial_registry.get_polygon(place_name)
+                if poly and poly.geometry:
+                    geojson_input = poly.geometry
+                else:
+                    from mcp_servers.osm_server import OSMServer
+                    osm = OSMServer()
+                    b_res = await osm._fetch_boundary({"name": place_name})
+                    if isinstance(b_res, dict) and "geojson" in b_res:
+                        geojson_input = b_res["geojson"]
+            except Exception as b_err:
+                logger.warning(f"Could not auto-fetch boundary for '{place_name}': {b_err}")
 
         ok, err = await _ensure_gee(workspace)
         if not ok:
@@ -1079,7 +1119,15 @@ class GEEServer:
 
             def run_vectorize():
                 if geojson_input:
-                    ee_geom = ee.Geometry(geojson_input.get("geometry", geojson_input))
+                    geom_data = geojson_input
+                    if isinstance(geom_data, dict):
+                        if geom_data.get("type") == "FeatureCollection" and geom_data.get("features"):
+                            geom_data = geom_data["features"][0].get("geometry", geom_data)
+                        elif geom_data.get("type") == "Feature" and "geometry" in geom_data:
+                            geom_data = geom_data["geometry"]
+                        elif "geometry" in geom_data and isinstance(geom_data["geometry"], dict):
+                            geom_data = geom_data["geometry"]
+                    ee_geom = ee.Geometry(geom_data)
                 elif lat is not None and lng is not None:
                     ee_geom = ee.Geometry.Point([float(lng), float(lat)]).buffer(radius_km * 1000.0)
                 else:
@@ -1111,11 +1159,12 @@ class GEEServer:
             fc_data = await loop.run_in_executor(None, run_vectorize)
 
             features = fc_data.get("features", [])
+            display_title = f"{class_name} - {place_name}" if place_name else f"{class_name} Polygons ({year})"
             for feat in features:
                 feat.setdefault("properties", {})
                 feat["properties"]["land_cover_class"] = class_name
                 feat["properties"]["year"] = year
-                feat["properties"]["layer_name"] = f"{class_name} Polygons ({year})"
+                feat["properties"]["layer_name"] = display_title
                 feat["properties"]["source_tool"] = "extract_land_use_polygons"
                 feat["properties"]["description"] = f"Satellite land cover vector polygon for {class_name} ({year})"
                 feat["properties"]["fillColor"] = class_color
@@ -1128,7 +1177,8 @@ class GEEServer:
             }
 
             clean_name = class_name.lower().replace(" ", "_")
-            out_filename = f"land_use_{clean_name}_{year}.geojson"
+            place_slug = f"_{place_name.lower().replace(' ', '_')}" if place_name else ""
+            out_filename = f"land_use_{clean_name}{place_slug}_{year}.geojson"
 
             if workspace:
                 out_path = Path(workspace) / out_filename
@@ -1139,18 +1189,26 @@ class GEEServer:
                     await ws.send_text(json.dumps({
                         "type": "action",
                         "action": "add_geojson_file",
-                        "payload": {"path": str(out_path), "name": f"{class_name} Polygons ({year})"}
+                        "payload": {"path": str(out_path), "name": display_title, "color": class_color}
                     }))
+            elif ws:
+                await ws.send_text(json.dumps({
+                    "type": "action",
+                    "action": "add_geojson",
+                    "payload": {"geojson": output_geojson, "name": display_title, "color": class_color}
+                }))
 
             return {
                 "status": "success",
                 "target_class": class_name,
+                "place_name": place_name or None,
                 "year": year,
+                "color": class_color,
                 "polygons_extracted": len(features),
-                "geojson_file": out_filename,
+                "geojson": output_geojson,
+                "geojson_file": out_filename if workspace else None,
                 "message": (
-                    f"Extracted {len(features)} {class_name} vector polygons for {year}. "
-                    f"Saved to {out_filename} and loaded on map."
+                    f"Extracted {len(features)} {class_name} vector polygons for {place_name or year} in {class_color} and loaded on map."
                 ),
             }
 

@@ -15,7 +15,10 @@ from __future__ import annotations
 
 import math
 import sqlite3
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from llm.base import ToolDeclaration
 from tools import cache, http as http_client
@@ -204,8 +207,12 @@ class UtilityServer:
             ToolDeclaration(
                 name="edit_artifact",
                 description=(
-                    "Edit or update a SPECIFIC existing document previously created in the workspace. "
-                    "ONLY use this tool if the user explicitly asks to edit, update, modify, or append to an EXISTING report by title or ID (e.g., 'edit document ID 2', 'update the transit section in the report'). "
+                    "Edit or update a SPECIFIC existing text document (Word .docx, PDF, or Markdown) previously created in the workspace. "
+                    "Do NOT use edit_artifact on image/figure artifacts (JPG/PNG). If unsure of the target document ID, call list_artifacts first. "
+                    "To insert an existing saved image artifact (e.g. artifacts_store/37.jpg), pass `image_artifact_id` (e.g. 37). "
+                    "Do NOT pass include_map_figure=true when inserting an existing saved image artifact. "
+                    "ONLY pass include_map_figure=true when generating a NEW figure snapshot from the active map view. "
+                    "ONLY use this tool if the user explicitly asks to edit, update, modify, or append to an EXISTING report document by title or ID (e.g., 'edit document ID 2', 'update section in report'). "
                     "Never use edit_artifact when the user is asking to create or generate a new report."
                 ),
                 parameters={
@@ -213,7 +220,7 @@ class UtilityServer:
                     "properties": {
                         "id": {
                             "type": "number",
-                            "description": "The exact artifact ID to edit (required when editing by ID).",
+                            "description": "The exact document artifact ID (Word .docx, PDF, or Markdown) to edit.",
                         },
                         "title": {
                             "type": "string",
@@ -232,9 +239,13 @@ class UtilityServer:
                             "type": "string",
                             "description": "Text, markdown paragraphs, analysis findings, or description to insert.",
                         },
+                        "image_artifact_id": {
+                            "type": "number",
+                            "description": "ID of an existing saved image artifact (e.g., 37 for artifacts_store/37.jpg) to embed into the document section. Use this when the user asks to attach/insert a specific existing image artifact.",
+                        },
                         "include_map_figure": {
                             "type": "boolean",
-                            "description": "If true, embeds a map figure snapshot reference under the heading.",
+                            "description": "If true, generates and embeds a NEW map figure snapshot reference from the active map view under the heading. Do NOT use if image_artifact_id is provided.",
                         },
                         "figure_caption": {
                             "type": "string",
@@ -663,6 +674,7 @@ class UtilityServer:
             section_heading = args.get("section_heading")
             action = args.get("action", "insert_under_heading")
             new_text = args.get("content", "").strip()
+            image_artifact_id = args.get("image_artifact_id")
             include_map_figure = args.get("include_map_figure", False)
             figure_caption = args.get("figure_caption", "")
             target_format = args.get("format")
@@ -675,10 +687,24 @@ class UtilityServer:
                 if art_id:
                     target_row = read_artifact(int(art_id), workspace)
                 elif title:
+                    clean_title = title.strip()
+                    # 1. Direct LIKE match
                     r = conn.execute(
                         "SELECT * FROM artifacts WHERE title LIKE ? ORDER BY updated_at DESC LIMIT 1",
-                        (f"%{title}%",)
+                        (f"%{clean_title}%",)
                     ).fetchone()
+                    
+                    # 2. If not found, try space-insensitive / fuzzy match (e.g. 'Chandigarhreport' matching 'Chandigarh report')
+                    if not r:
+                        compact_target = re.sub(r'[^a-zA-Z0-9]', '', clean_title.lower())
+                        all_rows = conn.execute("SELECT * FROM artifacts ORDER BY updated_at DESC").fetchall()
+                        for row in all_rows:
+                            row_dict = dict(row)
+                            row_title_compact = re.sub(r'[^a-zA-Z0-9]', '', (row_dict.get("title") or "").lower())
+                            if compact_target and row_title_compact and (compact_target in row_title_compact or row_title_compact in compact_target):
+                                r = row
+                                break
+
                     if r:
                         target_row = dict(r)
                 if not target_row:
@@ -689,15 +715,105 @@ class UtilityServer:
             doc_title = title or target_row["title"]
             doc_format = (target_format or target_row["format"]).lower()
             doc_type = target_row["artifact_type"]
+
+            # Validate target artifact format: images and non-document formats cannot be edited
+            non_editable = {"jpg", "jpeg", "png", "webp", "gif", "image"}
+            if doc_format in non_editable:
+                return {
+                    "error": (
+                        f"Artifact ID {target_row['id']} ('{doc_title}') is an image artifact ({doc_format.upper()}) "
+                        "and cannot be edited as a document. Please specify the ID or title of a Word (.docx), PDF, or Markdown document. "
+                        "You can call list_artifacts to find the exact document ID."
+                    )
+                }
+
             existing_content = target_row.get("content") or f"# {doc_title}\n\n"
 
             # Prepare block to insert
             block_parts = []
-            if include_map_figure or figure_caption:
-                cap = figure_caption or f"Map Snapshot for {doc_title}"
-                block_parts.append(f"![Figure: {cap}](map_snapshot)\n*{cap}*\n")
+            image_requested = bool(image_artifact_id or include_map_figure or figure_caption or "(map_snapshot)" in new_text or "artifacts_store/" in new_text or "artifacts_store\\" in new_text)
+            real_img_path: str | None = None
+
+            # 1. Check if image_artifact_id was explicitly supplied
+            if image_artifact_id is not None:
+                try:
+                    img_art = read_artifact(int(image_artifact_id), workspace)
+                    if not img_art:
+                        return {"error": f"Image artifact ID {image_artifact_id} not found in workspace."}
+                    img_fmt = (img_art.get("format") or "").lower()
+                    if img_fmt not in non_editable:
+                        return {"error": f"Artifact ID {image_artifact_id} ('{img_art.get('title')}') is format '{img_fmt}', not an image artifact."}
+                    if img_art.get("file_path"):
+                        real_img_path = str(img_art["file_path"]).replace("\\", "/")
+                    else:
+                        return {"error": f"Image artifact ID {image_artifact_id} has no valid file path."}
+                except Exception as ex:
+                    return {"error": f"Failed to resolve image artifact ID {image_artifact_id}: {ex}"}
+
+            # 2. Check if an existing image artifact path/reference was explicitly provided in text/caption/args
+            if not real_img_path:
+                existing_ref_match = re.search(r'artifacts_store[/\\\\](\d+|\w+)\.(jpg|jpeg|png|webp)', new_text + " " + figure_caption, re.IGNORECASE)
+                if existing_ref_match:
+                    ref_path = existing_ref_match.group(0)
+                    from tools.export_engine import _resolve_image_bytes
+                    if _resolve_image_bytes(ref_path, workspace):
+                        real_img_path = ref_path.replace("\\", "/")
+
+            if image_requested:
+                cap = figure_caption or f"Map Figure for {doc_title}"
+
+                # 3. If no existing valid image path was found, attempt auto-export map view
+                if not real_img_path:
+                    # Determine active map context with strict priority:
+                    # 1. Explicit map_context passed in args (if non-empty)
+                    # 2. self._last_map_context (if non-empty)
+                    # 3. Fail cleanly if neither exists
+                    active_map_ctx = map_context if (map_context and isinstance(map_context, dict) and len(map_context) > 0) else None
+                    if not active_map_ctx:
+                        last_ctx = getattr(self, "_last_map_context", {})
+                        if last_ctx and isinstance(last_ctx, dict) and len(last_ctx) > 0:
+                            active_map_ctx = last_ctx
+
+                    if active_map_ctx:
+                        try:
+                            from tools.export_engine import export_artifact_multi_format
+                            file_bytes, filename, mime = export_artifact_multi_format(
+                                title=cap,
+                                content=f"# {cap}\n\nMap Figure Snapshot",
+                                format_target="jpg",
+                                workspace=workspace,
+                            )
+                            art_res = save_artifact(
+                                title=cap,
+                                artifact_type="analysis",
+                                format="jpg",
+                                content="",
+                                file_bytes=file_bytes,
+                                file_ext="jpg",
+                                workspace=workspace,
+                            )
+                            if isinstance(art_res, dict) and art_res.get("file_path"):
+                                real_img_path = str(art_res["file_path"])
+                        except Exception as e:
+                            logger.warning(f"Auto map export during edit_artifact failed: {e}")
+
+                # 4. If image generation was requested but failed / produced no valid path, fail cleanly
+                if not real_img_path:
+                    return {
+                        "error": (
+                            f"Map image export failed for document edit '{doc_title}'. "
+                            "No valid map context or active map view was available to capture the map figure. "
+                            "Please ensure an active map view is loaded or execute export_map_jpeg first."
+                        )
+                    }
+
+                block_parts.append(f"![Figure: {cap}]({real_img_path})\n*{cap}*\n")
+
             if new_text:
-                block_parts.append(new_text)
+                cleaned_text = new_text
+                if real_img_path and "(map_snapshot)" in cleaned_text:
+                    cleaned_text = cleaned_text.replace("(map_snapshot)", f"({real_img_path})")
+                block_parts.append(cleaned_text)
 
             insertion_block = "\n\n".join(block_parts)
 

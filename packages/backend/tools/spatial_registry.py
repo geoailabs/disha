@@ -117,7 +117,7 @@ class SpatialRegistry:
         if norm_name:
             for entry in self._polygons.values():
                 entry_norm = _normalize_name(entry.name)
-                if entry_norm and (norm_name == entry_norm or norm_name in entry_norm or entry_norm in norm_name):
+                if entry_norm and norm_name == entry_norm:
                     iou = self.compute_iou(geometry, entry.geometry) if geometry else 0.0
                     return entry, "name_match", iou
 
