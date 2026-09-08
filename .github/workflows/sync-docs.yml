@@ -1,0 +1,43 @@
+name: Sync Documentation
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'README.md'
+      - 'ARCHITECTURE.md'
+      - 'AGENTS.md'
+      - 'FEATURE_IMPLEMENTATION_GUIDE.md'
+      - 'scripts/sync-docs.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run Documentation Sync
+        run: node scripts/sync-docs.mjs
+
+      - name: Commit & Push if documentation changed
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/docs.html
+          if git diff --staged --quiet; then
+            echo "No changes in documentation detected."
+          else
+            git commit -m "docs: auto-sync documentation from repository markdown [skip ci]"
+            git push origin main
+          fi

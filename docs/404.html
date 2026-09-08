@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>404 — Coordinate Not Found · Disha</title>
+  <meta name="description" content="The page or coordinate you requested does not exist in Disha's spatial registry." />
+  
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  
+  <!-- Stylesheets -->
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body data-page="404">
+
+  <!-- Shared Header Mount -->
+  <div id="site-header"></div>
+
+  <!-- 404 Hero Section -->
+  <main class="wrap" style="min-height: calc(100vh - 350px); display: flex; align-items: center; justify-content: center; padding: 80px 20px;">
+    <div style="text-align: center; max-width: 640px;">
+      <div style="display: inline-flex; align-items: center; justify-content: center; width: 84px; height: 84px; border-radius: 20px; background: var(--bg-panel); border: 1px solid var(--border-glow); box-shadow: var(--shadow-glow); margin-bottom: 24px;">
+        <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+      </div>
+      
+      <div class="eyebrow" style="color: var(--accent-cyan); margin-bottom: 8px;">Spatial Index Miss · HTTP 404</div>
+      <h1 style="font-size: clamp(2.4rem, 5vw, 3.6rem); margin-bottom: 16px; font-weight: 800;">Off the Map</h1>
+      <p style="color: var(--text-secondary); font-size: 1.15rem; line-height: 1.6; margin-bottom: 32px;">
+        The coordinate or document you requested does not exist in Disha’s spatial registry. It may have moved or was never mapped.
+      </p>
+
+      <div style="display: flex; gap: 14px; justify-content: center; flex-wrap: wrap;">
+        <a href="index.html" class="btn btn-primary btn-lg">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+          Return to Home
+        </a>
+        <a href="docs.html" class="btn btn-secondary btn-lg">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+          Browse Documentation
+        </a>
+      </div>
+    </div>
+  </main>
+
+  <!-- Shared Footer Mount -->
+  <div id="site-footer"></div>
+
+  <!-- Scripts -->
+  <script src="js/components.js"></script>
+  <script src="js/logos.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

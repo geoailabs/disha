@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Disha — Open-Source Desktop GIS with Conversational AI</title>
+  <meta name="description" content="Disha is an open-source desktop GIS application that embeds a conversational AI agent directly into a live map. Built for urban planners, geospatial researchers, and GIS analysts." />
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  
+  <!-- Stylesheets -->
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body data-page="home">
+
+  <!-- Shared Header Mount -->
+  <div id="site-header"></div>
+  <!-- Hero Section with Interactive Prompt Simulator -->
+  <section class="hero-section">
+    <div class="wrap">
+      <div class="hero-content">
+        <div class="eyebrow">Next-Generation Open-Source Desktop GIS</div>
+        <h1 class="hero-title">Talk to your <span class="hero-gradient-text">map.</span></h1>
+        <p class="hero-description">
+          Disha embeds an autonomous conversational AI agent directly onto a live geospatial map. Ask for data, run geodesic spatial analysis, generate zoning scenarios, and produce rich planning reports in natural language.
+        </p>
+
+        <div class="hero-actions">
+          <a href="#download" class="btn btn-primary btn-lg">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            Download v0.3.0 (Mac & Windows)
+          </a>
+          <a href="https://github.com/geoailabs/disha" target="_blank" rel="noopener" class="btn btn-secondary btn-lg">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+            Star on GitHub
+          </a>
+        </div>
+
+        <div class="hero-specs">
+          <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="vertical-align:-2px; margin-right:4px;"><polyline points="20 6 9 17 4 12"></polyline></svg>100% Free & Open Source</span>
+          <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="vertical-align:-2px; margin-right:4px;"><polyline points="20 6 9 17 4 12"></polyline></svg>GDAL-free Shapely & pyproj Engine</span>
+          <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="vertical-align:-2px; margin-right:4px;"><polyline points="20 6 9 17 4 12"></polyline></svg>Local Workspace Isolation</span>
+        </div>
+
+        <!-- Interactive Prompt Simulator -->
+        <div class="prompt-simulator">
+          <div class="simulator-topbar">
+            <div class="window-dots">
+              <span class="window-dot red"></span>
+              <span class="window-dot yellow"></span>
+              <span class="window-dot green"></span>
+            </div>
+            <div class="simulator-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+              <span>disha-agent · live workspace preview</span>
+            </div>
+            <div class="badge badge-emerald" style="font-size:0.7rem;">Active Agent</div>
+          </div>
+
+          <div class="simulator-body">
+            <div class="sim-message-user" id="sim-user-text">
+              Buffer this flood zone polygon by 500 meters and clip the roads layer to it
+            </div>
+            <div class="sim-message-agent">
+              <div class="tool-execution-pill" id="sim-tool-badge">
+                gis_buffer → gis_clip
+              </div>
+              <div class="agent-bubble" id="sim-agent-text">
+                Buffered the selected flood risk polygon by 500.0m on WGS84 geodesic ellipsoid and clipped the <code>transportation_roads</code> layer. 41 road segments intersect the hazard perimeter. Created new layer: <span class="mono">roads_flood_hazard_500m</span>.
+              </div>
+            </div>
+          </div>
+
+          <div class="sim-presets-bar">
+            <span style="font-size:0.75rem; color:var(--text-muted); font-family:var(--font-mono); margin-right:4px;">Try prompt:</span>
+            <button class="sim-preset-btn active" data-preset="buffer">Buffer & Clip</button>
+            <button class="sim-preset-btn" data-preset="overture">Overture DuckDB</button>
+            <button class="sim-preset-btn" data-preset="traffic">Traffic Assignment</button>
+            <button class="sim-preset-btn" data-preset="zoning">TOD Zoning</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section: What Disha Is (Architecture & Philosophy) -->
+  <section id="about">
+    <div class="wrap">
+      <div class="compare-grid">
+        <div>
+          <div class="eyebrow">A True GIS Agent</div>
+          <h2 class="section-title">An autonomous spatial agent, not a chatbot wrapper</h2>
+          <p style="color:var(--text-secondary); margin-bottom:16px; font-size:1.02rem;">
+            Traditional GIS requires memorizing nested menus, obscure tool dialogs, and manual geometry conversions. Disha replaces that friction with an agentic engine equipped with real, executable geospatial tools.
+          </p>
+          <p style="color:var(--text-secondary); margin-bottom:24px; font-size:1.02rem;">
+            Every operation runs real server-side Python math: geodesic ellipsoidal buffers via <strong>Shapely + pyproj</strong>, DuckDB parquet querying over Overture Maps, OpenStreetMap Overpass extraction, and traffic bottleneck assignment algorithms.
+          </p>
+          <div style="display:flex; gap:12px; flex-wrap:wrap;">
+            <a href="docs.html" class="btn btn-secondary">Explore Tool Architecture →</a>
+            <a href="changelog.html" class="btn btn-ghost">View Visual Changelog</a>
+          </div>
+        </div>
+
+        <div class="feature-table-card">
+          <div class="feature-table-header">Disha Technical Specification</div>
+          <div class="feature-row">
+            <span class="feature-row-label">FRONTEND UI</span>
+            <span class="feature-row-val">Electron · React · MapLibre GL</span>
+          </div>
+          <div class="feature-row">
+            <span class="feature-row-label">SPATIAL ENGINE</span>
+            <span class="feature-row-val">GDAL-free (Shapely + pyproj + DuckDB)</span>
+          </div>
+          <div class="feature-row">
+            <span class="feature-row-label">BACKEND API</span>
+            <span class="feature-row-val">FastAPI · Python 3.10+ · WebSockets</span>
+          </div>
+          <div class="feature-row">
+            <span class="feature-row-label">SUPPORTED FORMATS</span>
+            <span class="feature-row-val">GeoJSON · Shapefile · GPKG · KML · GPX · CSV</span>
+          </div>
+          <div class="feature-row">
+            <span class="feature-row-label">AI TOOL CALLING</span>
+            <span class="feature-row-val">14 tool categories · Streaming reasoning</span>
+          </div>
+          <div class="feature-row">
+            <span class="feature-row-label">REFERENCE CORPUS</span>
+            <span class="feature-row-val">Chandigarh Comprehensive Mobility Plan</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section: 14 Feature Categories Catalog -->
+  <section id="features">
+    <div class="wrap">
+      <div class="section-header">
+        <div class="eyebrow">Audited Capabilities</div>
+        <h2 class="section-title">14 Feature Categories for Urban & Spatial Analysis</h2>
+        <p class="section-subtitle">
+          Every tool in Disha maps to verified, tested Python and React source code. Explore the complete capability matrix below.
+        </p>
+      </div>
+
+      <div class="features-grid">
+        <!-- 01 -->
+        <div class="feature-card">
+          <div class="feature-card-top">
+            <span class="feature-num">01</span>
+            <span class="feature-card-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+            </span>
+          </div>
+          <h3>AI Chat & Agentic Core</h3>
+          <p>Multi-turn streaming conversational agent with interrupt/cancel, tool execution reasoning, right-click map context queries, and attachment parsing.</p>
+          <div class="feature-card-tags">
+            <span class="feature-tag">Tool Calling</span>
+            <span class="feature-tag">Streaming</span>
+            <span class="feature-tag">Context Aware</span>
+          </div>
+        </div>
+
+        <!-- 02 -->
+        <div class="feature-card">
+          <div class="feature-card-top">
+            <span class="feature-num">02</span>
+            <span class="feature-card-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon><line x1="8" y1="2" x2="8" y2="18"></line><line x1="16" y1="6" x2="16" y2="22"></line></svg>
+            </span>
+          </div>
+          <h3>Map Navigation & Drawing</h3>
+          <p>Fly-to bounding boxes, geocoding search, manual polygon/line drawing with undo/redo, OSRM distance measurement, and 7 switchable vector basemaps.</p>
+          <div class="feature-card-tags">
+            <span class="feature-tag">MapLibre GL</span>
+            <span class="feature-tag">Fly-to</span>
+            <span class="feature-tag">OSRM</span>
+          </div>
+        </div>
+
+        <!-- 03 -->
+        <div class="feature-card">
+          <div class="feature-card-top">
+            <span class="feature-num">03</span>
+            <span class="feature-card-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a4.5 4.5 0 0 0 0 9 4.5 4.5 0 0 1 0 9 10 10 0 0 0 0-18z"></path></svg>
+            </span>
+          </div>
+          <h3>Symbology, Labels & Legends</h3>
+          <p>Categorized and graduated data-driven styling with color ramps, dynamic on-map text labeling, interactive collapsible legends, and hover inspection cards.</p>
+          <div class="feature-card-tags">
+            <span class="feature-tag">Graduated Ramps</span>
+            <span class="feature-tag">Dynamic Legend</span>
+          </div>
+        </div>
+
+        <!-- 04 -->
+        <div class="feature-card">
+          <div class="feature-card-top">
+            <span class="feature-num">04</span>
+            <span class="feature-card-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+            </span>
+          </div>
+          <h3>Data Import / Export Hub</h3>
+          <p>Shapefile, GeoPackage, KML/KMZ, GPX, and CSV ingestion with auto coordinate detection. Per-layer GeoJSON export, clip-to-view extent, and high-res PNG/PDF map layouts.</p>
+          <div class="feature-card-tags">
+            <span class="feature-tag">Shapefile</span>
+            <span class="feature-tag">GPKG</span>
+            <span class="feature-tag">PDF Layouts</span>
+          </div>
+        </div>
+
+        <!-- 05 -->
+        <div class="feature-card">
+          <div class="feature-card-top">
+            <span class="feature-num">05</span>
+            <span class="feature-card-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+            </span>
+          </div>
+          <h3>Reusable Artifacts Engine</h3>
+          <p>Export notes, tables, metrics, and geometry directly into reusable artifacts. Export cleanly to Word, PDF, Markdown, or CSV. The agent re-opens past work seamlessly.</p>
+          <div class="feature-card-tags">
+            <span class="feature-tag">Markdown</span>
+            <span class="feature-tag">Docx Export</span>
+            <span class="feature-tag">Artifact Memory</span>
+          </div>
+        </div>
+
+        <!-- 06 -->
+        <div class="feature-card">
+          <div class="feature-card-top">
+            <span class="feature-num">06</span>
+            <span class="feature-card-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 22L22 2"></path><path d="M2 22h20"></path><path d="M2 22V2"></path></svg>
+            </span>
+          </div>
+          <h3>13 Geodesic GIS Tools</h3>
+          <p>Buffer, convex hull, centroid, area calculation, union, intersection, difference, clip, dissolve, nearest neighbor, and spatial join computed on WGS84 ellipsoid.</p>
+          <div class="feature-card-tags">
+            <span class="feature-tag">Shapely</span>
+            <span class="feature-tag">pyproj</span>
+            <span class="feature-tag">Geodesic</span>
+          </div>
+        </div>
+
+        <!-- 07 -->
+        <div class="feature-card">
+          <div class="feature-card-top">
+            <span class="feature-num">07</span>
+            <span class="feature-card-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+            </span>
+          </div>
+          <h3>9 Live Data Connectors</h3>
+          <p>OpenStreetMap Overpass, Overture Maps S3 Parquet via DuckDB, Google Earth Engine rasters, WorldPop demographics, India DataMeet, and GTFS feeds.</p>
+          <div class="feature-card-tags">
+            <span class="feature-tag">DuckDB</span>
+            <span class="feature-tag">Overture</span>
+            <span class="feature-tag">GEE</span>
+          </div>
+        </div>
+
+        <!-- 08 -->
+        <div class="feature-card">
+          <div class="feature-card-top">
+            <span class="feature-num">08</span>
+            <span class="feature-card-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="2" width="16" height="20" rx="2" ry="2"></rect><line x1="9" y1="22" x2="9" y2="2"></line><line x1="15" y1="22" x2="15" y2="2"></line></svg>
+            </span>
+          </div>
+          <h3>Zoning & Scenario Planning</h3>
+          <p>Zone overlap detection, parcel area breakdowns, and AI scenario generation (TOD, Compact Growth, Green Corridors) scored against real OSM accessibility indices.</p>
+          <div class="feature-card-tags">
+            <span class="feature-tag">Scenario Scoring</span>
+            <span class="feature-tag">Zoning Audit</span>
+          </div>
+        </div>
+
+        <!-- 09 -->
+        <div class="feature-card">
+          <div class="feature-card-top">
+            <span class="feature-num">09</span>
+            <span class="feature-card-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+            </span>
+          </div>
+          <h3>Vision Document Mode</h3>
+          <p>Drop in masterplan PDFs or scanned maps: vision-driven automated and manual georeferencing, OCR extraction, and raster feature boundary digitization.</p>
+          <div class="feature-card-tags">
+            <span class="feature-tag">Georeferencing</span>
+            <span class="feature-tag">Masterplans</span>
+          </div>
+        </div>
+
+        <!-- 10 -->
+        <div class="feature-card">
+          <div class="feature-card-top">
+            <span class="feature-num">10</span>
+            <span class="feature-card-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="3"></circle><line x1="12" y1="8" x2="12" y2="16"></line><path d="M9 20l3-4 3 4"></path><path d="M6 11l6-2 6 2"></path></svg>
+            </span>
+          </div>
+          <h3>Street View & Road Gallery</h3>
+          <p>Integrated 360° panorama viewer, coverage street overlay, save-to-artifact inspection shots, and corridor-level road asset review gallery.</p>
+          <div class="feature-card-tags">
+            <span class="feature-tag">360 Panoramas</span>
+            <span class="feature-tag">Asset Inspection</span>
+          </div>
+        </div>
+
+        <!-- 11 -->
+        <div class="feature-card">
+          <div class="feature-card-top">
+            <span class="feature-num">11</span>
+            <span class="feature-card-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+            </span>
+          </div>
+          <h3>Deep Research Reports</h3>
+          <p>Long-form multi-section spatial research reports with live streaming generation, compiling demographic, environmental, and mobility insights.</p>
+          <div class="feature-card-tags">
+            <span class="feature-tag">Deep Research</span>
+            <span class="feature-tag">Synthesis</span>
+          </div>
+        </div>
+
+        <!-- 12 -->
+        <div class="feature-card">
+          <div class="feature-card-top">
+            <span class="feature-num">12</span>
+            <span class="feature-card-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
+            </span>
+          </div>
+          <h3>Spatial Bookmarks & Views</h3>
+          <p>Save and recall exact map extents, layer visibility states, symbology configurations, and study bounding boxes with one click.</p>
+          <div class="feature-card-tags">
+            <span class="feature-tag">Bookmarks</span>
+            <span class="feature-tag">Workspace State</span>
+          </div>
+        </div>
+
+        <!-- 13 -->
+        <div class="feature-card">
+          <div class="feature-card-top">
+            <span class="feature-num">13</span>
+            <span class="feature-card-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+            </span>
+          </div>
+          <h3>Workspace & File Tree</h3>
+          <p>Local folder-based project isolation, automatic last-workspace restoration, non-destructive file tree browser, and zero cloud lock-in.</p>
+          <div class="feature-card-tags">
+            <span class="feature-tag">Local First</span>
+            <span class="feature-tag">No Lock-in</span>
+          </div>
+        </div>
+
+        <!-- 14 -->
+        <div class="feature-card">
+          <div class="feature-card-top">
+            <span class="feature-num">14</span>
+            <span class="feature-card-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            </span>
+          </div>
+          <h3>Settings & Two-Tier Cache</h3>
+          <p>Environment API key management, local SQLite/disk cache for remote geospatial queries, and strict rate-limiting respecting OpenStreetMap & Nominatim policies.</p>
+          <div class="feature-card-tags">
+            <span class="feature-tag">Rate Limiting</span>
+            <span class="feature-tag">Caching</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section: Deep Dive Showcase -->
+  <section id="deep-dive" style="background:var(--bg-secondary);">
+    <div class="wrap">
+      <div class="section-header">
+        <div class="eyebrow">Under The Hood</div>
+        <h2 class="section-title">Built for Serious Geospatial Engineering</h2>
+        <p class="section-subtitle">
+          How Disha handles massive geospatial datasets and transportation math without heavy C++ runtime dependencies.
+        </p>
+      </div>
+
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:24px;">
+        <div style="background:var(--bg-panel); border:1px solid var(--border-subtle); border-radius:var(--radius-md); padding:28px;">
+          <span class="badge badge-cyan" style="margin-bottom:12px;">S3 Parquet + DuckDB</span>
+          <h3 style="margin-bottom:10px; font-size:1.25rem;">Overture Maps Direct Querying</h3>
+          <p style="color:var(--text-secondary); font-size:0.92rem; line-height:1.6;">
+            Queries Overture Places, Buildings, and Transportation layers directly against AWS S3 Parquet releases via embedded DuckDB spatial extensions. Zero local database setup required.
+          </p>
+        </div>
+
+        <div style="background:var(--bg-panel); border:1px solid var(--border-subtle); border-radius:var(--radius-md); padding:28px;">
+          <span class="badge badge-emerald" style="margin-bottom:12px;">Transportation Math</span>
+          <h3 style="margin-bottom:10px; font-size:1.25rem;">Traffic Assignment & OD Matrices</h3>
+          <p style="color:var(--text-secondary); font-size:0.92rem; line-height:1.6;">
+            Constructs topologically connected OSM road graphs respecting turn restrictions, runs Dijkstra/A* pathing, and assigns origin-destination matrices to identify network bottleneck links.
+          </p>
+        </div>
+
+        <div style="background:var(--bg-panel); border:1px solid var(--border-subtle); border-radius:var(--radius-md); padding:28px;">
+          <span class="badge badge-violet" style="margin-bottom:12px;">GDAL-Free Architecture</span>
+          <h3 style="margin-bottom:10px; font-size:1.25rem;">Lightweight Desktop Distribution</h3>
+          <p style="color:var(--text-secondary); font-size:0.92rem; line-height:1.6;">
+            By replacing heavyweight GDAL binaries with pure Shapely, pyproj, and Fiona/GeoPandas wheels, Disha packages cleanly into native macOS and Windows desktop installers.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section: Download Hub -->
+  <section id="download">
+    <div class="wrap">
+      <div class="download-band">
+        <div class="eyebrow">Free · Open Source · Native Builds</div>
+        <h2 style="font-size:clamp(2.2rem, 4vw, 3.2rem); margin-bottom:12px;">Get Disha Desktop</h2>
+        <p style="color:var(--text-secondary); max-width:600px; margin:0 auto 28px; font-size:1.05rem;">
+          Download official release binaries for macOS and Windows, or clone the repository to run from source.
+        </p>
+
+        <div class="download-cards-row">
+          <a href="https://github.com/geoailabs/disha/releases/latest" target="_blank" rel="noopener" class="download-os-card">
+            <div class="os-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.97 6.37c.62-.75 1.04-1.8 1.01-2.85-.96.04-2.12.64-2.8 1.44-.57.66-.99 1.72-.94 2.76 1.07.08 2.11-.6 2.73-1.35z"/></svg>
+            </div>
+            <div class="os-name">macOS</div>
+            <div class="os-detail">Apple Silicon (M1/M2/M3) & Intel .dmg</div>
+            <span class="btn btn-primary btn-sm" style="margin-top:8px;">Download .dmg</span>
+          </a>
+
+          <a href="https://github.com/geoailabs/disha/releases/latest" target="_blank" rel="noopener" class="download-os-card">
+            <div class="os-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
+            </div>
+            <div class="os-name">Windows</div>
+            <div class="os-detail">Windows 10 / 11 64-bit .exe Installer</div>
+            <span class="btn btn-primary btn-sm" style="margin-top:8px;">Download .exe</span>
+          </a>
+
+          <a href="docs.html#installation" class="download-os-card">
+            <div class="os-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+            </div>
+            <div class="os-name">Linux / Source</div>
+            <div class="os-detail">Build with Python + Electron from GitHub</div>
+            <span class="btn btn-secondary btn-sm" style="margin-top:8px;">Build Instructions</span>
+          </a>
+        </div>
+
+        <div style="font-family:var(--font-mono); font-size:0.85rem; color:var(--text-muted);">
+          Latest Release: <strong style="color:var(--accent-cyan);">v0.3.0</strong> · Published under Open-Source License · <a href="docs.html" style="color:var(--accent-cyan); text-decoration:underline;">Read System Documentation →</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Shared Footer Mount -->
+  <div id="site-footer"></div>
+
+  <!-- Scripts -->
+  <script src="js/components.js"></script>
+  <script src="js/logos.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
