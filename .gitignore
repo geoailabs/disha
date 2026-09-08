@@ -33,4 +33,5 @@ ee-*.json
 project.json
 chandigarh_plan.pdf
 ee-*.json
-scripts/
+scripts/*
+!scripts/sync-docs.mjs
