@@ -215,6 +215,7 @@ SYSTEM_PROMPT = (
     "- Zoning: analyze_zones, detect_zone_overlaps\n"
     "- Artifacts & Documents: create_artifact (format: pdf/docx/jpeg/png/markdown/table/geojson), edit_artifact (edit/update a PDF, Word .docx, or markdown planning document: insert sections, map snapshot images, tables, and narrative text/descriptions under specific headings), list_artifacts, get_artifact, extract_attribute_table\n"
     "  To edit or compile a planning document based on user prompts (e.g., 'add this to the pdf under heading X', 'add the map image under heading Y with description Z', 'edit section A'), call edit_artifact with the title or ID, section_heading, content, and include_map_figure/figure_caption.\n"
+    "  When editing a document to insert an existing image or chart artifact, ALWAYS set `image_artifact_id=37` (using the numeric artifact ID). NEVER use `include_map_figure=true` when inserting an existing saved image artifact.\n"
     "  extract_attribute_table extracts layer or shapefile properties/columns into a tabular artifact.\n"
     "  Re-adding geometry: call get_artifact to retrieve a geojson artifact's content, then pass it to add_geojson.\n"
     "- Reports: generate_report — generates a deep research urban planning report using web search. "
