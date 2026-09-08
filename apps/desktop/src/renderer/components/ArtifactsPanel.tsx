@@ -148,6 +148,30 @@ export default function ArtifactsPanel({
     handleArtDragEnd()
   }
 
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; art: ArtifactPreview } | null>(null)
+  const [copiedNotification, setCopiedNotification] = useState<string | null>(null)
+
+  // Close context menu on outside click
+  useEffect(() => {
+    const handleClick = () => setContextMenu(null)
+    window.addEventListener('click', handleClick)
+    return () => window.removeEventListener('click', handleClick)
+  }, [])
+
+  const copyToClipboard = (text: string, label: string) => {
+    navigator.clipboard.writeText(text)
+    setCopiedNotification(label)
+    setTimeout(() => setCopiedNotification(null), 2000)
+    setContextMenu(null)
+  }
+
+  const handleItemContextMenu = (e: React.MouseEvent, art: ArtifactPreview) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setContextMenu({ x: e.clientX, y: e.clientY, art })
+  }
+
   const extractBbox = (art: Artifact | null): { west: number; south: number; east: number; north: number } | null => {
     if (!art) return null
     if (art.meta) {
@@ -894,6 +918,7 @@ export default function ArtifactsPanel({
                   key={a.id}
                   className={`artifact-item ${selectedId === a.id ? 'selected' : ''} ${dragOverArtId === a.id ? `drag-over-${dropArtPosition}` : ''}`}
                   onClick={() => handleToggleSelect(a.id)}
+                  onContextMenu={(e) => handleItemContextMenu(e, a)}
                   draggable={true}
                   onDragStart={(e) => handleArtDragStart(a.id, e)}
                   onDragOver={(e) => handleArtDragOver(a.id, e)}
@@ -1012,6 +1037,113 @@ export default function ArtifactsPanel({
               {renderDetail(fullArtifact)}
             </div>
           ) : null}
+        </div>
+      )}
+
+      {/* Context Menu Popup Dialog */}
+      {contextMenu && (
+        <div
+          className="artifact-context-menu"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div
+            className="context-menu-item"
+            onClick={() => {
+              setEditingArtId(contextMenu.art.id)
+              setContextMenu(null)
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 20h9"></path>
+              <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+            </svg>
+            Rename...
+            <span className="context-menu-shortcut">F2</span>
+          </div>
+
+          <div className="context-menu-divider" />
+
+          <div
+            className="context-menu-item"
+            onClick={() => copyToClipboard(contextMenu.art.title, 'Title copied!')}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+            Copy Name / Title
+          </div>
+
+          <div
+            className="context-menu-item"
+            onClick={() => copyToClipboard(String(contextMenu.art.id), 'ID copied!')}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="4" y1="9" x2="20" y2="9"></line>
+              <line x1="4" y1="15" x2="20" y2="15"></line>
+              <line x1="10" y1="3" x2="8" y2="21"></line>
+              <line x1="16" y1="3" x2="14" y2="21"></line>
+            </svg>
+            Copy Artifact ID (e.g. {contextMenu.art.id})
+          </div>
+
+          <div
+            className="context-menu-item"
+            onClick={() => {
+              const ext = contextMenu.art.file_path ? contextMenu.art.file_path.split('.').pop() : (contextMenu.art.format || 'docx')
+              copyToClipboard(`artifacts_store/${contextMenu.art.id}.${ext}`, 'Relative path copied!')
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+            </svg>
+            Copy Relative Path
+            <span className="context-menu-shortcut">Ctrl+Shift+C</span>
+          </div>
+
+          <div
+            className="context-menu-item"
+            onClick={() => {
+              const fullPath = contextMenu.art.file_path || `${workspacePath || ''}/artifacts_store/${contextMenu.art.id}.${contextMenu.art.format || 'docx'}`
+              copyToClipboard(fullPath, 'Full path copied!')
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+            </svg>
+            Copy Path
+            <span className="context-menu-shortcut">Shift+Alt+C</span>
+          </div>
+
+          <div className="context-menu-divider" />
+
+          <div
+            className="context-menu-item danger"
+            onClick={() => {
+              deleteArtifact(contextMenu.art.id)
+              setContextMenu(null)
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+            Delete
+            <span className="context-menu-shortcut">Del</span>
+          </div>
+        </div>
+      )}
+
+      {/* Toast Notification */}
+      {copiedNotification && (
+        <div className="artifact-toast-notification">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+          {copiedNotification}
         </div>
       )}
     </div>

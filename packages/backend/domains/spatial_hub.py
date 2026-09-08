@@ -185,26 +185,6 @@ class SpatialHub(BaseDomainHub):
                 )
                 entry = reg_res["polygon"]
 
-                # If duplicate, focus existing layer without spawning redundant layer
-                if reg_res["is_duplicate"]:
-                    summary = {
-                        "name": entry["name"],
-                        "displayed_on_map": True,
-                        "layer_name": reg_res["layer_name"],
-                        "reused_existing": True,
-                        "match_reason": reg_res["match_reason"],
-                        "area_km2": entry["area_km2"],
-                        "area_hectares": entry["area_hectares"],
-                        "centroid": entry["centroid"],
-                        "bbox": entry["bbox"],
-                        "geometry": entry["geometry"],
-                    }
-                    return ToolResult(
-                        status="success",
-                        data=summary,
-                        map_action={"action": "highlight_features", "payload": {"layer_name": reg_res["layer_name"]}},
-                    )
-
                 summary = {
                     "name": entry["name"],
                     "displayed_on_map": True,

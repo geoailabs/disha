@@ -609,30 +609,39 @@ out skel qt;
                 stem = _extract_name_stem(name)
 
                 if has_explicit_admin_level:
-                    overpass_query = (
-                        f'[out:json][timeout:30];'
-                        f'relation["name"~"^{name}$",i]["admin_level"="{admin_level}"]'
-                        f'["boundary"="administrative"];'
-                        f'out geom;'
+                    # 1. Try Nominatim (fast, typo-tolerant, returns polygons directly)
+                    geojson_feature = await self._nominatim_boundary(
+                        name=name, country_code=country_code, parent=parent
                     )
-                    if country_code:
+                    # 2. Try geoBoundaries if country_code provided
+                    if not geojson_feature and country_code:
                         geojson_feature = await self._geoboundaries_boundary(
                             name=name,
                             country_code=country_code,
                             admin_level=admin_level_int,
                         )
-                        if not geojson_feature:
-                            geojson_feature = await self._nominatim_boundary(
-                                name=name, country_code=country_code, parent=parent,
-                            )
-                        if not geojson_feature:
-                            geojson_feature = await self._overpass_boundary(overpass_query)
-                    else:
+                    # 3. Try Overpass with specified admin_level
+                    if not geojson_feature:
+                        overpass_query = (
+                            f'[out:json][timeout:30];'
+                            f'relation["name"~"^{name}$",i]["admin_level"="{admin_level}"]'
+                            f'["boundary"="administrative"];'
+                            f'out geom;'
+                        )
                         geojson_feature = await self._overpass_boundary(overpass_query)
-                        if not geojson_feature:
-                            geojson_feature = await self._nominatim_boundary(
-                                name=name, country_code="", parent=parent,
-                            )
+                    # 4. Fallback Overpass without strict admin_level (e.g. UTs or districts mapped at level 4/6 instead of 8)
+                    if not geojson_feature:
+                        broad_overpass_query = (
+                            f'[out:json][timeout:30];'
+                            f'relation["name"~"^{name}$",i]["boundary"="administrative"];'
+                            f'out geom;'
+                        )
+                        geojson_feature = await self._overpass_boundary(broad_overpass_query)
+                    # 5. Fallback with stem
+                    if not geojson_feature and stem and stem != name:
+                        geojson_feature = await self._nominatim_boundary(
+                            name=stem, country_code=country_code, parent=parent
+                        )
                 else:
                     # Generic / Natural / Protected Area / Admin boundary lookup
                     # 1. Try Nominatim with exact name
@@ -963,6 +972,7 @@ out skel qt;
         country_code: str,
         parent: str = "",
         place_type: str = "",
+        _is_retry: bool = False,
     ) -> dict | None:
         """Search Nominatim and return a GeoJSON polygon (uses polygon_geojson=1)."""
         query_str = f"{name}, {parent}" if parent else name
@@ -976,6 +986,7 @@ out skel qt;
         if country_code:
             params["countrycodes"] = country_code.lower()
 
+        results = []
         try:
             async with httpx.AsyncClient(timeout=15) as http:
                 resp = await http.get(
@@ -983,17 +994,10 @@ out skel qt;
                     params=params,
                     headers={"User-Agent": "CursorUrbanPlanners/1.0"},
                 )
-        except httpx.RequestError:
-            return None
-        if resp.status_code != 200 or not (resp.text or "").strip():
-            return None
-        try:
-            results = _json.loads(resp.text)
-        except _json.JSONDecodeError:
-            return None
-
-        if not results:
-            return None
+                if resp.status_code == 200 and (resp.text or "").strip():
+                    results = _json.loads(resp.text)
+        except Exception:
+            results = []
 
         # Restrict strictly to boundary, place, landuse, leisure, and natural features
         allowed_classes = {"boundary", "place", "landuse", "leisure", "natural"}
@@ -1002,60 +1006,106 @@ out skel qt;
             if r.get("class") in allowed_classes
         ]
 
-        if not filtered_results:
-            return None
+        # 1. Prioritize results that ALREADY contain Polygon or MultiPolygon geometry
+        polygon_candidates = [
+            r for r in filtered_results
+            if r.get("geojson", {}).get("type") in ("Polygon", "MultiPolygon")
+        ]
 
-        # Pick best match. If place_type is set, prefer that; otherwise prefer
-        # relations (admin boundaries), then ways.
         chosen = None
-        if place_type:
-            for r in filtered_results:
-                if r.get("type") == place_type:
-                    chosen = r
-                    break
-            if not chosen:
-                for r in filtered_results:
-                    if r.get("class") == "place":
+        if polygon_candidates:
+            if place_type:
+                for r in polygon_candidates:
+                    if r.get("type") == place_type:
                         chosen = r
                         break
-        if not chosen:
-            for r in filtered_results:
-                if r.get("osm_type") == "relation":
-                    chosen = r
-                    break
-        if not chosen:
-            for r in filtered_results:
-                if r.get("osm_type") == "way":
-                    chosen = r
-                    break
-        if not chosen:
-            chosen = filtered_results[0]
+            if not chosen:
+                for r in polygon_candidates:
+                    if r.get("osm_type") == "relation":
+                        chosen = r
+                        break
+            if not chosen:
+                for r in polygon_candidates:
+                    if r.get("osm_type") == "way":
+                        chosen = r
+                        break
+            if not chosen:
+                chosen = polygon_candidates[0]
+        elif filtered_results:
+            if place_type:
+                for r in filtered_results:
+                    if r.get("type") == place_type:
+                        chosen = r
+                        break
+            if not chosen:
+                for r in filtered_results:
+                    if r.get("osm_type") == "relation":
+                        chosen = r
+                        break
+            if not chosen:
+                for r in filtered_results:
+                    if r.get("osm_type") == "way":
+                        chosen = r
+                        break
+            if not chosen:
+                chosen = filtered_results[0]
 
-        polygon = chosen.get("geojson")
-        if polygon and polygon.get("type") in ("Polygon", "MultiPolygon"):
-            display = chosen.get("display_name", name)
-            return {
-                "type": "Feature",
-                "geometry": polygon,
-                "properties": {
-                    "name": display.split(",")[0].strip() if display else name,
-                    "osm_id": chosen.get("osm_id"),
-                    "osm_type": chosen.get("osm_type"),
-                    "class": chosen.get("class"),
-                    "type": chosen.get("type"),
-                },
-            }
+        if chosen:
+            polygon = chosen.get("geojson")
+            if polygon and polygon.get("type") in ("Polygon", "MultiPolygon"):
+                display = chosen.get("display_name", name)
+                return {
+                    "type": "Feature",
+                    "geometry": polygon,
+                    "properties": {
+                        "name": display.split(",")[0].strip() if display else name,
+                        "osm_id": chosen.get("osm_id"),
+                        "osm_type": chosen.get("osm_type"),
+                        "class": chosen.get("class"),
+                        "type": chosen.get("type"),
+                    },
+                }
 
-        # Polygon not directly returned — fall back to Overpass by id
-        osm_id = chosen.get("osm_id")
-        osm_type = chosen.get("osm_type")
-        if not osm_id:
-            return None
-        if osm_type == "way":
-            query = f'[out:json][timeout:30];way({osm_id});out geom;'
-        else:
-            query = f'[out:json][timeout:30];relation({osm_id});out geom;'
-        return await self._overpass_boundary(query)
+            # Polygon not directly returned — fall back to Overpass by id if relation or way
+            osm_id = chosen.get("osm_id")
+            osm_type = chosen.get("osm_type")
+            if osm_id and osm_type in ("relation", "way"):
+                if osm_type == "way":
+                    query = f'[out:json][timeout:30];way({osm_id});out geom;'
+                else:
+                    query = f'[out:json][timeout:30];relation({osm_id});out geom;'
+                overpass_feat = await self._overpass_boundary(query)
+                if overpass_feat:
+                    return overpass_feat
+
+        # 2. If no polygon found and this is not already a retry, try Photon fuzzy/spelling lookup
+        if not _is_retry:
+            try:
+                async with httpx.AsyncClient(timeout=10) as http:
+                    p_resp = await http.get(
+                        "https://photon.komoot.io/api/",
+                        params={"q": name, "limit": 5},
+                        headers={"User-Agent": "DishaUrbanPlanner/1.0"},
+                    )
+                    if p_resp.status_code == 200:
+                        p_data = p_resp.json()
+                        p_feats = p_data.get("features", [])
+                        for pf in p_feats:
+                            p_name = pf.get("properties", {}).get("name")
+                            if p_name and p_name.strip().lower() != name.strip().lower():
+                                corrected_res = await self._nominatim_boundary(
+                                    name=p_name,
+                                    country_code=country_code,
+                                    parent=parent,
+                                    place_type=place_type,
+                                    _is_retry=True,
+                                )
+                                if corrected_res:
+                                    return corrected_res
+            except Exception:
+                pass
+
+        return None
 
     @staticmethod
     def _way_to_geojson(element: dict) -> dict | None:

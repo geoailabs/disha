@@ -370,6 +370,9 @@ const ChatMessageItem = memo(function ChatMessageItem({
   onDownloadPdf,
   onNavigateArtifact,
 }: ChatMessageItemProps) {
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('[ChatMessageItem Render]', msg.role, msg.timestamp)
+  }
   if (msg.role === 'assistant' && !msg.content.trim() && !msg.research) return null
   const processedContent = msg.role === 'assistant' ? autoLinkArtifacts(msg.content) : msg.content
   return (
@@ -573,6 +576,10 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
   const [researchReasoning, setResearchReasoning] = useState('')
   const reportMdRef = useRef('')
   const headerContainerRef = useRef<HTMLDivElement>(null)
+
+  const handleToggleExpandResearch = useCallback(() => {
+    setResearchExpanded((v) => !v)
+  }, [])
 
   // Interactive Clarifying Questions state
   const [activeQuestion, setActiveQuestion] = useState<ClarifyingQuestion | null>(null)
@@ -790,6 +797,14 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
       const slot = inFlightRef.current
       if (!slot) return
       slot.accum += data.content || ''
+      onMessagesChangeRef.current([
+        ...slot.base,
+        { role: 'assistant', content: slot.accum, timestamp: slot.timestamp },
+      ])
+    } else if (data.type === 'stream_replace') {
+      const slot = inFlightRef.current
+      if (!slot) return
+      slot.accum = data.content || ''
       onMessagesChangeRef.current([
         ...slot.base,
         { role: 'assistant', content: slot.accum, timestamp: slot.timestamp },
@@ -2183,9 +2198,9 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
             key={i}
             msg={msg}
             researchExpanded={researchExpanded}
-            onToggleExpand={() => setResearchExpanded((v) => !v)}
-            onDownloadMd={(md) => downloadResearchMd(md)}
-            onDownloadPdf={(md) => downloadResearchPdf(md)}
+            onToggleExpand={handleToggleExpandResearch}
+            onDownloadMd={downloadResearchMd}
+            onDownloadPdf={downloadResearchPdf}
             onNavigateArtifact={onNavigateArtifact}
           />
         ))}
@@ -2433,4 +2448,4 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
   )
 })
 
-export default ChatPanel
+export default memo(ChatPanel)

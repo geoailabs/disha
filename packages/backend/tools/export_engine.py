@@ -26,13 +26,25 @@ def _resolve_image_bytes(image_ref: str, workspace: Optional[str] = None) -> Opt
     from pathlib import Path
     from tools.artifact_store import get_artifacts_dir, read_artifact, list_artifacts
 
+    art_dir = get_artifacts_dir(workspace)
     p = Path(trimmed)
-    if p.is_file():
+
+    # 1. Absolute path on filesystem
+    if p.is_absolute() and p.is_file():
         try:
             return p.read_bytes()
         except Exception:
             pass
 
+    # 2. Check directly in art_dir by filename (e.g. "37.jpg" or "artifacts_store/37.jpg")
+    ap = art_dir / p.name
+    if ap.is_file():
+        try:
+            return ap.read_bytes()
+        except Exception:
+            pass
+
+    # 3. Check relative to workspace or root dir
     if workspace:
         wp = Path(workspace) / trimmed
         if wp.is_file():
@@ -47,15 +59,14 @@ def _resolve_image_bytes(image_ref: str, workspace: Optional[str] = None) -> Opt
             except Exception:
                 pass
 
-    art_dir = get_artifacts_dir(workspace)
-    ap = art_dir / p.name
-    if ap.is_file():
+    # 4. Check relative to current working directory
+    if p.is_file():
         try:
-            return ap.read_bytes()
+            return p.read_bytes()
         except Exception:
             pass
 
-    # Resolve by artifact ID if reference is numeric stem
+    # 5. Resolve by artifact ID if reference contains a numeric stem (e.g., "37", "37.jpg", "artifacts_store/37.jpg")
     stem = p.stem
     if stem.isdigit():
         try:
@@ -75,37 +86,37 @@ def _resolve_image_bytes(image_ref: str, workspace: Optional[str] = None) -> Opt
                         return rendered
 
                 if art.get("file_path"):
-                    fp = Path(workspace or ".") / art["file_path"] if workspace else Path(art["file_path"])
-                    if fp.is_file() and fp.stat().st_size > 20:
-                        return fp.read_bytes()
-                    ap2 = art_dir / Path(art["file_path"]).name
+                    art_fp = Path(art["file_path"])
+                    # Check art_dir / filename
+                    ap2 = art_dir / art_fp.name
                     if ap2.is_file() and ap2.stat().st_size > 20:
                         return ap2.read_bytes()
+
+                    # Check relative to workspace or CWD
+                    fp = Path(workspace) / art_fp if workspace else Path(art_fp)
+                    if fp.is_file() and fp.stat().st_size > 20:
+                        return fp.read_bytes()
         except Exception:
             pass
 
-    # Resolve by searching artifact list by title or keyword if reference is a label or title
+    # 6. Resolve by searching artifact list by exact title
     try:
         arts = list_artifacts(workspace=workspace)
-        clean_ref = trimmed.lower().replace("_", " ").replace("-", " ")
-        # 1. Exact title match
+        clean_ref = trimmed.lower().replace("_", " ").replace("-", " ").strip()
         for a in arts:
             title = (a.get("title") or "").strip().lower()
             if title and (title == clean_ref or title == trimmed.lower()):
                 if a.get("file_path"):
                     ap_match = art_dir / Path(a["file_path"]).name
-                    if ap_match.is_file():
+                    if ap_match.is_file() and ap_match.stat().st_size > 20:
                         return ap_match.read_bytes()
-        # 2. Strict word boundary / prefix match (do not match general multi-word titles for single city names)
         for a in arts:
-            title = (a.get("title") or "").strip().lower()
-            if title and len(clean_ref) > 3:
-                # Match only if clean_ref is a distinct word or start of title
-                if clean_ref == title or title.startswith(clean_ref + " ") or f" {clean_ref} " in f" {title} ":
-                    if a.get("file_path"):
-                        ap_match = art_dir / Path(a["file_path"]).name
-                        if ap_match.is_file():
-                            return ap_match.read_bytes()
+            title_clean = (a.get("title") or "").strip().lower().replace("_", " ").replace("-", " ")
+            if title_clean and len(clean_ref) >= 4 and clean_ref == title_clean:
+                if a.get("file_path"):
+                    ap_match = art_dir / Path(a["file_path"]).name
+                    if ap_match.is_file() and ap_match.stat().st_size > 20:
+                        return ap_match.read_bytes()
     except Exception:
         pass
 

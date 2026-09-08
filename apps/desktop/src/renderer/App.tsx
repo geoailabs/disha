@@ -248,6 +248,10 @@ function App() {
     setSelectedFeatures((prev) => prev.filter((_, i) => i !== index))
   }, [])
 
+  const handleClearSelectedFeatures = useCallback(() => {
+    setSelectedFeatures([])
+  }, [])
+
 
   const [layers, setLayers] = useState<GeoJSONLayer[]>([])
   const [mapViewState, setMapViewState] = useState<MapViewState>({
@@ -1681,17 +1685,19 @@ function App() {
       layerName: string,
       style: { fillColor?: string; lineColor?: string; opacity?: number },
     ) => {
+      const targetName = (layerName || '').toLowerCase().trim()
       setLayers((prev) =>
-        prev.map((l) =>
-          l.name.toLowerCase() === layerName.toLowerCase()
-            ? {
-              ...l,
-              ...(style.fillColor !== undefined ? { fillColor: style.fillColor } : {}),
-              ...(style.lineColor !== undefined ? { lineColor: style.lineColor } : {}),
-              ...(style.opacity !== undefined ? { opacity: style.opacity } : {}),
-            }
-            : l,
-        ),
+        prev.map((l) => {
+          const lName = l.name.toLowerCase().trim()
+          const match = lName === targetName || lName.includes(targetName) || targetName.includes(lName)
+          if (!match) return l
+          return {
+            ...l,
+            ...(style.fillColor !== undefined ? { fillColor: style.fillColor, color: style.fillColor } : {}),
+            ...(style.lineColor !== undefined ? { lineColor: style.lineColor } : {}),
+            ...(style.opacity !== undefined ? { opacity: style.opacity } : {}),
+          }
+        }),
       )
     },
     [],
@@ -1987,6 +1993,25 @@ function App() {
       setActiveLeftTab('layers')
       return
     }
+    if (action.type === 'set_layer_style') {
+      const p = action.payload
+      const targetName = (p.layer_name || '').toLowerCase().trim()
+      setLayers((prev) =>
+        prev.map((l) => {
+          const lName = l.name.toLowerCase().trim()
+          const match = lName === targetName || lName.includes(targetName) || targetName.includes(lName)
+          if (!match) return l
+          return {
+            ...l,
+            ...(p.fill_color !== undefined ? { fillColor: p.fill_color, color: p.fill_color } : {}),
+            ...(p.line_color !== undefined ? { lineColor: p.line_color } : {}),
+            ...(p.opacity !== undefined ? { opacity: p.opacity } : {}),
+          }
+        }),
+      )
+      setActiveLeftTab('layers')
+      return
+    }
     if (action.type === 'save_bookmark') {
       const { name, south, west, north, east, zoom } = action.payload
       const bounds =
@@ -2181,6 +2206,20 @@ function App() {
         prev.filter(
           (l) => l.name.toLowerCase() !== action.payload.layer_name?.toLowerCase(),
         ),
+      )
+      return
+    }
+    if (action.type === 'clear_all_layers' || (action as any).type === 'clear_layers') {
+      setLayers([])
+      return
+    }
+    if (action.type === 'isolate_layer') {
+      const targetName = action.payload?.layer_name?.toLowerCase()
+      setLayers((prev) =>
+        prev.map((l) => ({
+          ...l,
+          visible: l.name.toLowerCase() === targetName || (action.payload?.keep_basemap !== false && !!l.wmsSpec?.isBasemap),
+        })),
       )
       return
     }
@@ -2531,6 +2570,12 @@ function App() {
 
   // ── Map context for AI ──
 
+  const roundedCenter = useMemo(
+    () => [Math.round(mapViewState.center[0] * 100) / 100, Math.round(mapViewState.center[1] * 100) / 100] as [number, number],
+    [mapViewState.center[0], mapViewState.center[1]],
+  )
+  const roundedZoom = Math.round(mapViewState.zoom * 10) / 10
+
   const mapContext: MapContext = useMemo(
     () => ({
       workspace: workspacePath || undefined,
@@ -2540,8 +2585,8 @@ function App() {
           description: scenarios.find((s) => s.id === activeScenarioId)?.description || '',
         }
         : undefined,
-      center: mapViewState.center,
-      zoom: mapViewState.zoom,
+      center: roundedCenter,
+      zoom: roundedZoom,
       bounds: mapBounds
         ? { west: mapBounds.west, south: mapBounds.south, east: mapBounds.east, north: mapBounds.north }
         : undefined,
@@ -2562,34 +2607,14 @@ function App() {
           ),
         ].slice(0, 20)
 
-        // Include actual coordinates for small layers (≤5 features) so the
-        // LLM can compute centroids, buffers, intersections, etc.
+        // Pass lightweight metadata (bbox) instead of thousands of raw coordinate points
         let geometry_data: LayerGeometryData | undefined = undefined
-        const totalCoords = features.reduce((sum: number, f) => {
-          const g = f.geometry
-          if (!g || !('coordinates' in g)) return sum
-          const c = g.coordinates
-          if (g.type === 'Point') return sum + 1
-          if (g.type === 'LineString' && Array.isArray(c)) return sum + c.length
-          if (g.type === 'Polygon' && Array.isArray(c)) return sum + ((c[0] as unknown[])?.length || 0)
-          if (g.type === 'MultiPolygon' && Array.isArray(c))
-            return sum + (c as unknown[][][]).reduce((s, p) => s + (p[0]?.length || 0), 0)
-          return sum + 10
-        }, 0)
-
-        if (featureCount <= 5 && totalCoords <= 1000) {
-          geometry_data = features.map((f) => ({
-            type: f.geometry?.type,
-            coordinates: f.geometry && 'coordinates' in f.geometry ? f.geometry.coordinates : undefined,
-          }))
-        } else {
-          try {
-            const bbox = turf.bbox(l.data) as [number, number, number, number]
-            if (bbox.every((v) => isFinite(v))) {
-              geometry_data = { bbox }
-            }
-          } catch { /* ignore */ }
-        }
+        try {
+          const bbox = turf.bbox(l.data) as [number, number, number, number]
+          if (bbox.every((v) => isFinite(v))) {
+            geometry_data = { bbox }
+          }
+        } catch { /* ignore */ }
 
         const s = l.styleSpec
         const style = s
@@ -2605,8 +2630,8 @@ function App() {
           }
           : { mode: 'simple' as const, labels: false as const }
 
-        const features_data = featureCount <= 100
-          ? features.map((f) => f.properties || {})
+        const features_data = featureCount <= 5
+          ? features.slice(0, 5).map((f) => f.properties || {})
           : undefined
 
         const endpoints = extractLineEndpoints(features)
@@ -2658,7 +2683,7 @@ function App() {
         }
       }),
     }),
-    [workspacePath, mapViewState, mapBounds, bookmarks, layers, basemap, activeScenarioId, scenarios, selectedFeatures],
+    [workspacePath, roundedCenter, roundedZoom, mapBounds, bookmarks, layers, basemap, activeScenarioId, scenarios, selectedFeatures],
   )
 
   // ── Conversation helpers ──
@@ -2978,11 +3003,11 @@ function App() {
   useEffect(() => {
     if (!workspacePath || isLoadingRef.current || isSavingRef.current || isClosingRef.current) return
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current)
-    saveTimeoutRef.current = setTimeout(() => void saveProject(), 800)
+    saveTimeoutRef.current = setTimeout(() => void saveProject(), 1500)
     return () => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current)
     }
-  }, [workspacePath, mapViewState, layers, conversations, activeConversationId, basemap, bookmarks, saveProject])
+  }, [workspacePath, mapViewState, layers, basemap, bookmarks, saveProject])
 
   useEffect(() => {
     window.electronAPI.onAppBeforeQuit(async () => {
@@ -3585,7 +3610,7 @@ function App() {
                 injectedMessage={injectedMessage}
                 onComposeMapFigure={composeMapFigure}
                 onRemoveSelectedFeature={handleRemoveSelectedFeature}
-                onClearSelectedFeatures={() => setSelectedFeatures([])}
+                onClearSelectedFeatures={handleClearSelectedFeatures}
                 onNavigateArtifact={handleNavigateArtifact}
               />
             </ErrorBoundary>
