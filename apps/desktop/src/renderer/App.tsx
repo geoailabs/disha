@@ -798,6 +798,15 @@ function App() {
         }
         setLayers((prev) => [...prev, layer])
         setActiveLeftTab('layers')
+        try {
+          const bbox = turf.bbox(data)
+          if (bbox && bbox.length === 4 && bbox.every(isFinite)) {
+            const [west, south, east, north] = bbox
+            setMapActions((prev) => [...prev, { type: 'fit_bounds', payload: { west, south, east, north } }])
+          }
+        } catch {
+          // ignore
+        }
       } catch (e) {
         console.error('Invalid GeoJSON:', e)
       }
@@ -1363,21 +1372,43 @@ function App() {
 
   // Compose a decorated figure (title block, scale bar, north arrow, legend,
   // attribution) from the live map canvas + current view state. Single source
+  // Compose a decorated figure (title block, scale bar, north arrow, legend,
+  // attribution) from the live map canvas + current view state. Single source
   // for all four export paths so decorations are always baked into the output.
   const composeMapFigure = useCallback(
-    (title: string, options?: { noTitleBand?: boolean; bbox?: any }): HTMLCanvasElement | null => {
+    (
+      title: string,
+      options?: {
+        noTitleBand?: boolean
+        bbox?: any
+        layers_to_show?: string[]
+        layer_name?: string
+      },
+    ): HTMLCanvasElement | null => {
       const mapView = mapViewRef.current
       if (!mapView) return null
 
-      const canvas = mapView.fitBboxAndSnapshot ? mapView.fitBboxAndSnapshot(options?.bbox, 120) : mapView.getCanvas()
+      const layersToShow = options?.layers_to_show || (options?.layer_name ? [options.layer_name] : undefined)
+      const canvas = mapView.fitBboxAndSnapshot
+        ? mapView.fitBboxAndSnapshot(options?.bbox, 100, layersToShow)
+        : mapView.getCanvas()
       if (!canvas) return null
+
+      // Filter legend entries to match active layers in the snapshot
+      const activeLayers = layersToShow && layersToShow.length > 0
+        ? layers.filter((l) =>
+            layersToShow.some(
+              (q) => l.name.toLowerCase().includes(q.toLowerCase()) || q.toLowerCase().includes(l.name.toLowerCase()) || l.id.toLowerCase() === q.toLowerCase(),
+            ),
+          )
+        : layers
 
       return composeFigure(canvas, {
         title: title || 'Map',
         centerLat: mapViewState.center[1],
         zoom: mapViewState.zoom,
         bearing: mapViewState.bearing,
-        legend: buildLegendEntries(layers),
+        legend: buildLegendEntries(activeLayers),
         attribution: BASEMAPS[basemap]?.attribution || '',
         noTitleBand: options?.noTitleBand,
       })
@@ -1405,8 +1436,8 @@ function App() {
     return pdf
   }, [])
 
-  const handleExportMapPng = useCallback((title?: string) => {
-    const figure = composeMapFigure(title || suggestExportTitleRef.current())
+  const handleExportMapPng = useCallback((title?: string, options?: { layers_to_show?: string[]; layer_name?: string; bbox?: any }) => {
+    const figure = composeMapFigure(title || suggestExportTitleRef.current(), options)
     if (!figure) return
     figure.toBlob((blob) => {
       if (!blob) return
@@ -1418,8 +1449,8 @@ function App() {
     })
   }, [composeMapFigure])
 
-  const handleExportMapJpeg = useCallback((title?: string) => {
-    const figure = composeMapFigure(title || suggestExportTitleRef.current())
+  const handleExportMapJpeg = useCallback((title?: string, options?: { layers_to_show?: string[]; layer_name?: string; bbox?: any }) => {
+    const figure = composeMapFigure(title || suggestExportTitleRef.current(), options)
     if (!figure) return
     figure.toBlob((blob) => {
       if (!blob) return
@@ -1431,15 +1462,15 @@ function App() {
     }, 'image/jpeg', 0.94)
   }, [composeMapFigure])
 
-  const handleExportPdf = useCallback(async (title?: string) => {
-    const figure = composeMapFigure(title || suggestExportTitleRef.current())
+  const handleExportPdf = useCallback(async (title?: string, options?: { layers_to_show?: string[]; layer_name?: string; bbox?: any }) => {
+    const figure = composeMapFigure(title || suggestExportTitleRef.current(), options)
     if (!figure) return
     const pdf = await composedToPdf(figure)
     pdf.save(`map-report-${Date.now()}.pdf`)
   }, [composeMapFigure, composedToPdf])
 
-  const handleSavePngToArtifact = useCallback(async (title: string, artifactId?: number) => {
-    const figure = composeMapFigure(title)
+  const handleSavePngToArtifact = useCallback(async (title: string, artifactId?: number, options?: { layers_to_show?: string[]; layer_name?: string; bbox?: any }) => {
+    const figure = composeMapFigure(title, options)
     if (!figure) return
     figure.toBlob(async (blob) => {
       if (!blob) return
@@ -1464,8 +1495,8 @@ function App() {
     }, 'image/png')
   }, [composeMapFigure, workspacePath])
 
-  const handleSaveJpgToArtifact = useCallback(async (title: string, artifactId?: number) => {
-    const figure = composeMapFigure(title)
+  const handleSaveJpgToArtifact = useCallback(async (title: string, artifactId?: number, options?: { layers_to_show?: string[]; layer_name?: string; bbox?: any }) => {
+    const figure = composeMapFigure(title, options)
     if (!figure) return
     figure.toBlob(async (blob) => {
       if (!blob) return
@@ -1490,8 +1521,8 @@ function App() {
     }, 'image/jpeg', 0.92)
   }, [composeMapFigure, workspacePath])
 
-  const handleSavePdfToArtifact = useCallback(async (title: string, artifactId?: number) => {
-    const figure = composeMapFigure(title)
+  const handleSavePdfToArtifact = useCallback(async (title: string, artifactId?: number, options?: { layers_to_show?: string[]; layer_name?: string; bbox?: any }) => {
+    const figure = composeMapFigure(title, options)
     if (!figure) return
     const pdf = await composedToPdf(figure)
     const pdfBytes = pdf.output('arraybuffer')
@@ -2068,20 +2099,30 @@ function App() {
     if (action.type === 'export_map_png') {
       const title = action.payload?.title || suggestExportTitle()
       const artifactId = action.payload?.artifact_id
+      const exportOpts = {
+        layers_to_show: action.payload?.layers_to_show,
+        layer_name: action.payload?.layer_name,
+        bbox: action.payload?.bbox,
+      }
       if (action.payload?.save_to_artifacts) {
-        void handleSavePngToArtifact(title, artifactId)
+        void handleSavePngToArtifact(title, artifactId, exportOpts)
       } else {
-        handleExportMapPng(title)
+        handleExportMapPng(title, exportOpts)
       }
       return
     }
     if (action.type === 'export_map_jpeg' || (action as any).type === 'export_map_jpg') {
       const title = action.payload?.title || suggestExportTitle()
       const artifactId = (action.payload as any)?.artifact_id
+      const exportOpts = {
+        layers_to_show: action.payload?.layers_to_show,
+        layer_name: action.payload?.layer_name,
+        bbox: action.payload?.bbox,
+      }
       if (action.payload?.save_to_artifacts) {
-        void handleSaveJpgToArtifact(title, artifactId)
+        void handleSaveJpgToArtifact(title, artifactId, exportOpts)
       } else {
-        const figure = composeMapFigure(title)
+        const figure = composeMapFigure(title, exportOpts)
         if (figure) {
           figure.toBlob((blob) => {
             if (!blob) return
@@ -2098,10 +2139,15 @@ function App() {
     if (action.type === 'export_map_pdf') {
       const title = action.payload?.title || suggestExportTitle()
       const artifactId = action.payload?.artifact_id
+      const exportOpts = {
+        layers_to_show: action.payload?.layers_to_show,
+        layer_name: action.payload?.layer_name,
+        bbox: action.payload?.bbox,
+      }
       if (action.payload?.save_to_artifacts) {
-        void handleSavePdfToArtifact(title, artifactId)
+        void handleSavePdfToArtifact(title, artifactId, exportOpts)
       } else {
-        void handleExportPdf(title)
+        void handleExportPdf(title, exportOpts)
       }
       return
     }
@@ -2188,6 +2234,17 @@ function App() {
         addGroupedPointFeaturesToLayers(layerName, data, color)
       } else {
         upsertLayer(layerName, data, color)
+      }
+      try {
+        if (data && data.features && data.features.length > 0) {
+          const bbox = turf.bbox(data)
+          if (bbox && bbox.length === 4 && bbox.every(isFinite)) {
+            const [west, south, east, north] = bbox
+            setMapActions((prev) => [...prev, { type: 'fit_bounds', payload: { west, south, east, north } }])
+          }
+        }
+      } catch {
+        // ignore
       }
       return
     }
@@ -2325,6 +2382,22 @@ function App() {
         }
         setLayers((prev) => [...prev, routeLayer])
       }
+
+      try {
+        const fc: FeatureCollection = {
+          type: 'FeatureCollection',
+          features: Array.isArray(route_coordinates) && route_coordinates.length >= 2
+            ? [{ type: 'Feature', geometry: { type: 'LineString', coordinates: route_coordinates }, properties: {} }]
+            : directFeatures,
+        }
+        const bbox = turf.bbox(fc)
+        if (bbox && bbox.length === 4 && bbox.every(isFinite)) {
+          const [west, south, east, north] = bbox
+          setMapActions((prev) => [...prev, { type: 'fit_bounds', payload: { west, south, east, north } }])
+        }
+      } catch {
+        // ignore
+      }
       return
     }
     // Promote AI-drawn shapes to real layers so they appear in mapContext on
@@ -2333,20 +2406,27 @@ function App() {
     if (action.type === 'draw_line') {
       const { coordinates, label, color } = action.payload
       if (Array.isArray(coordinates) && coordinates.length >= 2) {
+        setAppMode('map')
         aiShapeNameCounterRef.current += 1
         const name = label || `AI Line ${aiShapeNameCounterRef.current}`
-        upsertLayer(
-          name,
-          {
-            type: 'FeatureCollection',
-            features: [{
-              type: 'Feature',
-              geometry: { type: 'LineString', coordinates },
-              properties: { label: label || '', source: 'ai_draw' },
-            }],
-          },
-          color,
-        )
+        const fc: FeatureCollection = {
+          type: 'FeatureCollection',
+          features: [{
+            type: 'Feature',
+            geometry: { type: 'LineString', coordinates },
+            properties: { label: label || '', source: 'ai_draw' },
+          }],
+        }
+        upsertLayer(name, fc, color)
+        try {
+          const bbox = turf.bbox(fc)
+          if (bbox && bbox.length === 4 && bbox.every(isFinite)) {
+            const [west, south, east, north] = bbox
+            setMapActions((prev) => [...prev, { type: 'fit_bounds', payload: { west, south, east, north } }])
+          }
+        } catch {
+          // ignore
+        }
       }
       return
     }
@@ -2354,30 +2434,38 @@ function App() {
       const { coordinates, label, color } = action.payload
       const raw = Array.isArray(coordinates) ? coordinates : []
       if (raw.length >= 3) {
+        setAppMode('map')
         const ring =
           raw[0][0] !== raw[raw.length - 1][0] || raw[0][1] !== raw[raw.length - 1][1]
             ? [...raw, raw[0]]
             : raw
         aiShapeNameCounterRef.current += 1
         const name = label || `AI Polygon ${aiShapeNameCounterRef.current}`
-        upsertLayer(
-          name,
-          {
-            type: 'FeatureCollection',
-            features: [{
-              type: 'Feature',
-              geometry: { type: 'Polygon', coordinates: [ring] },
-              properties: { label: label || '', source: 'ai_draw' },
-            }],
-          },
-          color,
-        )
+        const fc: FeatureCollection = {
+          type: 'FeatureCollection',
+          features: [{
+            type: 'Feature',
+            geometry: { type: 'Polygon', coordinates: [ring] },
+            properties: { label: label || '', source: 'ai_draw' },
+          }],
+        }
+        upsertLayer(name, fc, color)
+        try {
+          const bbox = turf.bbox(fc)
+          if (bbox && bbox.length === 4 && bbox.every(isFinite)) {
+            const [west, south, east, north] = bbox
+            setMapActions((prev) => [...prev, { type: 'fit_bounds', payload: { west, south, east, north } }])
+          }
+        } catch {
+          // ignore
+        }
       }
       return
     }
     if (action.type === 'draw_circle') {
       const { center_lng, center_lat, radius_km, label, color } = action.payload
       if (radius_km > 0) {
+        setAppMode('map')
         const circle = turf.circle([center_lng, center_lat], radius_km, {
           units: 'kilometers',
           steps: 64,
@@ -2391,11 +2479,17 @@ function App() {
         }
         aiShapeNameCounterRef.current += 1
         const name = label || `AI Circle ${aiShapeNameCounterRef.current}`
-        upsertLayer(
-          name,
-          { type: 'FeatureCollection', features: [circle] },
-          color,
-        )
+        const fc: FeatureCollection = { type: 'FeatureCollection', features: [circle] }
+        upsertLayer(name, fc, color)
+        try {
+          const bbox = turf.bbox(fc)
+          if (bbox && bbox.length === 4 && bbox.every(isFinite)) {
+            const [west, south, east, north] = bbox
+            setMapActions((prev) => [...prev, { type: 'fit_bounds', payload: { west, south, east, north } }])
+          }
+        } catch {
+          // ignore
+        }
       }
       return
     }

@@ -289,6 +289,28 @@ class DomainHubsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ALWAYS set `image_artifact_id=37`", SYSTEM_PROMPT)
         self.assertIn("NEVER use `include_map_figure=true` when inserting an existing saved image artifact", SYSTEM_PROMPT)
 
+    async def test_system_prompt_geographic_interpretation_and_document_visualization(self):
+        from routers.chat import SYSTEM_PROMPT
+        # Rule 30 checks
+        self.assertIn("GEOGRAPHIC INTERPRETATION & BOUNDARY CONTAINMENT FILTERING", SYSTEM_PROMPT)
+        self.assertIn("resolve the place boundary and spatially filter the requested features to that boundary", SYSTEM_PROMPT)
+        self.assertIn("Do NOT substitute a broad search extent, bounding box, viewport, or proximity search", SYSTEM_PROMPT)
+        # Rule 31 checks
+        self.assertIn("DOCUMENT VISUALIZATION & SECTION HEADING INDEPENDENCE", SYSTEM_PROMPT)
+        self.assertIn("generate a separate distinct visual for each heading; do NOT combine or merge them", SYSTEM_PROMPT)
+        self.assertIn("Do NOT carry unrelated layers, markers, or visualizations from one requested section into another", SYSTEM_PROMPT)
+        # Rule 32 checks (Autonomous Execution)
+        self.assertIn("AUTONOMOUS EXECUTION & IMPLICIT AUTHORIZATION", SYSTEM_PROMPT)
+        self.assertIn("execute the necessary intermediate operations automatically before producing the requested artifact", SYSTEM_PROMPT)
+        self.assertIn("Do NOT stop to ask the user to confirm that you should proceed", SYSTEM_PROMPT)
+        self.assertIn("Do NOT ask the user to say 'proceed', 'yes', or otherwise confirm execution", SYSTEM_PROMPT)
+        self.assertIn("The user's request to create the final artifact implicitly authorizes the necessary intermediate data retrieval", SYSTEM_PROMPT)
+        # Rule 33 checks (Preserve Requested Outputs)
+        self.assertIn("PRESERVE REQUESTED OUTPUTS & END-TO-END ARTIFACT COMPILATION", SYSTEM_PROMPT)
+        self.assertIn("independently produce EACH requested output and maintain its geographic and semantic scope", SYSTEM_PROMPT)
+        self.assertIn("Do NOT combine, omit, substitute, or simplify requested outputs merely for implementation convenience", SYSTEM_PROMPT)
+        self.assertIn("generate all required underlying maps, plots, statistics, and other artifacts before assembling the document", SYSTEM_PROMPT)
+
 
 if __name__ == "__main__":
     unittest.main()

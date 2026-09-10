@@ -17,486 +17,476 @@ If you only want the orientation needed to make code changes, jump to Part 2.
 
 ## What it is
 
-A desktop app (macOS / Windows / Linux) that combines four panes:
+A desktop application (macOS / Windows / Linux) that unifies multiple analytical surfaces:
 
-| Pane | Purpose |
+| Pane / Mode | Purpose |
 |---|---|
-| **Map** (center, Map mode) | Interactive MapLibre canvas with switchable basemaps, layer rendering, data-driven symbology + labels, drawing tools, marker pins, and a live legend |
-| **Document view** (center, Document mode) | Drop in a planning PDF or map image and have the AI analyze it |
-| **Left panel** | Files · Layers (+ Symbology / Attribute editors) · Bookmarks · Export · Zoning legend |
-| **Right panel** | Chat · Artifacts |
+| **Map** (center, Map mode) | Interactive MapLibre GL canvas with switchable raster basemaps, vector layer rendering, data-driven symbology (categorized, graduated) + text labels, drawing tools, marker pins, measurement, and a live legend. |
+| **Document view** (center, Document mode) | Drop in a planning PDF or map image; the AI analyzes land use, zoning, networks, and spatial patterns via multimodal vision, with automatic/manual georeferencing and digitizing tools. |
+| **Left panel** | Tabs for **Files** (workspace tree & vector import), **Layers** (+ Symbology & Attribute editors), **Bookmarks**, **Export** (publication figures & clipped layers), **Zoning legend**, **Scenario Builder** (MCDA evaluation), and **Diagnostics** (system self-checks). |
+| **Right panel** | Tabs for **Chat** (streaming AI assistant, inline tool calls, interactive option cards, model switcher) and **Artifacts** (markdown reports, tables, plots, and figures with 8-format exports). |
 
-You toggle between **Map** and **Document** modes from the title bar. Map mode is the primary surface; Document mode is for one-off analysis of external planning documents.
+Toggle between **Map** and **Document** modes from the title bar.
 
-## Workspace
+## Workspace & Persistence
 
-Open a folder via the title-bar button. The app:
+Open any folder via the title-bar button. The application:
 
-- Lists files in **Files**. Click a `.geojson` to load it; click a `.shp` / `.gpkg` / `.kml` / `.kmz` / `.gpx` / `.csv` to import it (converted to WGS84 GeoJSON inside the workspace, then loaded).
-- Auto-saves a `project.json` in the workspace folder containing map state, layers (with their styling), conversations, bookmarks, and basemap.
-- Materializes any chat-generated layers into `<workspace>/.disha/layers/<id>.geojson` so they survive a reload.
-- Remembers the last workspace and re-opens it on next launch.
+- Lists files in the **Files** tab. Click a `.geojson` to load it directly; click a `.shp`, `.gpkg`, `.kml`, `.kmz`, `.gpx`, or `.csv` to import it (automatically converted to WGS84 GeoJSON in the workspace and loaded as a layer).
+- Auto-saves a `project.json` in the workspace folder containing layer configurations, symbology styling specs, camera viewports, conversations, bookmarks, and basemap settings (debounced 800ms).
+- Materializes chat-generated layers into `<workspace>/.disha/layers/<id>.geojson` so they survive application restarts.
+- Auto-indexes workspace documents (`.pdf`, `.docx`, `.txt`, `.md`) for semantic vector search (RAG) in `<workspace>/.disha/rag_index.json`.
+- Remembers the last-opened workspace across launches.
 
-Without a workspace open, the app still works for ad-hoc exploration, but nothing persists.
+## Map Mode Features
 
-## Map mode features
+### Layers & Vector Ingestion
+- Click `.geojson` files to load vector layers.
+- Click Shapefiles, GeoPackages, KML, KMZ, GPX, or CSV files to auto-convert them to EPSG:4326 GeoJSON via backend DuckDB `spatial` (`ST_Read` + `ST_Transform`). CSV files automatically detect latitude and longitude columns.
+- The **Layers** panel provides layer visibility toggles, zoom-to extent, remove layer, and triggers for the **Symbology** panel and **Attribute Table**.
 
-### Layers
+### Data-Driven Symbology & Text Labels
+Style any vector layer based on its feature properties:
+- **Categorized:** Assign distinct colors per string value (e.g. `land_use`, `zone_code`). Pre-seeded with urban planning zone palettes.
+- **Graduated:** Choropleth styling for numeric properties (e.g. `population`, `density`), using equal-interval or quantile class breaks (2–9 classes) and curated color ramps.
+- **Labels:** On-map dynamic text labels from any feature attribute, with zoom gating, collision avoidance, and font size/color controls.
+- **Live Legend:** Floating legend overlay automatically syncs with all visible styled layers.
 
-- Click a `.geojson` file in the Files pane to load it as a styled vector layer.
-- The **Layers** pane shows count, visibility toggle, zoom-to, remove, and buttons to open the **Symbology** editor and **Attribute** table for a layer.
-- AI-generated layers (from chat tool calls) appear here automatically.
+### Drawing Tools & Attribute Editor
+- Toolbar draw tools for **points**, **lines**, and **polygons**. Click to place vertices, double-click/Enter to complete, Escape to cancel, Backspace to undo vertices.
+- Drawn shapes become real layers and open the **Attribute Table** to edit feature properties, add/delete columns, and modify values.
 
-### Vector import
+### Basemaps & Street View
+- Seven free raster basemaps: Street (OSM), Satellite (Esri World Imagery), Dark / Light (CartoDB), Terrain (OpenTopoMap), Topo (Esri), Humanitarian (OSM-HOT).
+- **Keyless 360° Street View:** Right-click anywhere on the map to inspect coordinates, drop reverse-geocoded pins, query the AI, or open an embedded 360° street-level panorama (powered by the `streetlevel` library and pannellum).
 
-- Clicking a `.shp`, `.gpkg`, `.kml`, `.kmz`, `.gpx`, or `.csv` file converts it to a WGS84 GeoJSON written alongside the source in the workspace, then loads it.
-- The source CRS is auto-detected and reprojected to EPSG:4326; CSVs are turned into points from auto-detected lat/lng columns.
-- Conversion runs on the backend (DuckDB `spatial` / `ST_Read` + `ST_Transform`) — requires an open workspace.
+### Bookmarks & Publication Export
+- Save named map extents as bookmarks. The assistant can also save and navigate to bookmarks.
+- **Publication Map Export:** Export publication-ready figures with Web-Mercator scale bars, bearing-aware north arrows, title blocks, legends, and attributions in PNG or PDF.
+- **Zero-Crop Geographic Padding:** When exporting study areas, the exporter calculates bounding boxes and applies an **18% geographic padding** on all four cardinal directions, repainting the WebGL buffer for uncropped figures.
 
-### Symbology & labels
+## Document Mode & Master Plan Digitization
+Drop in or open external planning documents:
+- **Raster Images & PDFs:** Rasterized client-side via `pdfjs-dist` (capped at 2200px long axis) and passed to AI vision.
+- **Georeferencing & Digitization:** Identify visual landmarks, georeference the document (`georeference_active_document`), and digitize visual boundaries and POIs (`digitize_image_features`) into real GeoJSON layers.
 
-Style any layer by its data, from the Symbology panel or by asking the assistant:
+## AI Chat Assistant & 7+1 Planning Domains
 
-- **Categorized** — one color per distinct value of a string property (e.g. `zone_code`, `land_use`). Zone-named properties seed from the built-in zone palette.
-- **Graduated** — a choropleth over a numeric property (e.g. `population`, `density`), with equal-interval or quantile class breaks (2–9 classes) and a named color ramp.
-- **Labels** — draw any property as on-map text with configurable size/color (collision-aware, zoom-gated, capped at 3,000 features).
+The chat panel provides streaming conversational intelligence with full tool visibility:
+- Multiple conversation threads persisted to `project.json`.
+- Token-by-token streaming over WebSocket.
+- Interactive question-and-answer cards (`ask_question`) with selectable single-choice or multi-select options.
+- **Deep Research Reports:** Multi-search research passes using OpenAI's Responses API (`o4-mini-deep-research`), streaming research queries, live reasoning, and cited markdown reports.
 
-A live **Legend** overlay renders automatically for any visible categorized or graduated layer.
-
-### Drawing & attributes
-
-- Toolbar draw modes for **point**, **line**, and **polygon**. Click to place vertices, double-click / Enter to finish, Escape to cancel, Backspace to undo a vertex.
-- A finished shape becomes a real layer and opens the **Attribute table** so you can tag it (e.g. set `zone_code`) before styling.
-- The Attribute table edits any layer's properties — add/rename/delete columns, edit cells, delete rows.
-
-### Basemaps
-
-Seven free raster basemaps, switchable from the map UI: Street (OSM), Satellite (Esri World Imagery), Dark / Light (CartoDB), Terrain (OpenTopoMap), Topo (Esri), Humanitarian (OSM-HOT). No API key required.
-
-### Bookmarks
-
-Save the current map extent as a named bookmark. The assistant can also bookmark for you (`save_bookmark`) and fly to one (`go_to_bookmark`).
-
-### Export
-
-All export paths bake the same decorations (title block, legend, scale bar, north arrow, attribution) onto the figure:
-
-- **Download PNG / PDF**: a decorated snapshot of the current map (PDF is landscape A4).
-- **Save PNG / PDF to Artifacts**: same figure, stored as an image artifact.
-- **Layer → GeoJSON file**: per-layer download.
-- **Clip to current extent**: clip every loaded layer to the viewport and save as one GeoJSON layer in the workspace.
-- **Save by region / boundary**: search an OSM boundary (Nominatim), preview it on the map, then clip all layers to it and save.
-
-### Zoning
-
-The Zones panel shows a built-in legend (R1, R2, C1, I1, G, MX, INST). Load a GeoJSON whose features have a `zone_code` property and ask the assistant to `analyze_zones` (per-zone area, density) or `detect_zone_overlaps` (where two different zones cover the same ground).
-
-### Street View
-
-Right-click anywhere on the map for a context menu: drop a marker (reverse-geocoded to an address), ask the chat about the location, or open an embedded 360° panorama. Street View is **keyless** — the nearest panorama is found and downloaded server-side via the `streetlevel` library and rendered with pannellum.
-
-## Document mode
-
-Drop in or open a planning document:
-
-- **Image formats** (PNG, JPG, JPEG, WEBP, GIF, BMP) — sent directly to the model.
-- **PDF** — rasterized client-side with `pdfjs-dist` to a capped 2200-pixel-longer-axis PNG and sent as vision input. Multi-page navigation is supported.
-
-The AI is given a planning-analyst persona and can identify land use, zoning areas, transportation networks, infrastructure, density patterns, boundaries, and labels. Document mode also bridges to the live map — the model can `fly_to`, drop markers, run `osm_search`, and save findings as artifacts even while you're chatting about a document.
-
-## AI chat
-
-The chat panel on the right is the primary control surface. You can:
-
-- Have multiple conversations (left rail of the chat panel). Each is persisted into `project.json`.
-- Ask the assistant to navigate, fetch data, measure, draw, style layers, analyze overlaps, or generate a deep-research report.
-- See tool calls inline as they execute — every OSM query, GIS operation, or map action is visible in the conversation.
-- Watch **deep-research** progress: when you ask for a report, each web search step streams in and a cited Markdown report comes back (downloadable as `.md` or PDF).
-
-Streaming text uses a WebSocket; replies appear token-by-token.
-
-### The 7+1 Domain Capabilities
-
-The assistant's capabilities are structured across **7 core urban planning disciplines** powered by **1 cross-cutting utility engine**:
+### The 7+1 Domain Hub Capabilities:
 
 | Domain Hub | Planning Discipline | Core Capabilities |
 |---|---|---|
-| **1. SpatialHub** | Spatial Geometry & Land Management | Central polygon registry (deduplication & reuse), geodesic buffering/areas, spatial overlays (intersection, difference, clip, dissolve, spatial join), OSM/DataMeet administrative boundaries, WMS raster layers. |
-| **2. MobilityHub** | Multimodal Transportation & Transit | Street network graphs, Dijkstra/freight routing, GTFS transit schedules & 400m/800m catchment buffers, ITS signal timing optimization, origin-destination (OD) gravity matrices & flow assignment. |
-| **3. EnvironmentHub** | Climate, Remote Sensing & Emissions | Google Earth Engine LULC & NDVI satellite indices, Open-Meteo weather & air quality, solar building analysis, digital elevation models (DEM), fleet emissions modeling. |
-| **4. PlanningHub** | Zoning & Plan Digitization | Zoning code compliance, zone density & overlap detection, master plan georeferencing, and image feature digitization. |
-| **5. DemographicsHub** | Population & Economic Forecasting | WorldPop 100m grid population metrics, cohort-component demographic forecasting, employment density projections. |
-| **6. PlacesHub** | Built Form & Urban POIs | Google Places search/details/density, Overture 3D building footprints and heights. |
-| **7. ScenariosHub** | Scenario Planning & Evaluation | Alternative planning scenario generation, Multi-Criteria Decision Analysis (MCDA) scoring and matrix comparisons. |
-| **+1. UtilityHub** | Shared System Infrastructure | Cross-cutting forward/reverse geocoding, live web research, geodesic distance/area measurements, and artifact persistence. |
+| **1. SpatialHub** | Spatial Geometry & Land Management | Central polygon registry (deduplication & reuse), geodesic buffering/areas, spatial overlays (intersection, difference, clip, dissolve, spatial join, nearest), OSM/DataMeet administrative boundaries, WMS raster services. |
+| **2. MobilityHub** | Multimodal Transportation & Transit | Street network graphs, Dijkstra/freight routing with Z-level bridges/tunnels, GTFS transit feeds & 400m/800m walking sheds, ITS traffic signal timing optimization, Origin-Destination (OD) gravity matrices & flow assignment. |
+| **3. EnvironmentHub** | Climate, Remote Sensing & Emissions | Google Earth Engine (GEE) satellite land cover (Dynamic World) & NDVI indices, Open-Meteo weather & air quality, Google Solar/Elevation APIs, fleet emissions modeling. |
+| **4. PlanningHub** | Zoning & Plan Digitization | Zoning code compliance, zone density & overlap detection, master plan georeferencing, raster feature digitization. |
+| **5. DemographicsHub** | Population & Economic Forecasting | WorldPop 100m grid population estimates, cohort-component demographic forecasts, employment density projections. |
+| **6. PlacesHub** | Built Form & Urban POIs | Google Places search/details/nearby/density, Overture Maps 3D building footprints & heights. |
+| **7. ScenariosHub** | Scenario Planning & Evaluation | Alternative planning scenario generation, Multi-Criteria Decision Analysis (MCDA) scoring matrices. |
+| **+1. UtilityHub** | Shared System Infrastructure | Forward/reverse geocoding, live web research, geodesic distance/area measurement, Matplotlib plotting (`create_plot`), interactive questions (`ask_question`), and artifact CRUD. |
 
-The current map state — viewport bounds, visible layers (with feature counts, property names, geometry data for small layers, and a styling summary), saved bookmarks — is appended to every prompt, so the assistant is always aware of what you're looking at.
+## Artifacts & Multi-Format Export
 
-## Artifacts
-
-Long-form notes and analyses the assistant generates (or you ask it to save) live in a SQLite database and appear in the **Artifacts** panel: title, content, type, format (markdown / table / geojson / image), timestamps, plus full CRUD via the panel's HTTP API. Exported figures and GeoJSON can be saved as artifacts, and a GeoJSON artifact can be re-added to the map.
+Generated reports, analytical tables, charts, and figures are cataloged in the **Artifacts** panel and stored in a local SQLite database (`disha.db`). Artifacts can be edited, reordered, and exported in **8 formats**:
+1. **PDF (`.pdf`)** — Formatted publication document via `ReportLab` (`%PDF-1.4`).
+2. **Word (`.docx`)** — Microsoft Word document via `python-docx` with embedded figures and tables.
+3. **HTML (`.html`)** — Standalone responsive HTML report with modern CSS styling.
+4. **PNG Image (`.png`)** — High-resolution map or chart snapshot.
+5. **JPEG Image (`.jpg`)** — Compressed image figure.
+6. **Excel (`.xlsx`)** — Multi-column spreadsheet via `openpyxl`.
+7. **JSON (`.json`)** — Raw structured data and GeoJSON feature collections.
+8. **TXT (`.txt`)** — Plain text document.
 
 ---
 
 # Part 2 — For Developers
 
-## Tech stack
+## Tech Stack
 
-| Layer | Stack |
+| Layer | Technologies |
 |---|---|
-| Desktop shell | Electron |
-| Renderer | React 19 + Vite (electron-vite) + TypeScript |
-| Map | MapLibre GL + Turf.js + pannellum |
-| Backend | Python 3.11+, FastAPI, uvicorn |
-| LLM | OpenAI Chat Completions (streaming, tool calling) + Responses API (`o4-mini-deep-research`) |
-| Geo APIs | Overpass, Nominatim, OSRM, Open-Meteo, Overture, WorldPop, Photon, Google Maps Platform |
-| Geometry | Shapely + pyproj (server, geodesic), Turf.js (client) |
-| Vector ingestion | DuckDB `spatial` (`ST_Read` + `ST_Transform`) |
-| Storage | SQLite (artifacts + HTTP cache) + JSON files in workspace (project state) |
-| Packaging | electron-builder + PyInstaller (frozen backend binary) |
+| **Desktop Shell** | Electron 34+ |
+| **Frontend Renderer** | React 19, TypeScript, Vite (`electron-vite`), CSS3 |
+| **Map & Cartography** | MapLibre GL 4+, Turf.js, pannellum (Street View) |
+| **Backend Framework** | Python 3.11+, FastAPI, uvicorn, Pydantic |
+| **LLM & Reasoning** | OpenAI API (Chat Completions streaming, tool calling), OpenAI Responses API (`o4-mini-deep-research`), OpenAI Embeddings (`text-embedding-3-small`) |
+| **Geospatial & Analysis** | Shapely, pyproj (WGS84 ellipsoidal geodesic math), DuckDB `spatial`, GeoPandas, Fiona, NetworkX |
+| **External Geospatial APIs** | Overpass API (OSM), Nominatim, OSRM, Open-Meteo, Overture Maps (S3 Parquet), WorldPop, Google Earth Engine, Google Maps Platform |
+| **Document & Chart Engines** | ReportLab, python-docx, openpyxl, Matplotlib, markdown, pdfjs-dist, pypdf |
+| **Storage & Cache** | SQLite (WAL mode for artifacts & HTTP cache), JSON files for workspace state |
+| **Packaging & Freezing** | electron-builder, PyInstaller (frozen backend binary) |
 
-## Top-level layout
+## Top-Level Directory Layout
 
 ```
 .
 ├── apps/desktop/                  Electron + React frontend
-│   ├── src/main/index.ts          Electron main: window, IPC, backend spawn, model switch
-│   ├── src/preload/index.ts       contextBridge IPC surface
-│   └── src/renderer/              React UI
-│       ├── App.tsx                State container; map ↔ chat ↔ panels
-│       ├── types.ts               MapAction union, LayerStyleSpec, basemaps, zone presets
+│   ├── src/main/index.ts          Electron main: window management, IPC handlers, backend lifecycle
+│   ├── src/preload/index.ts       Preload script exposing window.electronAPI via contextBridge
+│   └── src/renderer/              React application
+│       ├── App.tsx                Single state container; map ↔ chat ↔ panels wiring, auto-save guards
+│       ├── types.ts               MapAction union, LayerStyleSpec, basemaps, zone presets, interfaces
 │       ├── lib/
 │       │   ├── classify.ts        Color ramps, class breaks, category palettes
 │       │   ├── compose-figure.ts  Publication figure compositor (title/legend/scale/arrow)
-│       │   └── legend-data.ts     buildLegendEntries — shared by Legend + export
-│       └── components/            MapView, ChatPanel, SymbologyPanel, AttributeTable,
-│                                  Legend, ExportPanel, StreetViewDialog, FileTree, …
+│       │   ├── legend-data.ts     Shared legend builder for live legend and export compositor
+│       │   └── pdf-raster.ts      PDF page rasterization via pdfjs-dist
+│       └── components/            MapView, ChatPanel, ArtifactsPanel, LayerPanel, SymbologyPanel,
+│                                  AttributeTable, ScenarioBuilderPanel, DiagnosticsPanel, DocumentView,
+│                                  ExportPanel, StreetViewWorkspace, BookmarkPanel, FileTree, Legend...
 ├── packages/backend/              Python FastAPI backend
-│   ├── main.py                    App + CORS + router includes
-│   ├── cli.py                     PyInstaller entry point (uvicorn launcher)
-│   ├── database.py                SQLite + migrations
-│   ├── routers/
+│   ├── main.py                    FastAPI app, lifespan, CORS, and router registration
+│   ├── cli.py                     PyInstaller entrypoint for uvicorn server
+│   ├── database.py                SQLite connection manager & schema migrations
+│   ├── models.py                  Pydantic data models for artifacts and API requests
+│   ├── routers/                   10 Mounted API Routers:
 │   │   ├── chat.py                ★ Agentic loop, tool registry, action contract, deep research
-│   │   ├── files.py               Workspace listing + vector convert/probe
-│   │   ├── artifacts.py           Artifact CRUD + upload + download
-│   │   ├── geocode.py             Forward + reverse geocode proxy
-│   │   └── streetview.py          Keyless Street View metadata + panorama
-│   ├── domains/                   ★ 7+1 Domain Hubs (Spatial, Mobility, Environment, Planning,
-│   │                              Demographics, Places, Scenarios, Utility) & ToolResult protocol
-│   ├── mcp_servers/               Underlying domain servers (OSM, GIS, weather, zoning, demographics,
-│   │                              Overture, Google Places, Google env, GEE, OD flow, network routing,
-│   │                              public catalogs/DataMeet, GTFS transit, WMS, scenarios)
-│   └── tools/
-│       ├── spatial_registry.py    ★ Centralized polygon registry, geodesic math & IoU deduplication
-│       ├── geo.py                 Geodesic area/perimeter/buffer (pyproj WGS84)
-│       ├── vector_convert.py      Shapefile/GPKG/KML/KMZ/GPX/CSV → WGS84 GeoJSON
-│       ├── utility.py             UtilityServer (search, geocode, measure, artifacts)
-│       ├── google.py              Google Maps Platform client + has_key()
-│       ├── http.py                Shared httpx client (timeouts, backoff, rate limits)
-│       ├── cache.py               Two-tier TTL cache (LRU + SQLite)
-│       ├── artifact_store.py      Artifact persistence (row + on-disk file)
-│       ├── worldpop.py            WorldPop population API client
-│       └── config.py              Model selection (model_config.json / OPENAI_MODEL)
-├── ARCHITECTURE.md                This file
-├── CLAUDE.md                      Orientation for AI coding agents
-└── README.md                      Setup & build commands
+│   │   ├── files.py               Workspace file listing and vector file conversion/probing
+│   │   ├── artifacts.py           Artifact CRUD, file uploads, and 8-format download/export endpoints
+│   │   ├── geocode.py             Forward and reverse geocoding proxy
+│   │   ├── streetview.py          Keyless Street View metadata and equirectangular panoramas
+│   │   ├── wms.py                 WMS GetCapabilities and GetFeatureInfo CORS proxy
+│   │   ├── gee.py                 Google Earth Engine tile proxy and OAuth2 credential manager
+│   │   ├── scenarios.py           Direct HTTP endpoints for planning scenario analysis & MCDA
+│   │   ├── rag.py                 Document parsing, OpenAI embeddings, and semantic vector search
+│   │   └── diagnostics.py         Startup self-check diagnostics for keys, APIs, and libraries
+│   ├── domains/                   ★ 7+1 Domain Hubs & BaseDomainHub protocol
+│   │   ├── protocol.py            BaseDomainHub abstract base class & typed ToolResult
+│   │   ├── spatial_hub.py         Spatial geometry, overlays, boundary queries, polygon registry
+│   │   ├── mobility_hub.py        Road networks, Dijkstra/freight routing, GTFS transit, ITS, OD flows
+│   │   ├── environment_hub.py     GEE satellite LULC/NDVI, weather, air quality, solar/elevation, emissions
+│   │   ├── planning_hub.py        Zoning compliance, master plan georeferencing, digitization
+│   │   ├── demographics_hub.py    WorldPop demographics, cohort-component forecasts, employment
+│   │   ├── places_hub.py          Google Places Platform and Overture 3D buildings & POIs
+│   │   ├── scenarios_hub.py       Planning scenario generation and MCDA matrix comparisons
+│   │   └── utility_hub.py         Geocoding, web search, measurements, PlotServer, artifacts
+│   ├── mcp_servers/               Underlying MCP server implementations (OSM, GIS, weather, zoning, etc.)
+│   ├── tools/                     Authoritative backend engines:
+│   │   ├── spatial_registry.py    ★ Central spatial registry with IoU >= 90% deduplication & geodesic math
+│   │   ├── task_pipeline.py       ★ Queue & Heap orchestrator for document asset-pipeline ordering
+│   │   ├── export_engine.py       ★ Multi-format export compiler (PDF, Word, HTML, XLSX, PNG, JPEG)
+│   │   ├── geo.py                 Geodesic area/perimeter/buffer calculations via pyproj WGS84
+│   │   ├── vector_convert.py      Vector conversion to EPSG:4326 via DuckDB spatial
+│   │   ├── utility.py             UtilityServer implementation (web search, geocode, measure)
+│   │   ├── google.py              Google Maps API client and ContextVar token management
+│   │   ├── http.py                Shared httpx async client with retries and connection pooling
+│   │   ├── cache.py               Two-tier cache (in-memory LRU + SQLite)
+│   │   ├── artifact_store.py      Artifact persistence in SQLite and filesystem
+│   │   ├── worldpop.py            WorldPop API client
+│   │   └── config.py              Model selection helper (model_config.json / OPENAI_MODEL)
+│   └── tests/                     Pytest automated test suite
+├── AGENTS.md                      Orientation for AI coding assistants
+├── ARCHITECTURE.md                This document
+├── FLAUDE.md                      AI assistant & developer reference handbook
+├── FEATURE_IMPLEMENTATION_GUIDE.md Deep dive into core features & subsystems
+└── README.md                      Project overview and setup instructions
 ```
 
-## Process model
+## Process Model & Startup Lifecycle
 
 ```
-Electron main process (apps/desktop/src/main/index.ts)
-  ├─ creates BrowserWindow → loads renderer
-  ├─ exposes IPC (file dialogs, read dir, base64 read, switch model) via preload
-  └─ in production only: spawns the PyInstaller-frozen backend binary
-                          (`Resources/backend/backend --port 8765`),
-                          polling GET /health (up to 30×, 500ms) before opening the window
+Electron Main Process (apps/desktop/src/main/index.ts)
+  ├─ Creates main BrowserWindow and loads React renderer
+  ├─ Exposes IPC handlers (file dialogs, filesystem I/O, base64 reads, model switching) via preload
+  └─ In Production: Spawns frozen backend binary (Resources/backend/backend --port 8765)
+                    and polls GET /health (up to 30 retries, 500ms interval) before opening window
 
-Renderer (Chromium) talks to:
-  ├─ Backend  ws://localhost:8765/api/chat/ws    ← streaming chat & tool calls
-  ├─ Backend  http://localhost:8765/api/*        ← files, artifacts, geocode, streetview
-  └─ Electron main via window.electronAPI       ← OS access only
+Renderer Process (Chromium) talks to:
+  ├─ Backend over WebSocket  ws://localhost:8765/api/chat/ws    (streaming chat, tools, actions)
+  ├─ Backend over HTTP       http://localhost:8765/api/*        (10 mounted routers)
+  └─ Electron Main via       window.electronAPI.*               (local OS access only)
 ```
 
-In **dev mode** (`pnpm dev`), Electron's `startBackend` is a no-op — `pnpm dev:backend` runs uvicorn separately so you get hot reload on both sides. The backend port (`8765`) is hardcoded in both the main process and `cli.py`.
+In development (`pnpm dev`), `apps/desktop/src/main/index.ts:startBackend` is a no-op; uvicorn runs separately via `pnpm dev:backend` so both frontend and backend support hot reloading.
 
-## Three communication channels
+## Three Communication Channels
 
-| Channel | Endpoint / API | Purpose |
+| Channel | Protocol / Route | Purpose |
 |---|---|---|
-| **WebSocket** | `ws://localhost:8765/api/chat/ws` | Streaming chat tokens, tool-use events, action dispatch, deep-research progress |
-| **HTTP** | `/api/files`, `/api/artifacts`, `/api/geocode`, `/api/streetview`, `/health` | File listing/convert, artifact CRUD/upload/download, geocode, Street View |
-| **Electron IPC** | `window.electronAPI.*` | Local OS only — file picker, read dir, base64-read for vision, last-workspace, model switch |
+| **WebSocket** | `ws://localhost:8765/api/chat/ws` | Bi-directional streaming for chat tokens, tool execution notifications, map action dispatch, interactive question cards, and deep-research events. |
+| **HTTP** | `http://localhost:8765/api/*` | 10 modular FastAPI routers: `/api/files`, `/api/chat`, `/api/artifacts`, `/api/geocode`, `/api/streetview`, `/api/wms`, `/api/gee`, `/api/scenarios`, `/api/rag`, `/api/diagnostics`. |
+| **Electron IPC** | `window.electronAPI.*` | Secure OS primitives: folder selection, workspace directory listing, file text/base64 I/O, model switching, and quit hooks. |
 
-CORS is locked to loopback origins (`file://`, `app://`, `http(s)://localhost`, `127.0.0.1`, `[::1]`) — see `packages/backend/main.py`.
+CORS middleware in `main.py` is strictly restricted to loopback origins (`file://`, `app://`, `http(s)://localhost`, `127.0.0.1`, `[::1]`).
 
-## The agentic loop
+## The Agentic Loop (`packages/backend/routers/chat.py`)
 
-The heart of the AI behavior lives in `packages/backend/routers/chat.py:_run_agent`. For each user turn:
-
-```
-1. Send messages + tool defs to OpenAI (streaming).
-2. As deltas arrive:
-     - text deltas → forwarded to frontend as {"type": "stream", "content": …}
-     - tool-call deltas → accumulated in tool_calls_acc keyed by index
-3. When the stream ends, append the assistant message to history.
-4. If the model called tools:
-     a. Send {"type": "tool_use", "tool", "args"} per call.
-     b. Execute each tool via _execute_tool (action OR MCP server OR deep research).
-     c. Append tool results back into history.
-     d. Loop back to step 1.
-5. Otherwise, break. Send {"type": "end"}.
-```
-
-A safety cap of `max_rounds = 10` prevents runaway loops. Tool-call argument JSON that gets cut off mid-stream is returned as a structured error so the next turn stays well-formed (every `tool_call_id` must have a matching tool message).
-
-The connection holds a per-WebSocket message history. The renderer can also pass `history` on a turn to replay a prior conversation — this is how conversation switching and model switching work without losing context.
-
-### Deep research
-
-`generate_report` is special-cased in `_execute_tool`: it runs `_run_deep_research`, which calls the OpenAI **Responses API** (`o4-mini-deep-research`) with the `web_search_preview` tool (up to 30 searches) and streams progress over the WebSocket as `research_start` → `research_step` (one per query) → `research_report` (markdown + citations) → `research_done`, with `research_heartbeat` keep-alives. `ChatPanel` renders this in a dedicated research bubble with `.md` / PDF download.
-
-## The action contract
-
-Some tools are **map actions** rather than data fetches. When the model calls one, the backend doesn't compute anything — it just forwards the call to the renderer:
-
-```json
-{ "type": "action", "action": "fly_to", "payload": { "lat": 30.7, "lng": 76.8, "zoom": 13 } }
-```
-
-The set lives in `_ACTION_TOOLS` (`routers/chat.py`):
+The core conversational reasoning engine runs inside `_run_agent`:
 
 ```
-fly_to · fit_bounds
-add_marker · add_markers · clear_markers
-draw_line · draw_polygon · draw_circle · add_geojson
+1. Receive incoming message payload (user text, map_context, image/attachments, history).
+2. Retrieve relevant semantic text chunks from RAG index (.disha/rag_index.json) if workspace is active.
+3. Append lightweight spatial metadata summary for selected map elements (~100 tokens).
+4. Send full message history and flattened tool declarations to OpenAI (model_config.json / get_model()).
+5. As response chunks stream in:
+     - Text deltas → emitted over WebSocket as {"type": "stream", "content": ...}.
+     - Tool-call deltas → accumulated in tool_calls_acc indexed by call index.
+6. When stream chunking ends:
+     - Append assistant message to history.
+     - If no tool calls were made:
+         * Run Hallucination Detector (checks if assistant claimed an artifact was saved without calling create_artifact).
+         * If hallucinated, inject system correction and continue loop.
+         * Otherwise, break loop and emit {"type": "end"}.
+     - If tool calls were made:
+         * Check Task Pipeline Orchestrator (needs_pipeline): if both asset tools and document compilation are present,
+           order calls into Asset Queue Phase -> Document Heap Phase.
+         * For each tool call:
+             a. Emit {"type": "tool_use", "tool": name, "args": args}.
+             b. If transitioning to document phase, patch real asset file paths into markdown content.
+             c. Execute tool via _execute_tool (action tool OR Domain Hub OR deep research).
+             d. Append tool result message (role: "tool", tool_call_id: id, content: json_str) to history.
+         * Loop back to step 4 (up to max_rounds = 35).
+```
+
+### WebSocket Message Protocol
+
+**Messages from Backend to Frontend:**
+- `{"type": "stream", "content": "..."}` — Incremental assistant text delta.
+- `{"type": "tool_use", "tool": "name", "args": {...}}` — Tool execution started.
+- `{"type": "action", "action": "name", "payload": {...}}` — Map action forwarded to MapLibre.
+- `{"type": "ask_question", "question": "...", "options": [...], "is_multi_select": bool}` — Interactive user prompt.
+- `{"type": "research_start" | "research_step" | "research_reasoning_delta" | "research_text_delta" | "research_report" | "research_done"}` — Deep research events.
+- `{"type": "error", "code": "auth"|"rate_limit"|"timeout"|"connection"|"upstream"|"internal", "message": "..."}` — Error status.
+- `{"type": "end"}` — Turn execution completed.
+- `{"type": "stopped"}` — User cancelled the running task.
+
+**Messages from Frontend to Backend:**
+- `{"type": "stop"}` — Aborts current streaming/tool task via `asyncio.Event`.
+- `{"type": "reset_history"}` — Clears in-memory message history for current WebSocket connection.
+- `{"type": "question_response", "response": "..." | [...]}` — User response to interactive question card.
+- User Turn Payload: `{"content": "...", "map_context": {...}, "image": {...}, "chat_attachments": [...], "history": [...], "api_key": "...", "google_maps_api_key": "..."}`.
+
+## The Action Contract
+
+Actions are declarative UI/cartographic operations. When dispatched from backend tools or `ToolResult.map_action`, `chat.py` sends `{"type": "action", "action": "<name>", "payload": {...}}` over WebSocket.
+
+Supported Actions:
+```
+fly_to · fit_bounds · add_marker · add_markers · clear_markers
+draw_line · draw_polygon · draw_circle · add_geojson · add_geojson_file
 highlight_features · set_layer_style · style_layer · toggle_layer · remove_layer
-save_bookmark · go_to_bookmark · export_region_clip
+save_bookmark · go_to_bookmark · export_region_clip · export_map_png · export_map_jpeg · export_map_pdf
+switch_basemap · add_gee_layer · add_raster_overlay
 ```
 
-On the frontend, `App.tsx:handleMapAction` routes each action:
+On the frontend, `App.tsx:handleMapAction` routes actions:
+- **Layer mutations** (`add_geojson`, `add_geojson_file`, `toggle_layer`, `remove_layer`) update React `layers` state.
+- **Symbology updates** (`style_layer`, `set_layer_style`) compute and apply `LayerStyleSpec`.
+- **AI markers & drawings** (`add_marker`, `draw_polygon`) are promoted to persistent GeoJSON layers.
+- **Camera & viewport actions** (`fly_to`, `fit_bounds`, `highlight_features`) are queued onto `mapActions` and drained by `MapView.tsx`.
 
-- **Layer mutations** (`add_geojson`, `toggle_layer`, `remove_layer`) → mutate the canonical `layers` React state directly so they appear in `mapContext` on the next turn.
-- **`style_layer`** → computes a `LayerStyleSpec` (category palette or numeric breaks read from the layer's feature values) and stores it on the layer; `MapView` translates it into MapLibre paint expressions and a label `symbol` layer.
-- **AI markers** → merged into a single `"AI Markers"` Point layer (so they survive reload, show in `mapContext`, and persist to `project.json`).
-- **AI-drawn shapes** (`draw_line`, `draw_polygon`, `draw_circle`) → promoted to real layers with `source: "ai_draw"` so the assistant can reference them next turn.
-- **Bookmarks / region clip / refresh_artifacts** → handled in React.
-- **Everything else** (`fly_to`, `fit_bounds`, `set_view`, `highlight_features`, `set_layer_style`) → queued onto `mapActions[]`, consumed by `MapView.tsx`, drained via `onActionsProcessed`.
+## The 7+1 Domain Hub Architecture
 
-To add a new action you must touch all three of: backend tool def + dispatch (`chat.py`), `MapAction` union (`types.ts`), action switch (`MapView.tsx` and/or `App.tsx`). The `add-map-action` skill in `.claude/skills/` encodes the procedure.
-
-## The 7+1 Domain Hub Architecture & ToolResult Protocol
-
-Backend tools are consolidated into **7+1 Domain Hubs** in `packages/backend/domains/`, inheriting from `BaseDomainHub` in `domains/protocol.py`:
+All domain tools implement `BaseDomainHub` in `packages/backend/domains/protocol.py`:
 
 ```python
 class BaseDomainHub(ABC):
     name: str
     description: str
     tool_names: set[str]
+    @abstractmethod
     def get_declarations(self) -> list[dict[str, Any]]: ...
+    @abstractmethod
     async def execute(self, tool_name: str, args: dict, context: dict | None = None) -> ToolResult: ...
 ```
 
-Each tool execution returns a standardized `ToolResult`:
-- `data`: Clean summary dictionary returned to the LLM agent loop.
-- `map_action`: Optional map action `{"action": "<name>", "payload": {...}}` automatically sent over the WebSocket.
-- `artifact`: Optional report `{"title": "...", "content": "...", "artifact_type": "report"}` automatically persisted to the workspace/SQLite store.
-- `error`: Error message if status is `"error"`.
+1. **`SpatialHub`** (`domains/spatial_hub.py`): GIS analysis (`gis_buffer`, `gis_centroid`, `gis_area`, `gis_convex_hull`, `gis_intersection`, `gis_difference`, `gis_clip`, `gis_dissolve`, `gis_spatial_join`, `gis_nearest`), OSM boundaries (`osm_boundary`, `osm_boundary_union`), DataMeet catalog, WMS services, and Spatial Registry tools (`list_polygons`, `get_polygon`, `check_polygon_overlap`, `calculate_land_budget`).
+2. **`MobilityHub`** (`domains/mobility_hub.py`): Street networks (`fetch_street_network`, `analyze_street_network`), Dijkstra/freight routing (`find_shortest_path`, `find_freight_route`, `route_multi_stop`), GTFS transit (`import_gtfs_feed`, `analyze_gtfs_service`, `analyze_gtfs_schedules`, `analyze_transit_catchment`), ITS signal timing (`optimize_traffic_signal`, `analyze_parking_requirements`), and OD flows (`import_od_matrix`, `generate_gravity_od_matrix`, `calculate_mode_choice`, `visualize_od_flows`).
+3. **`EnvironmentHub`** (`domains/environment_hub.py`): GEE satellite indices (`get_gee_layer`, `get_population_layer`, `get_dem_layer`, `get_land_cover`, `analyze_lulc_change`, `analyze_land_use_zonal_stats`, `extract_land_use_polygons`, `get_ndvi_layer`), Open-Meteo (`get_weather`, `get_air_quality`), Google Solar/Elevation (`get_elevation`, `get_air_quality_google`, `get_solar_building`), and emissions (`estimate_scenario_emissions`).
+4. **`PlanningHub`** (`domains/planning_hub.py`): Zoning compliance (`analyze_zones`, `detect_zone_overlaps`), document georeferencing (`georeference_active_document`), and feature digitization (`digitize_image_features`).
+5. **`DemographicsHub`** (`domains/demographics_hub.py`): WorldPop population metrics (`get_demographics`), cohort-component forecasting (`project_population`), and employment density projections (`project_employment`).
+6. **`PlacesHub`** (`domains/places_hub.py`): Google Places Platform (`places_autocomplete`, `place_details`, `nearby_places`, `nearby_places_in_polygon`, `places_density`) and Overture 3D buildings (`overture_places_search`, `overture_buildings_search`).
+7. **`ScenariosHub`** (`domains/scenarios_hub.py`): Scenario generation (`generate_planning_scenarios`) and MCDA comparison (`compare_scenarios`).
+8. **`UtilityHub`** (`domains/utility_hub.py`): `web_search`, `geocode`, `measure_distance`, `measure_area`, `create_plot`, `ask_question`, and artifact management (`create_artifact`, `list_artifacts`, `get_artifact`).
 
-Hubs live in `routers/chat.py:_hubs` and their declarations are flattened into the OpenAI tool list by `_build_tools()`. There is **no external MCP stdio bridge** — the in-app chat is the only surface.
+## Centralized Spatial & Polygon Registry (`tools/spatial_registry.py`)
 
-| Domain Hub | File | Key Capabilities & Tools |
-|---|---|---|
-| **1. SpatialHub** | `domains/spatial_hub.py` | Central polygon registry (`list_polygons`, `get_polygon`, `check_polygon_overlap`, `calculate_land_budget`), GIS geometry & overlays (`gis_buffer`, `gis_centroid`, `gis_area`, `gis_convex_hull`, `gis_intersection`, `gis_difference`, `gis_clip`, `gis_dissolve`, `gis_spatial_join`, `gis_nearest`), OSM administrative boundaries (`osm_boundary`, `osm_boundary_union`), DataMeet catalog boundaries, and WMS raster layers. |
-| **2. MobilityHub** | `domains/mobility_hub.py` | Street networks & graph analysis (`fetch_street_network`, `analyze_street_network`), Dijkstra/freight routing (`find_shortest_path`, `find_freight_route`, `route_multi_stop`), GTFS transit services & schedules (`import_gtfs_feed`, `analyze_gtfs_service`, `analyze_gtfs_schedules`, `analyze_transit_catchment`), ITS signal timings (`optimize_traffic_signal`, `analyze_parking_requirements`), and OD matrices (`import_od_matrix`, `generate_gravity_od_matrix`, `calculate_mode_choice`, `visualize_od_flows`). |
-| **3. EnvironmentHub** | `domains/environment_hub.py` | Google Earth Engine satellite imagery & land cover (`get_gee_layer`, `get_population_layer`, `get_dem_layer`, `get_land_cover`, `analyze_lulc_change`, `analyze_land_use_zonal_stats`, `extract_land_use_polygons`, `get_ndvi_layer`), Open-Meteo weather & AQI (`get_weather`, `get_air_quality`), Google Solar/Elevation (`get_elevation`, `get_air_quality_google`, `get_solar_building`), and fleet emissions modeling (`estimate_scenario_emissions`). |
-| **4. PlanningHub** | `domains/planning_hub.py` | Zoning analysis & compliance (`analyze_zones`, `detect_zone_overlaps`), master plan georeferencing (`georeference_active_document`), and feature digitization (`digitize_image_features`). |
-| **5. DemographicsHub** | `domains/demographics_hub.py` | WorldPop 100m grid population estimates (`get_demographics`), cohort-component population forecasting (`project_population`), and economic/employment density projections (`project_employment`). |
-| **6. PlacesHub** | `domains/places_hub.py` | Google Places Platform (`places_autocomplete`, `place_details`, `nearby_places`, `nearby_places_in_polygon`, `places_density`) and Overture 3D buildings & points of interest (`overture_places_search`, `overture_buildings_search`). |
-| **7. ScenariosHub** | `domains/scenarios_hub.py` | Scenario generation (`generate_planning_scenarios`) and Multi-Criteria Decision Analysis (MCDA) comparison (`compare_scenarios`). |
-| **8. UtilityHub** | `domains/utility_hub.py` | Cross-cutting tools: `web_search`, `geocode`, `measure_distance`, `measure_area`, and artifact storage (`create_artifact`, `list_artifacts`, `get_artifact`). |
+Authoritative singleton tracking all polygon geometries in the workspace:
+- **IoU Deduplication ($\ge 90\%$):** Calculates spatial Intersection-over-Union and normalized name similarity ($\ge 0.85$). When a match is found, reuses existing layer, highlights it, and returns exact metrics without duplicate layers.
+- **Geodesic Accuracy:** Uses `pyproj.Geod(ellps="WGS84")` for ellipsoidal surface area ($\text{m}^2$, $\text{ha}$, $\text{km}^2$), perimeter, and centroid math.
+- **Real-Time Layer Sync:** `sync_from_map_layers` continuously synchronizes with active map state on every chat turn.
 
-`generate_report` (deep research) is registered directly in `_build_tools()`, not via a domain hub.
+## Task Pipeline & Multi-Format Export Engine
 
-### Centralized Spatial & Polygon Registry
+- **Task Pipeline Orchestrator (`tools/task_pipeline.py`):** Enforces dependency order when the AI generates multi-asset documents:
+  1. Priority Queue Phase: Generates map snapshots (`export_map_jpeg`) and charts (`create_plot`), reserving artifact IDs and file paths.
+  2. Document Heap Phase: Replaces placeholder image syntax with verified file paths before executing `create_artifact`.
+- **Multi-Format Export Engine (`tools/export_engine.py`):** Pure Python document compilation engine supporting 8 formats: `PDF` (ReportLab `%PDF-1.4`), `Word (.docx)` (python-docx), `HTML` (markdown), `PNG`, `JPEG` (Pillow), `Excel (.xlsx)` (openpyxl), `JSON`, and `TXT`.
 
-All polygon lifecycles (user drawing in `MapView.tsx`, AI drawing via `draw_polygon`, OSM administrative boundaries, DataMeet boundaries, zoning parcels) are tracked centrally in `packages/backend/tools/spatial_registry.py`:
-- **IoU Deduplication ($\ge 90\%$):** Matches incoming bounding geometries against existing layers using spatial Intersection-over-Union and normalized name similarity ($\ge 0.85$).
-- **Reuse & Focus:** If a duplicate study area or boundary is requested, the existing layer is highlighted via `highlight_features` and exact calculated metrics are returned without spawning duplicate layers.
-- **Geodesic Accuracy:** Geodesic area ($\text{m}^2$, ha, $\text{km}^2$), centroid, and bounding box are computed using pyproj WGS84 ellipsoid math and strictly preserved in LLM context.
-- **Real-Time Synchronization:** Synchronizes seamlessly with active map layers (`map_context["layers"]`) on every chat turn.
+## RAG Indexing & Document Semantic Search (`routers/rag.py`)
 
-### Declarative Map Actions & Auto-Display
+- Parses workspace documents (`.pdf`, `.docx`, `.txt`, `.md`) into overlapping text chunks (1000 chars, 200 char overlap).
+- Fetches OpenAI vector embeddings using `text-embedding-3-small` in batches of 100.
+- Writes index to `<workspace>/.disha/rag_index.json`.
+- Performs real-time cosine similarity search over indexed chunks and injects top-4 relevant segments into `SYSTEM_PROMPT` on every chat turn.
 
-Rather than relying on ad-hoc side-effect chains, Domain Hubs declare intended UI and persistence side-effects directly via `ToolResult`:
-- When `ToolResult.map_action` is set, `chat.py` sends the corresponding `MapAction` over WebSocket.
-- When `ToolResult.artifact` is set, `chat.py` persists the markdown report via `artifact_store.py` and triggers a client-side `refresh_artifacts` action.
-- Heavy GeoJSON datasets are rendered on the map, while concise summaries (counts, bounding boxes, area metrics) are returned to the LLM agent loop.
+## Complete HTTP API Surface
 
-## Geospatial conventions
+| Method | Path | Router | Purpose |
+|---|---|---|---|
+| GET | `/health` | `main.py` | Liveness probe |
+| GET | `/api/files?path=...&workspace=...` | `files.py` | List workspace files (path-restricted to workspace root) |
+| GET | `/api/files/convert/probe` | `files.py` | Probe vector file and detect CSV lat/lng columns |
+| POST | `/api/files/convert` | `files.py` | Convert shapefile/GPKG/KML/KMZ/GPX/CSV → WGS84 GeoJSON |
+| WS | `/api/chat/ws` | `chat.py` | Agentic loop, streaming tokens, tools, map actions, deep research |
+| POST | `/api/chat/validate-key` | `chat.py` | Verify OpenAI API key validity |
+| GET | `/api/chat/key-status` | `chat.py` | Check configured status of OpenAI and Google Maps keys |
+| GET | `/api/artifacts` | `artifacts.py` | List artifacts for active workspace |
+| POST | `/api/artifacts` | `artifacts.py` | Create text/markdown artifact |
+| POST | `/api/artifacts/upload` | `artifacts.py` | Multipart upload for image/figure artifacts |
+| POST | `/api/artifacts/reorder` | `artifacts.py` | Update artifact ordering |
+| GET | `/api/artifacts/{id}` | `artifacts.py` | Get artifact row |
+| GET | `/api/artifacts/{id}/download` | `artifacts.py` | Download artifact in native format |
+| GET | `/api/artifacts/{id}/docx` | `artifacts.py` | Download artifact as Word document |
+| GET | `/api/artifacts/{id}/pdf` | `artifacts.py` | Download artifact as PDF document |
+| GET | `/api/artifacts/{id}/latex` | `artifacts.py` | Download artifact as LaTeX document |
+| GET/POST | `/api/artifacts/{id}/export` | `artifacts.py` | Export artifact across 8 formats via `export_engine.py` |
+| POST | `/api/chat/internal_action` | `chat.py` | Internal loopback bridge: dispatches MapActions from OpenCode tool runs to active WebSockets |
+| POST | `/api/chat/internal_question` | `chat.py` | Internal loopback bridge: dispatches interactive questions from OpenCode to WebSockets |
+| PUT | `/api/artifacts/{id}` | `artifacts.py` | Update artifact title, content, or metadata |
+| DELETE | `/api/artifacts/{id}` | `artifacts.py` | Delete artifact |
+| GET | `/api/geocode?query=...` | `geocode.py` | Forward geocoding (Google → Photon → Nominatim) |
+| GET | `/api/geocode/reverse?lat=...&lng=...` | `geocode.py` | Reverse geocoding (Nominatim) |
+| GET | `/api/streetview/meta?lat=...&lng=...` | `streetview.py` | Keyless Street View metadata lookup (`streetlevel`) |
+| GET | `/api/streetview/pano?lat=...&lng=...` | `streetview.py` | Keyless equirectangular JPEG panorama download |
+| GET | `/api/wms/featureinfo` | `wms.py` | WMS GetFeatureInfo CORS proxy |
+| GET | `/api/wms/capabilities` | `wms.py` | WMS GetCapabilities CORS proxy |
+| POST | `/api/gee/credentials` | `gee.py` | Save or clear Google Earth Engine service account credentials |
+| GET | `/api/gee/tiles/{map_id}/{z}/{x}/{y}` | `gee.py` | GEE XYZ tile proxy with OAuth2 Bearer token authentication |
+| POST | `/api/scenarios/analyze` | `scenarios.py` | Fetch OSM metrics for Scenario Builder bounding box |
+| POST | `/api/scenarios/generate` | `scenarios.py` | Generate structured planning scenarios |
+| POST | `/api/scenarios/compare` | `scenarios.py` | Compare scenarios with MCDA scoring |
+| POST | `/api/scenarios/save-artifact` | `scenarios.py` | Save scenario comparison report as an artifact |
+| GET | `/api/rag/status` | `rag.py` | Check document indexing status in workspace |
+| POST | `/api/rag/index` | `rag.py` | Chunk document, fetch embeddings, and write `rag_index.json` |
+| GET | `/api/diagnostics` | `diagnostics.py` | Run system self-checks (OpenAI, Google, OSM, OSRM, weather, GIS libs) |
 
-- **The map and all GeoJSON in flight are EPSG:4326 lng/lat.**
-- **Imported files are reprojected to 4326 on ingest.** `tools/vector_convert.py` detects the source CRS via DuckDB `ST_Read_Meta` and applies `ST_Transform(..., always_xy := true)` so authority-axis-order CRSs still emit GeoJSON-correct `[lng, lat]`. KML/GPX (always WGS84) and files with missing CRS metadata are assumed already lng/lat.
-- **Area, perimeter, and buffer math are geodesic.** `tools/geo.py` uses pyproj's WGS84 ellipsoid (`Geod.geometry_area_perimeter`) for area/perimeter — handling holes and MultiPolygons natively — and projects to the local UTM zone for metric buffers. `gis_area`, `measure_area`, and the boundary-union area breakdown all route through it. Accurate at any latitude.
-- **Tile sources are free raster XYZ.** No Mapbox token, no PMTiles, no MBTiles. Defined in `apps/desktop/src/renderer/types.ts:BASEMAPS`.
-- **OSM data path:** Overpass API → ring-merge for ways → GeoJSON Feature. Boundary fetches additionally fall through to Nominatim with `polygon_geojson=1`.
-- **Overture data path:** DuckDB queries the public Overture S3 parquet release directly; first query per region is a cold scan (1–2 min), then cached.
-- **Frontend geometry ops use Turf.js** (`@turf/turf`) — e.g. clip-to-bbox, point-in-polygon, circle generation, bbox for auto-fit.
+## OpenCode Agent Integration
 
-## Symbology & legend (frontend)
-
-`LayerStyleSpec` (in `types.ts`) is a serializable description of a layer's styling — it lives on the layer and in `project.json`. Three pieces consume it:
-
-- **`MapView.tsx`** translates it into MapLibre paint expressions: a `match` expression for categorized mode, a `step` expression for graduated mode, both wrapped in `coalesce` so per-feature color overrides win. Labels become a `symbol` layer (`text-field` from a property, collision detection, zoom-gated, capped at 3,000 features).
-- **`lib/classify.ts`** computes the inputs: `computeBreaks` (equal-interval / quantile), `buildCategories` (distinct values → colors, zone-aware), `rampColorsForClasses`, and the `COLOR_RAMPS` palettes.
-- **`lib/legend-data.ts:buildLegendEntries`** is the single source of truth for legend content, used by both the live `Legend` overlay and the export compositor so they never drift.
-
-Both the AI path (`style_layer` → `App.tsx:buildStyleSpec`) and the manual `SymbologyPanel` write the same `LayerStyleSpec`.
-
-## Export (frontend)
-
-`lib/compose-figure.ts:composeFigure` paints a publication-ready figure onto a fresh canvas from the live MapLibre canvas: title band, map image, Web-Mercator-accurate scale bar, bearing-aware north arrow, legend card (from `buildLegendEntries`), and attribution footer — no extra runtime deps. (MapLibre is created with `preserveDrawingBuffer: true` so the canvas is readable.) All four export paths in `App.tsx` (PNG/PDF download, PNG/PDF to artifact) share it; PDF wraps it with `jspdf` on landscape A4.
-
-## Frontend state
-
-Pure React `useState`/`useRef`. No Zustand, no Redux, no Context. All state lives in `App.tsx` and flows down as props:
-
-```
-App.tsx state:
-  appMode               'map' | 'document'
-  workspacePath         folder absolute path or null
-  layers                GeoJSONLayer[]   ← canonical layer store (data + styleSpec)
-  mapViewState          { center, zoom, bearing, pitch }
-  mapBounds             current viewport
-  basemap               key into BASEMAPS
-  conversations         Conversation[]   ← persisted in project.json
-  bookmarks             MapBookmark[]
-  mapActions            queue → drained by MapView
-  stylingLayerId        layer open in SymbologyPanel
-  attrLayerId           layer open in AttributeTable
-  artifactsRevision     bump to force ArtifactsPanel refresh
-```
-
-`MapView` exposes a ref (`MapViewHandle`) for canvas access (used for PNG/PDF export). `mapActions` is a queue array; `MapView` processes and clears via `onActionsProcessed`. **Don't add a state library** — match the existing pattern.
-
-## Persistence
-
-| What | Where | Format |
-|---|---|---|
-| Project state (layers + styleSpec, map view, conversations, bookmarks, basemap) | `<workspace>/project.json` | JSON, debounced 800ms after any change, also flushed on app quit |
-| Chat-generated layers | `<workspace>/.disha/layers/<id>.geojson` | Materialized when project saves |
-| Imported / clipped layers | `<workspace>/<name>.geojson` | Written by vector convert and the clip/region-save flows |
-| Last-opened workspace | `userData/last-workspace.json` (prod) or `.tmp/last-workspace.json` (dev) | Auto-restored on launch |
-| Artifacts | SQLite at `packages/backend/disha.db` (override with `DISHA_DB`); image/file artifacts also written under `artifacts_store/` | WAL-mode, migrations in `database.py` |
-| HTTP cache | SQLite `cache.db` (+ in-memory LRU) | TTL cache for upstream API responses |
-| Selected model | `packages/backend/model_config.json` (prod: `Resources/backend/`) | Read by both Electron and Python |
-
-`project.json` stores layer file paths **relative to the workspace** so moving the workspace folder doesn't break it. Absolute paths from older projects keep working.
-
-The artifacts table (see `database.py`) has: `id`, `title`, `content`, `artifact_type`, `format` (markdown/table/image/geojson), `file_path`, `meta` (JSON), `created_at`, `updated_at`.
-
-## HTTP API surface
-
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/health` | Liveness probe |
-| GET | `/api/files?path=…&workspace=…` | List workspace files (path-restricted to the workspace root) |
-| GET | `/api/files/convert/probe` | Pre-flight a vector file; for CSV reports detected lat/lng columns |
-| POST | `/api/files/convert` | Convert shapefile/GPKG/KML/KMZ/GPX/CSV → WGS84 GeoJSON in the workspace |
-| GET | `/api/geocode?query=…` | Forward geocode (Google → Photon → Nominatim) |
-| GET | `/api/geocode/reverse?lat=…&lng=…` | Reverse geocode (Nominatim) |
-| GET | `/api/artifacts` · POST · POST `/upload` · GET `/{id}` · GET `/{id}/download` · PUT · DELETE | Artifact CRUD, multipart upload (images), native-format download |
-| GET | `/api/streetview/meta?lat=…&lng=…` | Nearest panorama metadata (keyless, `streetlevel`) |
-| GET | `/api/streetview/pano?lat=…&lng=…` | Nearest panorama as equirectangular JPEG |
-| WS | `/api/chat/ws` | Chat + tool calls + map actions + deep-research report generation (the main loop) |
-
-> Report generation has **no HTTP endpoint** — it runs inside the chat WebSocket loop. When the model calls the `generate_report` tool, `chat.py:_run_deep_research` streams `research_*` events back over the same socket (see [Deep research](#deep-research) above).
-
-Every request is constrained to loopback origins by CORS.
-
-## Electron IPC surface
-
-Defined in `apps/desktop/src/preload/index.ts`. Renderer accesses these via `window.electronAPI.*`:
+Disha integrates the OpenCode agent runtime to provide autonomous, multi-step agent execution, context compaction, and session management while preserving Disha's native desktop UI, domain hubs, cartography, and task pipeline.
 
 ```
-selectWorkspace()              → opens folder picker
-readDirectory(dirPath)         → list directory entries
-readFile(path) / writeFile     → text I/O (writeFile mkdirs recursively)
-readFileBase64(path)           → for PDF rasterization & vision
-openFile({filters})            → file picker with extension filter
-getLastWorkspace / setLastWorkspace
-getModels / getCurrentModel / switchModel   → model_config.json
-onAppBeforeQuit(handler)       → flush project save before quit
+Frontend (Electron / React 19 / MapLibre)
+               │
+               │ WebSocket (/api/chat/ws)
+               ▼
+     FastAPI Backend (:8765)
+               │
+       ┌───────┴──────────────────────────────┐
+       │ (Feature Flag: USE_OPENCODE=true)    │
+       ▼                                      ▼
+OpenCode Orchestrator             Legacy _run_agent() Fallback
+(llm/opencode/orchestrator.py)    (USE_OPENCODE=false)
+       │
+       │ HTTP / SSE (/session, /event)
+       ▼
+Headless OpenCode Server (:4096)
+       │
+       │ stdio JSON-RPC 2.0 (MCP Protocol)
+       ▼
+Disha MCP Server (llm/opencode/mcp_server.py)
+       │
+       ├─► 24 Map Actions (fly_to, draw_polygon, export_map_jpeg) ──► HTTP Bridge ──► WebSocket
+       ├─► 7+1 Domain Hubs (Spatial, Mobility, Environment, etc.)
+       ├─► Google Earth Engine (GEE) Analytics
+       ├─► Interactive Tools (ask_question, create_plot, create_artifact)
+       └─► Spatial Registry (IoU deduplication, geodesic metrics)
 ```
 
-Model switching writes `model_config.json` (dev: `packages/backend/`; prod: `Resources/backend/`); the Python backend reads the same file via `tools/config.py:get_model`, so both processes share the selection.
+### Key Ownership Matrix
 
-## Environment variables
-
-| Variable | Read in | Gates |
+| Responsibility | Owner | Implementation |
 |---|---|---|
-| `OPENAI_API_KEY` | `routers/chat.py` | Chat assistant + deep-research report generation |
-| `OPENAI_MODEL` | `tools/config.py` | Default model when `model_config.json` is absent (`gpt-4o-mini`) |
-| `GOOGLE_MAPS_API_KEY` | `tools/google.py` | All Google Maps Platform calls + Google-first geocoding (optional) |
-| `DISHA_DB` | `database.py` | Overrides the artifacts SQLite path |
+| **Agent Execution & Multi-Step Loop** | OpenCode | Headless `opencode serve` runtime |
+| **Active Session & Conversation History** | OpenCode | `opencode_session_manager.py` (cached to `<workspace>/.disha/opencode_sessions.json`) |
+| **Context-Window Compaction** | OpenCode | Native OpenCode context management |
+| **Tool Selection & Reasoning** | OpenCode | OpenCode LLM orchestration |
+| **UI, Frontend & Map Rendering** | Disha | React 19, MapLibre GL canvas, ChatPanel |
+| **WebSocket Contract & Event Streaming** | Disha | FastAPI `/api/chat/ws` (`stream`, `tool_use`, `action`, `ask_question`, `end`) |
+| **Domain Logic & GEE Analytics** | Disha | 7+1 Domain Hubs, GEEServer, NetworkX, DuckDB |
+| **Map Actions & Visual Sync** | Disha | `action_utils.py` & `/internal_action` loopback endpoint |
+| **Document Compilation & Task Pipeline** | Disha | `task_pipeline.py` & `artifact_store.py` |
+| **RAG Retrieval & Spatial Optimization** | Disha | `routers/rag.py` & Token-Optimized Spatial Context Engine |
 
-## Run
+## Core Geospatial & Visualization Principles
+
+### 1. Autonomous Execution & Implicit Authorization
+- **Automatic Intermediate Operations:** When the user requests a document, report, map, plot, analysis, or other artifact that requires preliminary data retrieval or spatial calculation, the agent executes all intermediate operations automatically.
+- **No Unnecessary Confirmation Prompts:** Do not stop to ask the user to confirm ("proceed", "yes") when requested outputs and geographic scope are clear. Do not ask users to choose administrative levels, datasets, or GIS tools unless genuinely ambiguous and materially affecting results.
+- **Implicit Authorization:** The user's request to create a final deliverable implicitly authorizes all intermediate data retrieval, spatial analysis, visualization, and artifact-generation steps. Never invent figures or statistics; obtain them via available tools.
+
+### 2. Geographic Interpretation & Boundary Containment
+- **Containment Intent:** When a user asks for features "in" a named geographic place (e.g. "amenities in Mohali", "schools in Sector 17"), the system resolves the place boundary (`osm_boundary` / polygon geometry) and spatially filters the requested features to that actual boundary (using `nearby_places_in_polygon`, `gis_clip`, `gis_spatial_join`, or `gis_point_in_polygon`).
+- **No Extent Substitution:** The geographic constraint implied by the user's wording must be preserved during tool selection, data retrieval, spatial processing, and visualization. Do not substitute a broad search extent, bounding box, viewport, or proximity radius search for an actual geographic boundary when the user's intent is containment.
+- **Inferred Operations:** Intermediate GIS operations (boundary resolution, clipping, intersection, containment, or filtering) are inferred and performed internally without requiring the user to explicitly specify them or hardcoding places.
+
+### 3. Document Visualization & Output Preservation
+- **Independent Output Generation:** When the user requests multiple geographic analyses or visual outputs, independently produce each requested output and maintain its geographic and semantic scope. Do not combine, omit, substitute, or simplify requested outputs merely for implementation convenience.
+- **Distinct Visuals per Heading:** When the user requests separate visuals under separate headings in a document or report, generate a separate distinct visual for each heading; do not combine or merge them unless explicitly requested.
+- **Visual Isolation & Context:** Each visual must contain only the layers and information relevant to its corresponding request, with only necessary geographic context. Do not carry unrelated layers, markers, or visualizations from one requested section into another (clear or toggle off unrelated layers before capturing each section's map snapshot).
+- **Document Asset Sequencing:** When compiling a document, infer the appropriate document structure from the user's requested headings and content, and generate all required underlying maps, plots, statistics, and other artifacts before assembling the document.
+
+## Electron IPC Surface (`apps/desktop/src/preload/index.ts`)
+
+Renderer interacts with Electron main via `window.electronAPI`:
+- `selectWorkspace()`: Opens native folder dialog.
+- `readDirectory(dirPath)`: Lists directory contents.
+- `readFile(path)` / `writeFile(path, content)`: Text file I/O.
+- `readFileBase64(path)`: Binary base64 reading for PDF rasterization and vision.
+- `openFile({ filters })`: File picker with extension filters.
+- `getLastWorkspace()` / `setLastWorkspace(path)`: Last workspace persistence.
+- `getModels()` / `getCurrentModel()` / `switchModel(modelId)`: Model configuration management.
+- `onAppBeforeQuit(callback)`: Flushes project saves before window unload.
+
+## Persistence Subsystem
+
+| Data | Location | Storage Format |
+|---|---|---|
+| Project State | `<workspace>/project.json` | JSON (layers, style specs, camera view, conversations, bookmarks, basemap) |
+| Chat-Generated Layers | `<workspace>/.disha/layers/<id>.geojson` | EPSG:4326 GeoJSON files |
+| OpenCode Session Mappings | `<workspace>/.disha/opencode_sessions.json` | JSON mapping of Disha conversation IDs to OpenCode session IDs |
+| Workspace RAG Index | `<workspace>/.disha/rag_index.json` | JSON embeddings and document chunks |
+| Workspace GEE Key | `<workspace>/.disha/ee-service-account.json` | Service Account JSON |
+| Last-Opened Workspace | `userData/last-workspace.json` (prod) or `.tmp/last-workspace.json` (dev) | JSON string path |
+| Artifacts Catalog | SQLite at `<workspace>/.disha/disha.db` (or `~/.disha/disha.db`) | SQLite database (WAL mode) |
+| Artifact Physical Files | `<workspace>/.disha/artifacts_store/` (or `~/.disha/artifacts_store/`) | Physical binary & text files (`.png`, `.jpg`, `.pdf`, `.docx`) |
+| HTTP Upstream Cache | SQLite `cache.db` (+ in-memory LRU) | SQLite key-value cache |
+| Model Configuration | `packages/backend/model_config.json` | JSON (`{"model": "gpt-4o"}`) |
+
+## Environment Variables
+
+| Variable | Read In | Purpose |
+|---|---|---|
+| `OPENAI_API_KEY` | `routers/chat.py`, `routers/rag.py`, `routers/diagnostics.py` | OpenAI Chat Completions, Embeddings, and Responses API |
+| `OPENAI_MODEL` | `tools/config.py` | Fallback model if `model_config.json` is missing (default: `gpt-5.4-mini`) |
+| `USE_OPENCODE` | `main.py`, `routers/chat.py` | Feature flag: `true` to enable OpenCode runtime orchestration, `false` for legacy agent loop |
+| `OPENCODE_PORT` | `llm/opencode/server_manager.py` | Port for headless OpenCode server (default: `4096`) |
+| `OPENCODE_HOST` | `llm/opencode/server_manager.py` | Hostname for headless OpenCode server (default: `127.0.0.1`) |
+| `GOOGLE_MAPS_API_KEY` | `tools/google.py`, `routers/diagnostics.py` | Google Places Platform, Elevation, Air Quality, Solar (optional) |
+| `GOOGLE_EARTH_ENGINE_CREDS` / `GEE_CREDENTIALS` | `main.py`, `routers/gee.py`, `mcp_servers/gee_server.py` | GEE Service account JSON or file path |
+| `DISHA_DB` | `database.py` | Override global artifacts SQLite path |
+| `LOG_LEVEL` / `DEBUG` | `main.py` | Backend logging verbosity |
+
+## Run & Build Commands
 
 ```bash
-pnpm install                            # once
-cd packages/backend && python -m venv .buildenv \
-  && source .buildenv/bin/activate \
-  && pip install -r requirements.txt    # once
-export OPENAI_API_KEY=...
+# Development (starts backend uvicorn :8765 and electron-vite renderer)
+pnpm dev
 
-pnpm dev                                # backend (uvicorn :8765) + renderer
-```
-
-## Build for distribution
-
-```bash
-# 1. Freeze the Python backend
+# Run tests
 cd packages/backend
-source .buildenv/bin/activate
-pip install pyinstaller
-pyinstaller backend.spec --noconfirm
+.buildenv/Scripts/pytest.exe tests/ -v
 
-# 2. Package the Electron app
-cd apps/desktop
-npx electron-vite build
-npx electron-builder
-# → apps/desktop/release/
-```
-
-In production, `apps/desktop/src/main/index.ts:startBackend` spawns the PyInstaller binary at `Resources/backend/backend`.
-
-## Where to read first (in order)
-
-1. `packages/backend/routers/chat.py` — agentic loop, action contract, tool registry, deep research. **The heart of the AI behavior.**
-2. `packages/backend/tools/spatial_registry.py` — centralized polygon registry, geodesic math, and IoU deduplication.
-3. `packages/backend/domains/` — 7+1 Domain Hubs and `ToolResult` protocol.
-4. `apps/desktop/src/renderer/App.tsx` — single state container, component wiring, action routing, persistence.
-5. `apps/desktop/src/renderer/components/MapView.tsx` — MapLibre setup, symbology/label expressions, draw tools, right-click menu, action handlers.
-6. `apps/desktop/src/renderer/components/ChatPanel.tsx` — WebSocket client, streaming + deep-research render.
-7. `apps/desktop/src/renderer/types.ts` — shared interfaces, `LayerStyleSpec`, basemap defs, zone presets, the `MapAction` union.
-8. `packages/backend/tools/geo.py` + `tools/vector_convert.py` — geodesic math and the import/reprojection path.
-9. `apps/desktop/src/preload/index.ts` — full IPC surface between renderer and Electron main.
-
-## Testing Architecture
-
-```bash
-# Run backend pytest suite (all 8 hubs, spatial registry, WebSocket loop)
-cd packages/backend
-.buildenv/bin/pytest tests/
-
-# Run frontend typecheck
+# Typecheck & Bundler Build Verification
 pnpm --filter @disha/desktop exec tsc --noEmit
+pnpm --filter @disha/desktop build
+
+# Package full distribution installer
+pnpm package
 ```
-
-## Known gaps
-
-- **Overture cold start.** The first query for a region scans public S3 parquet (1–2 min); subsequent queries are cached.
-- **Vision is rasterize-then-send.** Large multi-page PDFs are capped per page (2200px long axis).
-- **DuckDB `spatial` extension** must be reachable (or pre-bundled) for vector import; first use triggers `INSTALL spatial`.
-- **No PMTiles / MBTiles / vector tile support.** All basemaps are external raster XYZ.

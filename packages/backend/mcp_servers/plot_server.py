@@ -130,6 +130,14 @@ class PlotServer:
             elif plot_type == "pie":
                 if not y_data:
                     return {"error": "y_data required for pie chart."}
+                if len(x_data) < 2 or len(y_data) < 2:
+                    return {
+                        "error": (
+                            "Pie charts require at least 2 distinct slices/categories in x_data and y_data "
+                            "(e.g. breakdown by land use class, demographic brackets, or ward distribution). "
+                            "Do not generate a 1-slice 100% pie chart for a single scalar value."
+                        )
+                    }
                 pie_colors = color_choice if isinstance(color_choice, list) else plt.cm.tab10.colors
                 wedges, texts, autotexts = ax.pie(
                     y_data,

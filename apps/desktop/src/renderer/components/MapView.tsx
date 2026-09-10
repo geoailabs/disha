@@ -17,8 +17,7 @@ interface NominatimSearchResult {
 export type MapViewHandle = {
   getCanvas: () => HTMLCanvasElement | null
   resize: () => void
-  zoomOutMargin: (delta?: number) => void
-  fitBboxAndSnapshot: (bboxTarget?: any, padding?: number) => HTMLCanvasElement | null
+  fitBboxAndSnapshot: (bboxTarget?: any, padding?: number, layersToShow?: string[]) => HTMLCanvasElement | null
 }
 
 // Helper to check if a polygon/multipolygon geometry intersects the viewport bounds
@@ -559,7 +558,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
         mapRef.current.zoomTo(mapRef.current.getZoom() - delta, { animate: false })
       }
     },
-    fitBboxAndSnapshot: (bboxTarget?: any, padding = 80) => {
+    fitBboxAndSnapshot: (bboxTarget?: any, padding = 100, layersToShow?: string[]) => {
       const map = mapRef.current
       if (!map) return null
 
@@ -567,6 +566,29 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       const origZoom = map.getZoom()
       const origBearing = map.getBearing()
       const origPitch = map.getPitch()
+
+      // Save original layout visibility for layers when filtering
+      const savedVisibility: Array<{ layerId: string; visibility: string }> = []
+      const sublayerSuffixes = ['-fill', '-outline', '-line', '-circle', '-label', '-raster']
+
+      if (layersToShow && layersToShow.length > 0) {
+        const normalizedFilter = layersToShow.map((s) => s.toLowerCase().trim())
+        for (const layer of layersRef.current) {
+          const layerNameLower = layer.name.toLowerCase()
+          const layerIdLower = layer.id.toLowerCase()
+          const isMatch = normalizedFilter.some(
+            (f) => layerNameLower.includes(f) || f.includes(layerNameLower) || layerIdLower === f,
+          )
+          for (const suffix of sublayerSuffixes) {
+            const sublayerId = `${layer.id}${suffix}`
+            if (map.getLayer(sublayerId)) {
+              const currVis = (map.getLayoutProperty(sublayerId, 'visibility') as string) || 'visible'
+              savedVisibility.push({ layerId: sublayerId, visibility: currVis })
+              map.setLayoutProperty(sublayerId, 'visibility', isMatch ? 'visible' : 'none')
+            }
+          }
+        }
+      }
 
       let boundsToFit: [[number, number], [number, number]] | null = null
 
@@ -580,8 +602,16 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
 
       if (!boundsToFit && layersRef.current.length > 0) {
         let combinedBbox: [number, number, number, number] | null = null
-        for (const layer of layersRef.current) {
-          if (layer.visible && layer.data) {
+        const targetLayers = layersToShow && layersToShow.length > 0
+          ? layersRef.current.filter((layer) => {
+              const n = layer.name.toLowerCase()
+              const id = layer.id.toLowerCase()
+              return layersToShow.some((f) => n.includes(f.toLowerCase()) || f.toLowerCase().includes(n) || id === f.toLowerCase())
+            })
+          : layersRef.current.filter((layer) => layer.visible)
+
+        for (const layer of (targetLayers.length > 0 ? targetLayers : layersRef.current)) {
+          if (layer.data) {
             try {
               const b = turf.bbox(layer.data)
               if (b && b.length === 4 && isFinite(b[0])) {
@@ -611,13 +641,13 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
         const lngSpan = Math.max(e - w, 0.01)
         const latSpan = Math.max(n - s, 0.01)
 
-        // Expand coordinates by 15% margin on all 4 sides (Westmost, Southmost, Eastmost, Northmost)
-        const padWest = w - lngSpan * 0.15
-        const padEast = e + lngSpan * 0.15
-        const padSouth = s - latSpan * 0.15
-        const padNorth = n + latSpan * 0.15
+        // Expand coordinates by 20% margin on all 4 sides so feature fits completely inside canvas
+        const padWest = w - lngSpan * 0.20
+        const padEast = e + lngSpan * 0.20
+        const padSouth = s - latSpan * 0.20
+        const padNorth = n + latSpan * 0.20
 
-        map.fitBounds([[padWest, padSouth], [padEast, padNorth]], { padding: Math.max(padding, 40), animate: false })
+        map.fitBounds([[padWest, padSouth], [padEast, padNorth]], { padding: Math.max(padding, 80), animate: false })
       } else {
         map.zoomTo(origZoom - 0.8, { animate: false })
       }
@@ -629,9 +659,14 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
 
       const canvas = map.getCanvas()
 
-      // Restore camera view asynchronously after snapshot has been collected
+      // Restore camera view and layer visibility asynchronously after snapshot has been collected
       setTimeout(() => {
         if (mapRef.current) {
+          for (const item of savedVisibility) {
+            if (mapRef.current.getLayer(item.layerId)) {
+              mapRef.current.setLayoutProperty(item.layerId, 'visibility', item.visibility)
+            }
+          }
           mapRef.current.jumpTo({ center: origCenter, zoom: origZoom, bearing: origBearing, pitch: origPitch })
         }
       }, 150)

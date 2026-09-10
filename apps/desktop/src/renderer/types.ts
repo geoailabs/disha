@@ -229,9 +229,9 @@ export type MapAction =
         east?: number
       }
     }
-  | { type: 'export_map_png'; payload: { title?: string; save_to_artifacts?: boolean; artifact_id?: number } }
-  | { type: 'export_map_jpeg'; payload: { title?: string; save_to_artifacts?: boolean; artifact_id?: number } }
-  | { type: 'export_map_pdf'; payload: { title?: string; save_to_artifacts?: boolean; artifact_id?: number } }
+  | { type: 'export_map_png'; payload: { title?: string; save_to_artifacts?: boolean; artifact_id?: number; layers_to_show?: string[]; layer_name?: string; bbox?: any } }
+  | { type: 'export_map_jpeg'; payload: { title?: string; save_to_artifacts?: boolean; artifact_id?: number; layers_to_show?: string[]; layer_name?: string; bbox?: any } }
+  | { type: 'export_map_pdf'; payload: { title?: string; save_to_artifacts?: boolean; artifact_id?: number; layers_to_show?: string[]; layer_name?: string; bbox?: any } }
   | { type: 'clear_all_layers'; payload?: { keep_basemap?: boolean } }
   | { type: 'isolate_layer'; payload: { layer_name: string; keep_basemap?: boolean } }
   | { type: 'refresh_artifacts'; payload: { id?: number } | Record<string, never> }

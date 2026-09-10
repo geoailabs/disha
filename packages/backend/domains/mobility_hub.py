@@ -96,11 +96,45 @@ class MobilityHub(BaseDomainHub):
         # ── 3. Routing & Flow Visualizations ──
         if tool_name in self.network_server.tool_names:
             res = await self.network_server.execute(tool_name, {**args, **context})
-            return ToolResult(status=res.get("status", "success"), data=res)
+            map_action = None
+            if res.get("status") == "success" or "output_layer" in res or "output_file" in res or "geojson" in res:
+                out_path = res.get("output_layer") or res.get("output_file")
+                title = args.get("title") or tool_name.replace("_", " ").title()
+                if out_path:
+                    map_action = {
+                        "action": "add_geojson_file",
+                        "payload": {
+                            "path": out_path,
+                            "name": title,
+                            "color": args.get("color") or "#8a3324",
+                        },
+                    }
+                elif "geojson" in res:
+                    map_action = {
+                        "action": "add_geojson",
+                        "payload": {
+                            "geojson": res["geojson"],
+                            "name": title,
+                            "color": args.get("color") or "#8a3324",
+                        },
+                    }
+            clean_data = {k: v for k, v in res.items() if k != "geojson"}
+            return ToolResult(status=res.get("status", "success"), data=clean_data, map_action=map_action)
 
         if tool_name in self.gtfs_server.tool_names:
             res = await self.gtfs_server.execute(tool_name, {**args, **context})
-            return ToolResult(status=res.get("status", "success"), data=res)
+            map_action = None
+            if "geojson" in res:
+                map_action = {
+                    "action": "add_geojson",
+                    "payload": {
+                        "geojson": res["geojson"],
+                        "name": args.get("title") or "Transit Catchment",
+                        "color": args.get("color") or "#3b82f6",
+                    },
+                }
+            clean_data = {k: v for k, v in res.items() if k != "geojson"}
+            return ToolResult(status=res.get("status", "success"), data=clean_data, map_action=map_action)
 
         if tool_name in self.its_server.tool_names:
             res = await self.its_server.execute(tool_name, {**args, **context})
@@ -108,6 +142,17 @@ class MobilityHub(BaseDomainHub):
 
         if tool_name in self.od_server.tool_names:
             res = await self.od_server.execute(tool_name, {**args, **context})
-            return ToolResult(status=res.get("status", "success"), data=res)
+            map_action = None
+            if "geojson" in res:
+                map_action = {
+                    "action": "add_geojson",
+                    "payload": {
+                        "geojson": res["geojson"],
+                        "name": args.get("title") or "OD Desire Lines",
+                        "color": args.get("color") or "#10b981",
+                    },
+                }
+            clean_data = {k: v for k, v in res.items() if k != "geojson"}
+            return ToolResult(status=res.get("status", "success"), data=clean_data, map_action=map_action)
 
         return ToolResult(status="error", error=f"Unknown tool '{tool_name}' in MobilityHub")
