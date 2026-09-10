@@ -193,7 +193,6 @@ class SpatialHub(BaseDomainHub):
                     "area_hectares": entry["area_hectares"],
                     "centroid": entry["centroid"],
                     "bbox": entry["bbox"],
-                    "geometry": entry["geometry"],
                 }
                 return ToolResult(
                     status="success",
@@ -263,14 +262,28 @@ class SpatialHub(BaseDomainHub):
             res = await self.osm_server.execute(tool_name, {**args, **context})
             map_action = None
             if "geometry" in res:
-                label = f"Route ({res.get('distance_km', '?')} km)"
+                label = args.get("title") or f"Route ({res.get('distance_km', '?')} km)"
+                fc = {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "geometry": res["geometry"],
+                            "properties": {
+                                "name": label,
+                                "distance_km": res.get("distance_km"),
+                                "duration_minutes": res.get("duration_minutes"),
+                                "mode": args.get("mode", "driving"),
+                            },
+                        }
+                    ],
+                }
                 map_action = {
-                    "action": "draw_line",
+                    "action": "add_geojson",
                     "payload": {
-                        "coordinates": res["geometry"]["coordinates"],
-                        "color": "#2563eb",
-                        "width": 4,
-                        "label": label,
+                        "geojson": fc,
+                        "name": label,
+                        "color": args.get("color") or "#2563eb",
                     },
                 }
                 summary = {
@@ -288,9 +301,11 @@ class SpatialHub(BaseDomainHub):
             if "geojson" in res:
                 name = args.get("name") or "DataMeet boundary"
                 spatial_registry.register_or_get(name=name, geometry=res["geojson"], source="datameet")
+                summary = {k: v for k, v in res.items() if k != "geojson"}
+                summary["displayed_on_map"] = True
                 return ToolResult(
                     status="success",
-                    data=res,
+                    data=summary,
                     map_action={"action": "add_geojson", "payload": {"geojson": res["geojson"], "name": name}},
                 )
             return ToolResult(status="success", data=res)

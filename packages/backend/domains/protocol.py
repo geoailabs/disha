@@ -25,6 +25,19 @@ class ToolResult:
 
     def to_dict(self) -> dict[str, Any]:
         res = dict(self.data)
+        # Strip raw GeoJSON FeatureCollections or massive coordinate arrays from LLM data
+        # to prevent context length overflow while map_action preserves full geometry for the map.
+        if "geojson" in res:
+            gj = res["geojson"]
+            if isinstance(gj, dict) and "features" in gj:
+                res.setdefault("feature_count", len(gj.get("features", [])))
+            del res["geojson"]
+        if "geometry" in res:
+            geom = res["geometry"]
+            if isinstance(geom, dict) and "coordinates" in geom:
+                coords = geom.get("coordinates")
+                if isinstance(coords, list) and (len(coords) > 10 or any(isinstance(c, list) and len(c) > 10 for c in coords)):
+                    del res["geometry"]
         if self.status != "success":
             res["status"] = self.status
         if self.error:

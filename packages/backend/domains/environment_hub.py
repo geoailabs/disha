@@ -82,7 +82,8 @@ class EnvironmentHub(BaseDomainHub):
         # ── 2. GEE Land Cover & NDVI ──
         if tool_name in self.gee_server.tool_names:
             res = await self.gee_server.execute(tool_name, {**args, **context})
-            return ToolResult(status=res.get("status", "success"), data=res)
+            clean_data = {k: v for k, v in res.items() if k != "geojson"}
+            return ToolResult(status=res.get("status", "success"), data=clean_data)
 
         # ── 3. Weather & Air Quality ──
         if tool_name in self.weather_server.tool_names:

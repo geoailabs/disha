@@ -43,6 +43,35 @@ def _extract_name_stem(name: str) -> str:
     return cleaned
 
 
+_KNOWN_BOUNDARY_ALIASES: dict[str, list[str]] = {
+    "mohali": ["S.A.S. Nagar (Mohali) Tahsil", "Sahibzada Ajit Singh Nagar", "SAS Nagar"],
+    "mohali, punjab": ["S.A.S. Nagar (Mohali) Tahsil", "Sahibzada Ajit Singh Nagar", "SAS Nagar"],
+    "mohali punjab": ["S.A.S. Nagar (Mohali) Tahsil", "Sahibzada Ajit Singh Nagar", "SAS Nagar"],
+    "sas nagar": ["S.A.S. Nagar (Mohali) Tahsil", "Sahibzada Ajit Singh Nagar", "Mohali"],
+    "sahibzada ajit singh nagar": ["S.A.S. Nagar (Mohali) Tahsil", "Sahibzada Ajit Singh Nagar", "SAS Nagar"],
+    "gurgaon": ["Gurugram", "Gurgaon"],
+    "gurugram": ["Gurugram", "Gurgaon"],
+    "bangalore": ["Bengaluru", "Bangalore Urban", "Bangalore"],
+    "bengaluru": ["Bengaluru", "Bangalore Urban", "Bangalore"],
+    "bombay": ["Mumbai", "Mumbai Suburban"],
+    "mumbai": ["Mumbai", "Mumbai Suburban"],
+    "calcutta": ["Kolkata", "Calcutta"],
+    "kolkata": ["Kolkata", "Calcutta"],
+    "madras": ["Chennai", "Madras"],
+    "chennai": ["Chennai", "Madras"],
+    "baroda": ["Vadodara"],
+    "vadodara": ["Vadodara"],
+    "cochin": ["Kochi"],
+    "kochi": ["Kochi"],
+    "trivandrum": ["Thiruvananthapuram"],
+    "thiruvananthapuram": ["Thiruvananthapuram"],
+    "pondicherry": ["Puducherry"],
+    "puducherry": ["Puducherry"],
+    "prayagraj": ["Allahabad"],
+    "allahabad": ["Prayagraj"],
+}
+
+
 # Multiple Overpass mirrors. The main instance frequently rate-limits (429)
 # or returns empty 504 bodies under load — try the next mirror automatically.
 _OVERPASS_MIRRORS = [
@@ -394,24 +423,33 @@ class OSMServer:
             ToolDeclaration(
                 name="osm_route_overview",
                 description=(
-                    "Get a driving/walking route overview between two points using OSRM. "
-                    "Returns distance, duration, and route geometry."
+                    "Calculate and mark a driving, walking, or cycling route between two places or coordinates on the map. "
+                    "Automatically renders the route line on the map canvas and adds it to the Layers list. "
+                    "Accepts place names (origin/destination or start/end) OR numerical coordinates (start_lat, start_lng, end_lat, end_lng). "
+                    "ALWAYS call this tool whenever the user asks to mark, show, draw, or calculate a route/directions/path on the map."
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
-                        "start_lat": {"type": "number"},
-                        "start_lng": {"type": "number"},
-                        "end_lat": {"type": "number"},
-                        "end_lng": {"type": "number"},
+                        "origin": {"type": "string", "description": "Starting place name, landmark, or address (e.g. 'Plaksha University, Mohali')"},
+                        "destination": {"type": "string", "description": "Destination place name, landmark, or address (e.g. 'Sukhna Lake, Chandigarh')"},
+                        "start": {"type": "string", "description": "Alias for origin"},
+                        "end": {"type": "string", "description": "Alias for destination"},
+                        "start_lat": {"type": "number", "description": "Starting latitude"},
+                        "start_lng": {"type": "number", "description": "Starting longitude"},
+                        "end_lat": {"type": "number", "description": "Destination latitude"},
+                        "end_lng": {"type": "number", "description": "Destination longitude"},
                         "mode": {
                             "type": "string",
+                            "enum": ["driving", "walking", "cycling"],
                             "description": "Travel mode: driving (default), walking, cycling",
                         },
+                        "title": {"type": "string", "description": "Optional name or label for the route layer"},
+                        "color": {"type": "string", "description": "Hex color for route line (default '#2563eb')"},
                     },
-                    "required": ["start_lat", "start_lng", "end_lat", "end_lng"],
                 },
             ),
+
             ToolDeclaration(
                 name="osm_fetch_bus_routes",
                 description=(
@@ -710,12 +748,29 @@ out skel qt;
                                 geojson_feature = op_res
                                 break
 
+                    if not geojson_feature or is_tiny:
+                        clean_lookup = name.lower().strip()
+                        aliases = _KNOWN_BOUNDARY_ALIASES.get(clean_lookup, [])
+                        if not aliases:
+                            for k, v in _KNOWN_BOUNDARY_ALIASES.items():
+                                if k in clean_lookup or clean_lookup in k:
+                                    aliases = v
+                                    break
+                        if aliases:
+                            for alias in aliases:
+                                alias_res = await self._nominatim_boundary(name=alias, country_code=country_code, parent=parent)
+                                if alias_res:
+                                    geojson_feature = alias_res
+                                    is_tiny = False
+                                    break
+
                 if not geojson_feature:
                     return {"error": (
                         f"No boundary found for '{name}'. "
                         f"If this is a sector/neighborhood, retry with place_type='suburb' "
                         f"and parent='<city>'. Otherwise try specifying an admin_level or country_code."
                     )}
+
 
             # Calculate centroid and geodesic area if geometry exists
             centroid_dict = None
@@ -1012,6 +1067,11 @@ out skel qt;
             if r.get("geojson", {}).get("type") in ("Polygon", "MultiPolygon")
         ]
 
+        top_place_node = next(
+            (r for r in filtered_results if r.get("class") == "place" and r.get("osm_type") == "node"),
+            None,
+        )
+
         chosen = None
         if polygon_candidates:
             if place_type:
@@ -1050,6 +1110,14 @@ out skel qt;
             if not chosen:
                 chosen = filtered_results[0]
 
+        # Validate chosen polygon against top place node (avoid picking tiny village in another state)
+        if chosen and chosen.get("geojson", {}).get("type") in ("Polygon", "MultiPolygon"):
+            if top_place_node and top_place_node.get("address"):
+                node_state = (top_place_node["address"].get("state") or "").lower()
+                chosen_state = (chosen.get("address", {}).get("state") or "").lower()
+                if node_state and chosen_state and node_state != chosen_state:
+                    chosen = None
+
         if chosen:
             polygon = chosen.get("geojson")
             if polygon and polygon.get("type") in ("Polygon", "MultiPolygon"):
@@ -1077,6 +1145,41 @@ out skel qt;
                 overpass_feat = await self._overpass_boundary(query)
                 if overpass_feat:
                     return overpass_feat
+
+        # If place node exists (e.g. city/town node), resolve boundary via address parent or Overpass around
+        if top_place_node and not _is_retry:
+            addr = top_place_node.get("address", {})
+            for candidate in [addr.get("county"), addr.get("state_district")]:
+                if candidate:
+                    clean_cand = candidate.replace(" Tahsil", "").replace(" District", "").strip()
+                    if clean_cand and clean_cand.lower() != name.lower():
+                        cand_feat = await self._nominatim_boundary(
+                            name=clean_cand,
+                            country_code=country_code,
+                            parent=parent or addr.get("state", ""),
+                            place_type=place_type,
+                            _is_retry=True,
+                        )
+                        if cand_feat:
+                            return cand_feat
+
+            try:
+                n_lat = float(top_place_node.get("lat", 0))
+                n_lon = float(top_place_node.get("lon", 0))
+                if n_lat and n_lon:
+                    op_around_q = (
+                        f'[out:json][timeout:25];'
+                        f'('
+                        f'  relation(around:15000,{n_lat},{n_lon})["boundary"="administrative"]["admin_level"~"^[5678]$"];'
+                        f');'
+                        f'out geom;'
+                    )
+                    around_feat = await self._overpass_boundary(op_around_q)
+                    if around_feat:
+                        return around_feat
+            except Exception:
+                pass
+
 
         # 2. If no polygon found and this is not already a retry, try Photon fuzzy/spelling lookup
         if not _is_retry:
@@ -1217,13 +1320,74 @@ out skel qt;
             "osm_type": data.get("osm_type", ""),
         }
 
+    async def _geocode_place(self, query: str) -> dict | None:
+        """Resolve a place name to {lat, lng} coordinates."""
+        try:
+            from tools.google import geocode_query as google_geocode_query, has_key as has_google_key
+            if has_google_key():
+                results = await google_geocode_query(query, limit=1)
+                if results and "lat" in results[0] and "lng" in results[0]:
+                    return {"lat": float(results[0]["lat"]), "lng": float(results[0]["lng"])}
+        except Exception:
+            pass
+
+        try:
+            photon = await http_client.fetch_json(
+                "https://photon.komoot.io/api/",
+                namespace="photon",
+                params={"q": query, "limit": 1},
+            )
+            features = (photon or {}).get("features", [])
+            if features:
+                coords = features[0].get("geometry", {}).get("coordinates", [])
+                if len(coords) >= 2:
+                    return {"lat": coords[1], "lng": coords[0]}
+        except Exception:
+            pass
+
+        try:
+            nom = await http_client.fetch_json(
+                "https://nominatim.openstreetmap.org/search",
+                namespace="nominatim",
+                params={"q": query, "format": "json", "limit": 1},
+            )
+            if nom and isinstance(nom, list) and len(nom) > 0:
+                return {"lat": float(nom[0]["lat"]), "lng": float(nom[0]["lon"])}
+        except Exception:
+            pass
+
+        return None
+
     async def _route_overview(self, args: dict) -> dict:
         mode_map = {"driving": "car", "walking": "foot", "cycling": "bike"}
         mode = mode_map.get(args.get("mode", "driving"), "car")
-        start = f"{args['start_lng']},{args['start_lat']}"
-        end = f"{args['end_lng']},{args['end_lat']}"
+
+        start_lat = args.get("start_lat") or args.get("origin_lat") or args.get("from_lat")
+        start_lng = args.get("start_lng") or args.get("origin_lng") or args.get("from_lng")
+        end_lat = args.get("end_lat") or args.get("dest_lat") or args.get("to_lat")
+        end_lng = args.get("end_lng") or args.get("dest_lng") or args.get("to_lng")
+
+        # Auto-geocode if place names are provided
+        origin_name = args.get("origin") or args.get("start") or args.get("from_place") or args.get("start_place")
+        if (start_lat is None or start_lng is None) and origin_name:
+            geo = await self._geocode_place(str(origin_name))
+            if geo:
+                start_lat, start_lng = geo["lat"], geo["lng"]
+
+        dest_name = args.get("destination") or args.get("end") or args.get("to_place") or args.get("end_place")
+        if (end_lat is None or end_lng is None) and dest_name:
+            geo = await self._geocode_place(str(dest_name))
+            if geo:
+                end_lat, end_lng = geo["lat"], geo["lng"]
+
+        if start_lat is None or start_lng is None or end_lat is None or end_lng is None:
+            return {"error": "Missing route coordinates. Provide start_lat/start_lng and end_lat/end_lng or origin/destination place names."}
+
+        start = f"{start_lng},{start_lat}"
+        end = f"{end_lng},{end_lat}"
         url = f"https://router.project-osrm.org/route/v1/{mode}/{start};{end}"
         cache_key = {"mode": mode, "start": start, "end": end}
+
 
         async def _fetch() -> dict:
             return await http_client.fetch_json(

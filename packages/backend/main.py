@@ -47,7 +47,20 @@ from tools import http as http_client
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    use_opencode = os.environ.get("USE_OPENCODE", "").lower().strip() in ("true", "1", "yes")
+    if use_opencode:
+        try:
+            from llm.opencode.server_manager import opencode_server_manager
+            await opencode_server_manager.ensure_server_running()
+        except Exception as e:
+            logging.warning(f"Failed to start OpenCode server on startup: {e}")
     yield
+    if use_opencode:
+        try:
+            from llm.opencode.server_manager import opencode_server_manager
+            opencode_server_manager.stop_server()
+        except Exception:
+            pass
     await http_client.aclose()
 
 

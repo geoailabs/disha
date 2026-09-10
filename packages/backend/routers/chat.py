@@ -214,8 +214,7 @@ SYSTEM_PROMPT = (
     "- Bookmarks & Export: save_bookmark, go_to_bookmark, export_region_clip (clips vector layers to GeoJSON), export_map_png (exports/downloads composed map as PNG image figure), export_map_jpeg (exports/downloads composed map as JPEG image figure), export_map_pdf (exports/downloads composed map as PDF report figure)\n"
     "- Zoning: analyze_zones, detect_zone_overlaps\n"
     "- Artifacts & Documents: create_artifact (format: pdf/docx/jpeg/png/markdown/table/geojson), edit_artifact (edit/update a PDF, Word .docx, or markdown planning document: insert sections, map snapshot images, tables, and narrative text/descriptions under specific headings), list_artifacts, get_artifact, extract_attribute_table\n"
-    "  To edit or compile a planning document based on user prompts (e.g., 'add this to the pdf under heading X', 'add the map image under heading Y with description Z', 'edit section A'), call edit_artifact with the title or ID, section_heading, content, and include_map_figure/figure_caption.\n"
-    "  When editing a document to insert an existing image or chart artifact, ALWAYS set `image_artifact_id=37` (using the numeric artifact ID). NEVER use `include_map_figure=true` when inserting an existing saved image artifact.\n"
+    "  To edit or compile a planning document based on user prompts (e.g., 'add this to the pdf under heading X', 'add the map image under heading Y with description Z', 'edit section A'), call edit_artifact with the title or ID, section_heading, content, and include_map_figure/figure_caption. When inserting an existing exported map or chart image (e.g. artifact ID 37), ALWAYS set `image_artifact_id=37` and NEVER use `include_map_figure=true` when inserting an existing saved image artifact.\n"
     "  extract_attribute_table extracts layer or shapefile properties/columns into a tabular artifact.\n"
     "  Re-adding geometry: call get_artifact to retrieve a geojson artifact's content, then pass it to add_geojson.\n"
     "- Reports: generate_report — generates a deep research urban planning report using web search. "
@@ -333,34 +332,40 @@ SYSTEM_PROMPT = (
     "(using osm_boundary or osm_boundary_union), always mention explicitly in your chat response "
     "which administrative level (e.g., admin_level=5 for district/county, admin_level=8 for city/municipality) "
     "was used or chosen.\n"
-    "19. PLOT & CHART GENERATION: Call `create_plot` ONLY when a visual chart, graph, or multi-category breakdown is explicitly requested (e.g. 'bar chart of land use comparison', 'ward population distribution', 'trip modal split'). Provide at least 2 distinct categories in x_data and numeric counts in y_data. NEVER call `create_plot` for a single scalar value (e.g. stating 'Delhi population: 11.3 million' is a formatted number/table in markdown, NOT a 1-slice 100% pie chart). NEVER insert a chart/plot image where a map image was requested (e.g. do not put a population chart under a catchment heading).\n"
-    "20. REGIONAL & METROPOLITAN BOUNDARIES (e.g. NCR / Delhi NCR, Greater London, Tri-State, MMR): When asked to display a metropolitan region consisting of multiple contiguous districts or states (e.g. 'Delhi NCR' or 'National Capital Region', which spans NCT Delhi and adjoining Haryana, Uttar Pradesh, and Rajasthan districts), retrieve and merge the contiguous district/state boundaries (using osm_boundary_union or import_datameet_boundary) so they form a clean boundary. If asked to mark both a central core (e.g. Delhi) and the broader metropolitan region (e.g. NCR) in different colors, add them as two separate distinct layers and style them with contrasting colors (e.g. green outline/fill for Delhi, blue or orange for NCR) using set_layer_style.\n"
-    "21. JUNCTIONS AND POI PINNING: When pinning a specific point of interest, landmark, chowk, junction, or address (like 'Fountain Chowk' or 'Airport Chowk'), ALWAYS first call the `geocode` tool with the full descriptive name and containing context (e.g. 'Fountain Chowk, Sector 43, Chandigarh') to resolve its exact point coordinate. DO NOT call `osm_boundary` or `osm_search` for a specific junction/chowk unless you want to search for adjacent amenities or the city boundary. To display the pinned point on the map, call `add_marker` at the resolved coordinate. When the user asks to route/cross through waypoints, ensure each waypoint is geocoded and explicitly passed in the routing tool's `waypoints` argument, and pass the corresponding color or label if customized.\n"
+    "19. PLOT & CHART GENERATION: Call `create_plot` ONLY when a visual chart, graph, or multi-category breakdown is explicitly requested (e.g. 'bar chart of land use comparison', 'ward population distribution', 'trip modal split'). Provide at least 2 distinct categories in x_data and numeric counts in y_data. NEVER call `create_plot` for a single scalar value (e.g. stating 'City population: 1.13 million' is a formatted number/table in markdown, NOT a 1-slice 100% pie chart). NEVER insert a chart/plot image where a map image was requested (e.g. do not put a population chart under a catchment heading).\n"
+    "20. REGIONAL & METROPOLITAN BOUNDARIES (e.g. metropolitan regions, regional urban clusters, or multi-district conurbations): When asked to display a metropolitan region consisting of multiple contiguous districts or administrative units, retrieve and merge the contiguous boundaries (using osm_boundary_union or import_datameet_boundary) so they form a clean regional boundary. If asked to mark both a central core and the broader metropolitan region in different colors, add them as two separate distinct layers and style them with contrasting colors (e.g. green outline/fill for Core City, blue or orange for Metro Region) using set_layer_style.\n"
+    "21. JUNCTIONS AND POI PINNING: When pinning a specific point of interest, landmark, chowk, junction, intersection, or address, ALWAYS first call the `geocode` tool with the full descriptive name and containing context (e.g. '<Landmark / Junction Name>, <Sub-district / Sector>, <City / Region>') to resolve its exact point coordinate. DO NOT call `osm_boundary` or `osm_search` for a specific junction/chowk unless you want to search for adjacent amenities or the city boundary. To display the pinned point on the map, call `add_marker` at the resolved coordinate. When the user asks to route/cross through waypoints, ensure each waypoint is geocoded and explicitly passed in the routing tool's `waypoints` argument, and pass the corresponding color or label if customized.\n"
     "22. AUTOMATIC ARTIFACT & MULTI-FORMAT EXPORT PERSISTENCE: Whenever you generate ANY planning report, summary card, demographic profile, plot/histogram, or structured analysis, call `create_artifact` with a descriptive title and format ('pdf', 'docx', 'html', 'png', 'jpg', 'xlsx', 'txt', 'json', 'markdown', 'table', 'geojson'). You CAN create PNG, JPEG, PDF, Word (.docx), HTML, and Excel (.xlsx) artifacts directly using `create_artifact`. For charts and histograms, call `create_plot` to generate clean plot image artifacts.\n"
-    "23. ATTRIBUTE FILTERING & VECTOR SUBSETS: When the user asks to filter/extract/isolate specific features from a loaded layer or dataset (e.g. 'filter coastal districts in Tamil Nadu and Kerala', 'show only commercial parcels', 'extract expressways'), ALWAYS call `gis_filter` with the layer_name or path, target values array, and output_layer_name. Do NOT try to highlight features one by one, do NOT paste raw geometries in chat, and do NOT claim you cannot filter without asking the user for a file.\n"
+    "23. ATTRIBUTE FILTERING & VECTOR SUBSETS: When the user asks to filter/extract/isolate specific features from a loaded layer or dataset (e.g. 'filter coastal districts in study state', 'show only commercial parcels', 'extract expressways'), ALWAYS call `gis_filter` with the layer_name or path, target values array, and output_layer_name. Do NOT try to highlight features one by one, do NOT paste raw geometries in chat, and do NOT claim you cannot filter without asking the user for a file.\n"
     "24. MULTI-SELECTED LAYERS IN CHAT CONTEXT: When the user Shift-clicks or selects multiple layers on the map or in the layers sidebar panel, all selected layers appear under [USER SELECTED MAP ELEMENTS / HIGHLIGHTED LAYERS] with their layer names, centroids, and attributes. When the user asks to analyze, compare, overlay, buffer, intersect, or compute stats/charts for 'these layers', 'selected regions', or 'both areas', directly reference and process ALL selected layers by their exact names/attributes in your spatial GIS tools (e.g. gis_intersection, gis_difference, gis_area, gis_union) and demographic/plotting tools (create_plot).\n"
     "25. ZERO PLACEHOLDER POLICY IN ARTIFACTS / DOCUMENTS:\n"
     "  (a) STRICT PROHIBITION: NEVER emit placeholder sentences like 'Built-up land cover polygons for X should be inserted here as a map figure when the layer is available in the current map context', 'Insert image here', 'Map to be loaded', or 'Figure placeholder'.\n"
     "  (b) If the user asks to mark or extract a map feature (e.g. boundary, catchment, built-up area, zoning, transit), you MUST execute the respective tool (`osm_boundary`, `analyze_transit_catchment`/`gis_buffer`, `get_land_cover`/`osm_search`), adjust view with `fit_bounds`, export the map via `export_map_jpeg(save_to_artifacts=True)` to get the real artifact image path, and embed that path directly in the markdown as `![Caption](artifacts_store/<ID>.jpg)`.\n"
     "  (c) Every section requesting visual content MUST have its corresponding real image artifact generated and embedded.\n"
-    "26. MULTI-STEP TASK EXECUTION — SEQUENTIAL PIPELINE (FETCH → EXPORT → COMPILE):\n"
+    "26. MULTI-STEP TASK EXECUTION — SEQUENTIAL PIPELINE & LAYER ISOLATION (FETCH → ISOLATE → EXPORT → COMPILE):\n"
     "  CRITICAL: The backend BLOCKS create_artifact if image references are missing or are placeholders.\n"
-    "  You MUST follow this exact sequential flow across multiple tool-call rounds:\n"
-    "  ROUND 1: osm_boundary_union(['Chandigarh','Panchkula','Mohali']) + fit_bounds\n"
-    "  ROUND 2: export_map_jpeg(title='Tricity Area Map', save_to_artifacts=True) → returns file_path e.g. artifacts_store/42.jpg\n"
-    "  ROUND 3: osm_boundary('Chandigarh') + fit_bounds\n"
-    "  ROUND 4: export_map_jpeg(title='Chandigarh Map', save_to_artifacts=True) → returns file_path e.g. artifacts_store/43.jpg\n"
-    "  ROUND 5: osm_boundary('Panchkula') + fit_bounds + export_map_jpeg(title='Panchkula Map', save_to_artifacts=True) → artifacts_store/44.jpg\n"
-    "  ROUND 6: osm_boundary('Mohali') + fit_bounds + export_map_jpeg(title='Mohali Map', save_to_artifacts=True) → artifacts_store/45.jpg\n"
-    "  ROUND 7: create_plot(plot_type='pie', title='Population Distribution - Tricity', x_data=['Chandigarh','Panchkula','Mohali'], y_data=[1200000,560000,800000]) → returns file_path artifacts_store/46.png\n"
-    "  ROUND 8: create_artifact(title='Chandigarh report', format='docx', content='# Chandigarh report\\n\\n## Tricity Area\\n\\n![Tricity Area](artifacts_store/42.jpg)\\n\\n![Chandigarh](artifacts_store/43.jpg)\\n\\n![Panchkula](artifacts_store/44.jpg)\\n\\n![Mohali](artifacts_store/45.jpg)\\n\\n## Population Distribution\\n\\n![Population Distribution - Tricity](artifacts_store/46.png)')\n"
+    "  When the user requests a multi-heading report with distinct visual maps (e.g. Boundary, Hospitals, Schools, Built-up area, Cropland, Water bodies, Population):\n"
+    "  You MUST follow this exact sequential workflow across tool-call rounds:\n"
+    "  - STEP 1 (Boundary): osm_boundary('<Study Area / City / District>') + fit_bounds\n"
+    "  - STEP 2 (Export Boundary): export_map_jpeg(title='<Study Area> Boundary', save_to_artifacts=True, layers_to_show=['<Study Area>']) → returns artifacts_store/1.jpg\n"
+    "  - STEP 3 (Hospitals): osm_search(query='hospital', boundary_name='<Study Area>')\n"
+    "  - STEP 4 (Export Hospitals): export_map_jpeg(title='Hospitals in <Study Area>', save_to_artifacts=True, layers_to_show=['hospital', '<Study Area>']) → returns artifacts_store/2.jpg\n"
+    "  - STEP 5 (Schools): osm_search(query='school', boundary_name='<Study Area>')\n"
+    "  - STEP 6 (Export Schools): export_map_jpeg(title='Schools in <Study Area>', save_to_artifacts=True, layers_to_show=['school', '<Study Area>']) → returns artifacts_store/3.jpg\n"
+    "  - STEP 7 (Built-Up): extract_land_use_polygons(classes=['built'], study_area='<Study Area>')\n"
+    "  - STEP 8 (Export Built-Up): export_map_jpeg(title='Built Up Area of <Study Area>', save_to_artifacts=True, layers_to_show=['built', '<Study Area>']) → returns artifacts_store/4.jpg\n"
+    "  - STEP 9 (Cropland): extract_land_use_polygons(classes=['crops'], study_area='<Study Area>')\n"
+    "  - STEP 10 (Export Cropland): export_map_jpeg(title='Cropland in <Study Area>', save_to_artifacts=True, layers_to_show=['crops', 'cropland', '<Study Area>']) → returns artifacts_store/5.jpg\n"
+    "  - STEP 11 (Water Bodies): extract_land_use_polygons(classes=['water'], study_area='<Study Area>')\n"
+    "  - STEP 12 (Export Water): export_map_jpeg(title='Water Bodies in <Study Area>', save_to_artifacts=True, layers_to_show=['water', '<Study Area>']) → returns artifacts_store/6.jpg\n"
+    "  - STEP 13 (Compile): create_artifact(title='guide to <study area>', format='docx' or 'pdf', content='...') placing each real image artifact path under its respective heading!\n"
     "  RULES:\n"
-    "  - Each export_map_jpeg call MUST have save_to_artifacts=True\n"
-    "  - The file_path returned by each export_map_jpeg tool call is the EXACT path to use in ![...](path) in the document\n"
-    "  - NEVER write artifacts_store/0.jpg or any path that was not returned by a tool call in this session\n"
-    "  - NEVER use (map_snapshot) or (placeholder) as image references — these will be BLOCKED\n"
-    "  - You MUST call osm_boundary/osm_boundary_union BEFORE each export_map_jpeg to show the correct region\n"
-    "  - You have 35 rounds to complete the pipeline — use them all if needed\n"
+    "  - Each export_map_jpeg call MUST specify `layers_to_show` containing ONLY that section's target feature layer and the boundary outline (e.g. layers_to_show=['hospital', '<Study Area>']). This guarantees each heading has a distinct, uncluttered image showing ONLY its requested feature.\n"
+    "  - The file_path returned by each export_map_jpeg tool call is the EXACT path to use in ![...](path) under that specific heading in the document.\n"
+    "  - NEVER repeat the same all-layers-combined image across different headings.\n"
+    "  - NEVER write artifacts_store/0.jpg or any path that was not returned by a tool call in this session.\n"
+    "  - NEVER use (map_snapshot) or (placeholder) as image references — these will be BLOCKED.\n"
+    "  - You have 35 rounds to complete the pipeline — execute intermediate steps autonomously.\n"
     "27. ACTIVE EXECUTION OVER CACHED ASSUMPTIONS:\n"
     "  - When the user asks to generate, create, or compile a report with maps and data, always perform the active tool sequence to produce fresh, accurate visual layers and images for that specific request.\n"
     "  - Do NOT assume prior inventory items are complete if the user requests specific distinct maps. Each requested visual view must have its own distinct exported map figure.\n"
@@ -369,7 +374,34 @@ SYSTEM_PROMPT = (
     "  - EVERY call to create_artifact generates a BRAND NEW document with a new unique ID. NEVER reference an existing artifact_id in create_artifact — always create fresh.\n"
     "  - Do NOT check list_artifacts before creating. Just call create_artifact directly and a new document will be created.\n"
     "  - The same prompt asked twice will create two separate documents — that is the intended behavior.\n"
+    "29. ROUTE MARKING & DIRECTIONS:\n"
+    "  - Whenever the user asks to mark, show, draw, or calculate a route, path, or directions between two places or coordinates (e.g. 'mark route from Location A to Location B', 'show driving path between landmarks'), you MUST call `osm_route_overview(origin='...', destination='...')` (or with numerical coordinates).\n"
+    "  - `osm_route_overview` automatically calculates accurate road network distance/duration, renders the route line on the map, adds it to the Layers list, and frames the viewport.\n"
+    "  - NEVER respond claiming you marked a route without actually calling `osm_route_overview`.\n"
+    "30. GEOGRAPHIC INTERPRETATION & BOUNDARY CONTAINMENT FILTERING:\n"
+    "  - When a user asks for features 'in' a named geographic place (e.g. 'amenities in City A', 'schools in District B', 'commercial parcels in Study Area'), resolve the place boundary and spatially filter the requested features to that boundary.\n"
+    "  - The geographic constraint implied by the user's wording must be preserved during tool selection, data retrieval, spatial processing, and visualization. Do NOT substitute a broad search extent, bounding box, viewport, or proximity search for an actual geographic boundary when the user's intent is containment.\n"
+    "  - Internally infer and perform any necessary boundary resolution, clipping, intersection, containment, or filtering operations (e.g. `osm_boundary` followed by `nearby_places_in_polygon` or `gis_clip`/`gis_spatial_join`/`gis_point_in_polygon`) required to satisfy the user's geographic intent.\n"
+    "  - Do NOT require the user to explicitly specify these intermediate GIS operations, and do NOT hardcode behavior for particular places.\n"
+    "31. DOCUMENT VISUALIZATION & SECTION HEADING INDEPENDENCE:\n"
+    "  - When the user requests separate visuals under separate headings, generate a separate distinct visual for each heading; do NOT combine or merge them unless explicitly requested.\n"
+    "  - Each visual must contain only the layers and information relevant to its corresponding request, with only necessary geographic context. Do NOT carry unrelated layers, markers, or visualizations from one requested section into another (clear, toggle off, or isolate layers by passing `layers_to_show` before capturing each section's map snapshot).\n"
+    "  - Preserve the user's requested structure and intent while internally determining the necessary data retrieval, spatial processing, visualization, and document-generation steps.\n"
+    "  - Do NOT simplify, merge, or reinterpret separately requested outputs merely for convenience.\n"
+    "32. AUTONOMOUS EXECUTION & IMPLICIT AUTHORIZATION:\n"
+    "  - When the user requests a document, report, map, plot, analysis, or other artifact that requires data to be retrieved or generated first, execute the necessary intermediate operations automatically before producing the requested artifact.\n"
+    "  - Do NOT stop to ask the user to confirm that you should proceed when the requested outputs and their geographic scope are already clear.\n"
+    "  - Do NOT ask the user to select administrative levels, datasets, data providers, GIS operations, or other implementation details unless the request is genuinely ambiguous and the choice materially affects the requested result.\n"
+    "  - Do NOT ask the user to say 'proceed', 'yes', or otherwise confirm execution when the task is already sufficiently specified.\n"
+    "  - If required data or maps are not yet available, retrieve or generate them using the appropriate available tools. Never invent figures, statistics, maps, or images; obtain them through the available data and analysis tools.\n"
+    "  - The user's request to create the final artifact implicitly authorizes the necessary intermediate data retrieval, spatial analysis, visualization, and artifact-generation steps.\n"
+    "  - Only ask for clarification when a required decision cannot reasonably be inferred from the user's request or available context.\n"
+    "33. PRESERVE REQUESTED OUTPUTS & END-TO-END ARTIFACT COMPILATION:\n"
+    "  - When the user requests multiple geographic analyses or visual outputs, independently produce EACH requested output and maintain its geographic and semantic scope.\n"
+    "  - Do NOT combine, omit, substitute, or simplify requested outputs merely for implementation convenience.\n"
+    "  - When compiling a document, infer the appropriate document structure from the user's requested headings and content, and generate all required underlying maps, plots, statistics, and other artifacts before assembling the document.\n"
 )
+
 
 
 # ── Deep research helpers ──────────────────────────────────────────────────────
@@ -1085,6 +1117,13 @@ def _build_tools() -> list[dict]:
             "properties": {
                 "title": {"type": "string", "description": "Optional title for the exported map figure"},
                 "save_to_artifacts": {"type": "boolean", "description": "If true, saves as an image artifact in the Artifacts tab instead of triggering a direct browser download"},
+                "layers_to_show": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional list of layer names to display exclusively in this figure (all other loaded layers are automatically hidden during capture). E.g. ['Hospitals in Amritsar', 'Amritsar Boundary']",
+                },
+                "layer_name": {"type": "string", "description": "Optional name of a single layer to isolate in this figure"},
+                "bbox": {"type": "array", "items": {"type": "number"}, "description": "Optional [west, south, east, north] bounding box to frame"},
             },
         }),
         ("export_map_jpeg", "Export and download the current composed map figure as a JPEG image (with title block, scale bar, legend, and north arrow). Also optionally saves it into the Artifacts panel.", {
@@ -1092,6 +1131,13 @@ def _build_tools() -> list[dict]:
             "properties": {
                 "title": {"type": "string", "description": "Optional title for the exported map figure"},
                 "save_to_artifacts": {"type": "boolean", "description": "If true, saves as a JPG/JPEG artifact in the Artifacts tab instead of triggering a direct browser download"},
+                "layers_to_show": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional list of layer names to display exclusively in this figure (all other loaded layers are automatically hidden during capture). E.g. ['Hospitals in Amritsar', 'Amritsar Boundary']",
+                },
+                "layer_name": {"type": "string", "description": "Optional name of a single layer to isolate in this figure"},
+                "bbox": {"type": "array", "items": {"type": "number"}, "description": "Optional [west, south, east, north] bounding box to frame"},
             },
         }),
         ("export_map_pdf", "Export and download the current composed map figure as a landscape A4 PDF report figure (with title block, scale bar, legend, and north arrow). Also optionally saves it into the Artifacts panel.", {
@@ -1099,6 +1145,13 @@ def _build_tools() -> list[dict]:
             "properties": {
                 "title": {"type": "string", "description": "Optional title for the exported map figure"},
                 "save_to_artifacts": {"type": "boolean", "description": "If true, saves as a PDF artifact in the Artifacts tab instead of triggering a direct browser download"},
+                "layers_to_show": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional list of layer names to display exclusively in this figure (all other loaded layers are automatically hidden during capture).",
+                },
+                "layer_name": {"type": "string", "description": "Optional name of a single layer to isolate in this figure"},
+                "bbox": {"type": "array", "items": {"type": "number"}, "description": "Optional [west, south, east, north] bounding box to frame"},
             },
         }),
         ("switch_basemap", "Switch the map's background basemap (street, satellite, dark, light, terrain, topo, humanitarian)", {
@@ -1382,6 +1435,36 @@ async def _execute_tool(
 
 # ── Agentic loop ──────────────────────────────────────────────────────────────
 
+def _prune_messages_for_context(msgs: list[dict], max_chars: int = 150_000) -> list[dict]:
+    """Prune and compact older tool outputs if total message history exceeds safety limit.
+    
+    Prevents 400 context_length_exceeded errors during multi-step analysis pipelines while
+    preserving all tool_call_id pairs and essential metadata (status, counts, paths, metrics).
+    """
+    total_chars = sum(len(str(m.get("content") or "")) for m in msgs)
+    if total_chars <= max_chars:
+        return msgs
+
+    pruned = []
+    # Always keep system prompt (first) and user request intact
+    for i, m in enumerate(msgs):
+        if m.get("role") == "tool" and i < len(msgs) - 6:
+            c = m.get("content") or ""
+            if len(c) > 600:
+                try:
+                    data = json.loads(c)
+                    if isinstance(data, dict):
+                        compact = {k: v for k, v in data.items() if k in ("status", "count", "id", "file_path", "title", "format", "message", "area_km2", "centroid", "layer_name", "displayed_on_map")}
+                        pruned.append({**m, "content": json.dumps(compact)})
+                        continue
+                except Exception:
+                    pass
+                pruned.append({**m, "content": c[:600] + "... [trimmed for context]"})
+                continue
+        pruned.append(m)
+    return pruned
+
+
 async def _run_agent(
     messages: list[dict],
     ws: WebSocket,
@@ -1405,9 +1488,10 @@ async def _run_agent(
         assistant_msg_created = False
 
         try:
+            active_messages = _prune_messages_for_context(messages)
             stream = await client.chat.completions.create(
                 model=_get_model(),
-                messages=messages,
+                messages=active_messages,
                 tools=tools if tools else None,
                 tool_choice="auto" if tools else None,
                 stream=True,
@@ -1522,9 +1606,37 @@ async def _run_agent(
                         # Do NOT break — continue the loop to give the model a chance to fix itself
                         continue
 
-
+                    # Check if model claimed to have marked a route or boundary on the map without calling any tool
+                    _map_claim = _re_hall.search(
+                        r'\b(marked the route|marked a route|marked the boundary|marked .* on the map|drawn the route|route details:)\b',
+                        accumulated_text, _re_hall.IGNORECASE
+                    )
+                    _tool_called_this_turn = any(
+                        _m.get("role") == "tool"
+                        for _m in reversed(messages)
+                        if _m.get("role") != "user"
+                    )
+                    if _map_claim and not _tool_called_this_turn:
+                        logger.warning(
+                            "[Hallucination Detected] Model claimed route/boundary was marked without executing tools. Injecting correction."
+                        )
+                        await ws.send_text(json.dumps({"type": "stream_replace", "content": ""}))
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                "[SYSTEM CORRECTION] You claimed in text that you marked the route or boundary on the map, "
+                                "but you did NOT call any map tool (`osm_route_overview`, `osm_boundary`, `add_geojson`, etc.). "
+                                "Nothing appeared on the map! "
+                                "You MUST execute the tool call NOW:\n"
+                                "- For routes: call `osm_route_overview(origin='...', destination='...')`\n"
+                                "- For boundaries: call `osm_boundary(name='...')`\n"
+                                "Start immediately by calling the tool. Do NOT output plain text without tool calls."
+                            ),
+                        })
+                        continue
 
                 break
+
 
             # ── Pipeline Orchestrator (Heap + Queue) ────────────────────────────
             # When the model requests BOTH asset generation (map exports, plots)
@@ -1652,11 +1764,73 @@ async def key_status():
     }
 
 
+def _use_opencode() -> bool:
+    val = os.environ.get("USE_OPENCODE", "").lower().strip()
+    return val in ("true", "1", "yes")
+
+
+_active_websockets: set[WebSocket] = set()
+
+
+class InternalActionRequest(BaseModel):
+    action: str
+    payload: dict = {}
+
+
+@router.post("/internal_action")
+async def internal_action(req: InternalActionRequest):
+    """Bridge MapActions from OpenCode tool execution to active WebSocket connections."""
+    for ws in list(_active_websockets):
+        try:
+            if req.action == "refresh_artifacts":
+                await ws.send_text(json.dumps({"type": "action", "action": "refresh_artifacts", "payload": req.payload}))
+            else:
+                await _send_action(ws, req.action, req.payload)
+        except Exception as e:
+            logger.debug(f"Failed to push action to websocket: {e}")
+    return {"status": "ok"}
+
+
+class InternalQuestionRequest(BaseModel):
+    question: str
+    options: list[str] = []
+    is_multi_select: bool = False
+
+
+@router.post("/internal_question")
+async def internal_question(req: InternalQuestionRequest):
+    """Bridge interactive questions from OpenCode tools to active WebSocket connections."""
+    if not _active_websockets:
+        return {"response": None}
+
+    ws = next(iter(_active_websockets))
+    from tools.utility import _active_questions
+    future = asyncio.Future()
+    ws_id = id(ws)
+    _active_questions[ws_id] = future
+
+    try:
+        await ws.send_text(json.dumps({
+            "type": "ask_question",
+            "question": req.question,
+            "options": req.options,
+            "is_multi_select": req.is_multi_select,
+        }))
+        response = await asyncio.wait_for(future, timeout=120.0)
+        return {"status": "success", "response": response}
+    except Exception as e:
+        logger.warning(f"Error awaiting interactive question response: {e}")
+        return {"status": "error", "response": None}
+    finally:
+        _active_questions.pop(ws_id, None)
+
+
 # ── WebSocket handler ─────────────────────────────────────────────────────────
 
 @router.websocket("/ws")
 async def chat_websocket(websocket: WebSocket):
     await websocket.accept()
+    _active_websockets.add(websocket)
 
     # Persistent message history for this connection
     messages: list[dict] = []
@@ -1721,11 +1895,28 @@ async def chat_websocket(websocket: WebSocket):
                     except (Exception, asyncio.CancelledError):
                         pass
                     active_task = None
+                if _use_opencode() and payload.get("conversation_id"):
+                    try:
+                        from llm.opencode.client import OpenCodeClient
+                        from llm.opencode.server_manager import opencode_server_manager
+                        from llm.opencode.session_manager import opencode_session_manager
+                        client_oc = OpenCodeClient(base_url=opencode_server_manager.base_url)
+                        sess_id = opencode_session_manager.get_active_session_id(payload.get("conversation_id"))
+                        if sess_id:
+                            await client_oc.abort_session(sess_id)
+                    except Exception as _oe:
+                        logger.debug(f"OpenCode stop abort note: {_oe}")
                 await websocket.send_text(json.dumps({"type": "stopped"}))
                 continue
 
             if payload.get("type") == "reset_history":
                 messages = []
+                if _use_opencode() and payload.get("conversation_id"):
+                    try:
+                        from llm.opencode.session_manager import opencode_session_manager
+                        opencode_session_manager.clear_session(payload.get("conversation_id"))
+                    except Exception:
+                        pass
                 continue
 
             if payload.get("type") == "question_response":
@@ -1870,7 +2061,33 @@ async def chat_websocket(websocket: WebSocket):
             stop_event = asyncio.Event()
             _set_stop_event(stop_event)
             current_full_messages = full_messages
-            active_task = asyncio.create_task(_run_agent(full_messages, websocket, client, tools=tools, map_context=map_context, active_image=georef_target_image))
+
+            if _use_opencode():
+                from llm.opencode.orchestrator import run_opencode_agent
+                active_task = asyncio.create_task(
+                    run_opencode_agent(
+                        user_content=user_content,
+                        ws=websocket,
+                        map_context=map_context,
+                        chat_attachments=chat_attachments,
+                        active_image=georef_target_image,
+                        conversation_id=payload.get("conversation_id"),
+                        stop_event=stop_event,
+                        system_prompt=system,
+                        workspace=workspace,
+                    )
+                )
+            else:
+                active_task = asyncio.create_task(
+                    _run_agent(
+                        full_messages,
+                        websocket,
+                        client,
+                        tools=tools,
+                        map_context=map_context,
+                        active_image=georef_target_image,
+                    )
+                )
 
     except WebSocketDisconnect:
         if active_task and not active_task.done():
@@ -1893,6 +2110,8 @@ async def chat_websocket(websocket: WebSocket):
             await websocket.send_text(json.dumps({"type": "end"}))
         except Exception:
             pass
+    finally:
+        _active_websockets.discard(websocket)
 
 
 def _classify_error(e: Exception) -> str:
