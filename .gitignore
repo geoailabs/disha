@@ -35,3 +35,5 @@ chandigarh_plan.pdf
 ee-*.json
 scripts/*
 !scripts/sync-docs.mjs
+!scripts/generate_setup_guide_pdf.py
+!scripts/capture_disha_screenshots.js
