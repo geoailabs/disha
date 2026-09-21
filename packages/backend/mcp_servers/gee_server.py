@@ -283,10 +283,12 @@ class GEEServer:
             ToolDeclaration(
                 name="get_land_cover",
                 description=(
-                    "Fetch and display a land-use / land-cover (LULC) classification layer. "
-                    "Sources: 'dynamic_world' (Google 10m, 2016–present, 9 classes) and "
-                    "'esa_worldcover' (ESA 10m, 2020/2021, 11 classes). "
-                    "Use for urban footprint detection, green space analysis, and zoning reference."
+                    "Add a full land-use / land-cover (LULC) raster tile layer showing ALL land classes simultaneously "
+                    "(Water, Trees, Grass, Flooded Vegetation, Crops, Shrub & Scrub, Built Area, Bare Ground, Snow & Ice) as a colour-coded overlay. "
+                    "Sources: 'dynamic_world' (Google 10m, 2016–present, 9 classes) or 'esa_worldcover' (ESA 10m, 2020/2021, 11 classes). "
+                    "USE THIS ONLY when the user wants to see the complete, multi-class land cover map for the whole area. "
+                    "DO NOT use this to isolate or show a single class (e.g. 'built-up area only', 'water bodies only', 'trees only'). "
+                    "For single-class extraction or vector polygons of one class, use extract_land_use_polygons instead."
                 ),
                 parameters={
                     "type": "object",
@@ -337,16 +339,19 @@ class GEEServer:
             ToolDeclaration(
                 name="extract_land_use_polygons",
                 description=(
-                    "Extract specific land cover classes (e.g. 'Built Area', 'Trees', 'Water', 'Crops') "
-                    "into vector GeoJSON polygons loaded directly on the map. Supports clipping to an official "
-                    "administrative city/district boundary using `place_name` or `geojson`, and custom layer `color`."
+                    "Extract a SINGLE specific land cover class as vector GeoJSON polygon features loaded directly on the map canvas. "
+                    "USE THIS TOOL whenever the user asks for: built-up area, urban footprint, impervious surface, built area, "
+                    "trees / forest, water bodies, cropland, grassland, or any other single land class to be shown as a map layer. "
+                    "DO NOT use get_land_cover for single-class requests — this tool produces precise, clipped vector polygons for "
+                    "exactly the requested class, optionally constrained to a city/district boundary via `place_name`. "
+                    "Always pass `place_name` (city/region name) when the user specifies a study area to clip polygons to the official boundary."
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
-                        "target_class": {"type": "string", "description": "Class name to extract (e.g. 'Built Area', 'Trees', 'Water', 'Crops', 'Grass'). Default 'Built Area'."},
-                        "place_name": {"type": "string", "description": "City or region name (e.g. 'Chandigarh', 'Mohali', 'Panchkula') to automatically clip built-up area to its official administrative boundary."},
-                        "geojson": {"type": "object", "description": "Optional explicit boundary polygon to constrain extraction."},
+                        "target_class": {"type": "string", "description": "REQUIRED. The single land cover class to extract as vector polygons. Use exact Dynamic World class names: 'Built Area' (urban/impervious surfaces), 'Trees' (forest/vegetation), 'Water' (rivers/lakes), 'Crops' (agricultural land), 'Grass', 'Shrub & Scrub', 'Bare Ground', 'Flooded Vegetation', 'Snow & Ice'."},
+                        "place_name": {"type": "string", "description": "City or region name to automatically clip extracted polygons to its official administrative boundary (e.g. 'Bengaluru', 'Mumbai', 'Delhi')."},
+                        "geojson": {"type": "object", "description": "Optional explicit boundary polygon GeoJSON to constrain extraction."},
                         "color": {"type": "string", "description": "Color for the extracted polygon layer (e.g. 'blue', '#2563EB', 'yellow', 'red', 'green')."},
                         "lat": {"type": "number", "description": "Latitude for circular bounding region (if place_name or geojson is not provided)."},
                         "lng": {"type": "number", "description": "Longitude for circular bounding region (if place_name or geojson is not provided)."},
@@ -718,6 +723,10 @@ class GEEServer:
                     "year": year,
                     "classes": {str(i): {"name": n, "color": f"#{c}"} for i, (n, c) in enumerate(zip(dw_classes, dw_palette))},
                     "message": f"Land cover layer '{layer_title}' added to map.",
+                    "tile_url": tile_url,
+                    "dataset_id": dataset_id,
+                    "vis": vis,
+                    "layer_title": layer_title,
                 }
 
             elif source == "esa_worldcover":
@@ -748,8 +757,16 @@ class GEEServer:
 
                 tile_url = await self._tile_url(build_image)
                 await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
-                return {"status": "success", "source": "ESA WorldCover", "dataset": dataset_id,
-                        "message": f"Land cover layer '{layer_title}' added to map."}
+                return {
+                    "status": "success",
+                    "source": "ESA WorldCover",
+                    "dataset": dataset_id,
+                    "message": f"Land cover layer '{layer_title}' added to map.",
+                    "tile_url": tile_url,
+                    "dataset_id": dataset_id,
+                    "vis": vis,
+                    "layer_title": layer_title,
+                }
 
             return {"error": f"Unknown source '{source}'. Use 'dynamic_world' or 'esa_worldcover'."}
 
@@ -1043,7 +1060,17 @@ class GEEServer:
     async def _extract_land_use_polygons(self, args: dict) -> dict:
         target_input = str(args.get("target_class", "Built Area")).strip().lower()
         geojson_input = args.get("geojson")
-        place_name = (args.get("place_name") or args.get("city") or args.get("location") or args.get("name") or "").strip()
+        place_name = (
+            args.get("place_name")
+            or args.get("city")
+            or args.get("location")
+            or args.get("study_area")
+            or args.get("boundary_name")
+            or args.get("boundary")
+            or args.get("place")
+            or args.get("name")
+            or ""
+        ).strip()
         custom_color = args.get("color")
         lat = args.get("lat")
         lng = args.get("lng")
@@ -1117,16 +1144,19 @@ class GEEServer:
         try:
             import ee
 
+            geom_data = None
+            if geojson_input:
+                geom_data = geojson_input
+                if isinstance(geom_data, dict):
+                    if geom_data.get("type") == "FeatureCollection" and geom_data.get("features"):
+                        geom_data = geom_data["features"][0].get("geometry", geom_data)
+                    elif geom_data.get("type") == "Feature" and "geometry" in geom_data:
+                        geom_data = geom_data["geometry"]
+                    elif "geometry" in geom_data and isinstance(geom_data["geometry"], dict):
+                        geom_data = geom_data["geometry"]
+
             def run_vectorize():
-                if geojson_input:
-                    geom_data = geojson_input
-                    if isinstance(geom_data, dict):
-                        if geom_data.get("type") == "FeatureCollection" and geom_data.get("features"):
-                            geom_data = geom_data["features"][0].get("geometry", geom_data)
-                        elif geom_data.get("type") == "Feature" and "geometry" in geom_data:
-                            geom_data = geom_data["geometry"]
-                        elif "geometry" in geom_data and isinstance(geom_data["geometry"], dict):
-                            geom_data = geom_data["geometry"]
+                if geom_data:
                     ee_geom = ee.Geometry(geom_data)
                 elif lat is not None and lng is not None:
                     ee_geom = ee.Geometry.Point([float(lng), float(lat)]).buffer(radius_km * 1000.0)
@@ -1143,22 +1173,89 @@ class GEEServer:
                 # Mask raster for target land cover class
                 masked = img.eq(target_idx).selfMask()
 
-                # Convert raster pixels to vector polygons
-                vectors = masked.reduceToVectors(
-                    geometry=ee_geom,
-                    scale=30,
-                    maxPixels=1e7,
-                    geometryType="polygon",
-                    labelProperty="class_id",
-                )
+                def extract_geom(g):
+                    vectors = masked.reduceToVectors(
+                        geometry=g,
+                        scale=30,
+                        maxPixels=1e9,
+                        geometryType="polygon",
+                        labelProperty="class_id",
+                    )
+                    return vectors.getInfo()
 
-                fc = vectors.getInfo()
-                return fc
+                try:
+                    return extract_geom(ee_geom)
+                except Exception as e:
+                    err_str = str(e).lower()
+                    if "5000" in err_str or "limit" in err_str or "aborted" in err_str or "memory" in err_str:
+                        logger.info("Extraction exceeded limit. Splitting geometry into sub-quadrants recursively...")
+                        
+                        def split_and_extract(geom, depth=0):
+                            if depth > 2: # Max 3 levels of recursion (64 quadrants)
+                                raise Exception("Max recursion depth reached: region is too complex.")
+                            
+                            bounds = geom.bounds().getInfo()['coordinates'][0]
+                            lons = [pt[0] for pt in bounds]
+                            lats = [pt[1] for pt in bounds]
+                            w, e_lon = min(lons), max(lons)
+                            s, n_lat = min(lats), max(lats)
+                            mid_lon = (w + e_lon) / 2.0
+                            mid_lat = (s + n_lat) / 2.0
+                            
+                            quads = [
+                                ee.Geometry.Rectangle([w, s, mid_lon, mid_lat]),
+                                ee.Geometry.Rectangle([mid_lon, s, e_lon, mid_lat]),
+                                ee.Geometry.Rectangle([w, mid_lat, mid_lon, n_lat]),
+                                ee.Geometry.Rectangle([mid_lon, mid_lat, e_lon, n_lat])
+                            ]
+                            
+                            feats = []
+                            for q in quads:
+                                inter = geom.intersection(q, 10)
+                                if inter.area().getInfo() > 0:
+                                    try:
+                                        fc = extract_geom(inter)
+                                        feats.extend(fc.get("features", []))
+                                    except Exception as qe:
+                                        err_msg = str(qe).lower()
+                                        if "5000" in err_msg or "limit" in err_msg or "aborted" in err_msg or "memory" in err_msg:
+                                            feats.extend(split_and_extract(inter, depth + 1))
+                                        else:
+                                            logger.warning(f"Quadrant extraction failed for non-limit reason: {qe}")
+                            return feats
+
+                        all_features = split_and_extract(ee_geom)
+                        if not all_features:
+                            raise Exception("Vector extraction failed: Region is too large or too dense.")
+                        return {"type": "FeatureCollection", "features": all_features}
+                    else:
+                        raise
 
             loop = asyncio.get_event_loop()
             fc_data = await loop.run_in_executor(None, run_vectorize)
 
             features = fc_data.get("features", [])
+
+            # Exact spatial intersection (clipping) against boundary polygon
+            if geom_data:
+                try:
+                    import shapely.geometry
+                    b_shape = shapely.geometry.shape(geom_data)
+                    clipped_features = []
+                    for feat in features:
+                        f_geom = feat.get("geometry")
+                        if not f_geom:
+                            continue
+                        f_shape = shapely.geometry.shape(f_geom)
+                        if b_shape.intersects(f_shape):
+                            inter = b_shape.intersection(f_shape)
+                            if not inter.is_empty:
+                                feat["geometry"] = shapely.geometry.mapping(inter)
+                                clipped_features.append(feat)
+                    features = clipped_features
+                except Exception as clip_err:
+                    logger.warning(f"Spatial clipping of land cover polygons failed: {clip_err}")
+
             display_title = f"{class_name} - {place_name}" if place_name else f"{class_name} Polygons ({year})"
             for feat in features:
                 feat.setdefault("properties", {})
@@ -1206,7 +1303,8 @@ class GEEServer:
                 "color": class_color,
                 "polygons_extracted": len(features),
                 "geojson": output_geojson,
-                "geojson_file": out_filename if workspace else None,
+                "geojson_file": str(out_path) if workspace else None,
+                "layer_name": display_title,
                 "message": (
                     f"Extracted {len(features)} {class_name} vector polygons for {place_name or year} in {class_color} and loaded on map."
                 ),

@@ -379,15 +379,42 @@ export default function LayerPanel({
     const targetLayer = layers.find((l) => l.id === layerId)
     if (targetLayer && onSelectFeature) {
       const layerFeatures = targetLayer.data?.features || []
+      
+      let combinedGeometry: any = { type: 'Point', coordinates: [0, 0] }
+      if (layerFeatures.length > 0) {
+        if (layerFeatures.length === 1) {
+          combinedGeometry = layerFeatures[0].geometry || combinedGeometry
+        } else {
+          // Determine dominant type and flatten accordingly
+          const firstType = layerFeatures[0].geometry?.type || 'Point'
+          if (firstType === 'Polygon' || firstType === 'MultiPolygon') {
+            const coords: any[] = []
+            layerFeatures.forEach((f: any) => {
+              if (f.geometry?.type === 'Polygon') coords.push(f.geometry.coordinates)
+              else if (f.geometry?.type === 'MultiPolygon') coords.push(...f.geometry.coordinates)
+            })
+            combinedGeometry = { type: 'MultiPolygon', coordinates: coords }
+          } else if (firstType === 'LineString' || firstType === 'MultiLineString') {
+            const coords: any[] = []
+            layerFeatures.forEach((f: any) => {
+              if (f.geometry?.type === 'LineString') coords.push(f.geometry.coordinates)
+              else if (f.geometry?.type === 'MultiLineString') coords.push(...f.geometry.coordinates)
+            })
+            combinedGeometry = { type: 'MultiLineString', coordinates: coords }
+          } else {
+            const coords: any[] = []
+            layerFeatures.forEach((f: any) => {
+              if (f.geometry?.type === 'Point') coords.push(f.geometry.coordinates)
+              else if (f.geometry?.type === 'MultiPoint') coords.push(...f.geometry.coordinates)
+            })
+            combinedGeometry = { type: 'MultiPoint', coordinates: coords }
+          }
+        }
+      }
+
       const fullFeature = {
         type: 'Feature' as const,
-        geometry:
-          layerFeatures.length > 1
-            ? {
-                type: 'MultiPolygon' as const,
-                coordinates: layerFeatures.map((f: any) => f.geometry?.coordinates).filter(Boolean),
-              }
-            : layerFeatures[0]?.geometry || { type: 'Point' as const, coordinates: [0, 0] },
+        geometry: combinedGeometry,
         properties: {
           ...(layerFeatures[0]?.properties || {}),
           layer_name: targetLayer.name,

@@ -93,29 +93,39 @@ def patch_content_with_real_paths(
 
     img_pattern = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
     used_asset_indices: set[int] = set()
+    used_paths: set[str] = set()
 
     def _match_asset_for_ref(alt: str, src: str) -> Optional[str]:
-        # If src is already one of the freshly generated asset paths and not reused, keep it
-        if src in known_real_paths:
+        # If src is already one of the freshly generated asset paths and not yet used in another section, keep it
+        if src in known_real_paths and src not in used_paths:
+            used_paths.add(src)
+            for idx, a in enumerate(assets):
+                if a.get("file_path") == src:
+                    used_asset_indices.add(idx)
+                    break
             return None
 
         comb_text = f"{alt} {src}".lower().replace("_", " ").replace("-", " ")
         
         # 1. Match by specific keywords in title
         for idx, a in enumerate(assets):
-            if idx in used_asset_indices:
+            fpath = a.get("file_path", "")
+            if idx in used_asset_indices or fpath in used_paths:
                 continue
             title = (a.get("title") or "").lower().replace("_", " ").replace("-", " ")
             title_words = [w for w in title.split() if len(w) > 3 and w not in ("area", "map", "figure", "boundary", "plot", "chart", "distribution")]
             if any(w in comb_text for w in title_words):
                 used_asset_indices.add(idx)
-                return a["file_path"]
+                used_paths.add(fpath)
+                return fpath
 
-        # 2. Match sequentially for generic placeholders or filenames
+        # 2. Match sequentially for generic placeholders, filenames, or duplicate real paths
         for idx, a in enumerate(assets):
-            if idx not in used_asset_indices:
+            fpath = a.get("file_path", "")
+            if idx not in used_asset_indices and fpath not in used_paths:
                 used_asset_indices.add(idx)
-                return a["file_path"]
+                used_paths.add(fpath)
+                return fpath
 
         return None
 

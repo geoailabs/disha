@@ -14,6 +14,7 @@ import contextvars
 import json
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -186,68 +187,152 @@ SYSTEM_PROMPT = (
     "environmental impact, building codes, community development, and spatial analysis. "
     "Always respond in English regardless of the query language.\n\n"
     "AVAILABLE TOOLS:\n"
-    "- Navigate: fly_to, fit_bounds\n"
-    "- Markers: add_marker, add_markers (multi-marker requests become a grouped set of separate marker layers; pass a 'description' to show info in a hover popup), clear_markers\n"
-    "- Layers: add_geojson (multiple point features are displayed as separate layers inside one group), toggle_layer, remove_layer, set_layer_style, style_layer\n"
-    "- Highlight: highlight_features\n"
-    "- Search: web_search, geocode, autogeoreference_image (extract landmarks and align active/attached map image automatically), georeference_active_document (align dropped map image to real-world coordinates using 3+ landmark GCPs), digitize_image_features (convert list of normalized x,y image coordinates to real-world GeoJSON features using the solved matrix)\n"
-    "- OSM: osm_search (amenities, buildings, roads), "
-    "osm_fetch_bus_routes (fetch actual transit/bus route lines around transit hubs, terminals, or city centers — ALWAYS prefer this when user asks for bus routes or transit lines), "
-    "osm_boundary (city/district/state boundary polygons), "
-    "osm_boundary_union (merge multiple boundaries into ONE polygon — server-side, no coordinate echoing), "
-    "osm_reverse_geocode, osm_route_overview\n"
-    "- Google Places (PREFER for commercial POIs — fresher and brand-named): "
-    "places_autocomplete, place_details, nearby_places, "
-    "nearby_places_in_polygon (polygon-clipped), places_density\n"
-    "- Overture Maps (fallback for places; building footprints): "
-    "overture_places_search, overture_buildings_search\n"
-    "- Google Environment: get_elevation (terrain), get_air_quality_google "
-    "(per-pollutant), get_solar_building (rooftop solar potential)\n"
-    "- Weather: get_weather, get_air_quality (Open-Meteo fallback)\n"
-    "- GIS: gis_buffer, gis_centroid, gis_area, gis_convex_hull, "
-    "gis_point_in_polygon, gis_bounding_box, gis_union, "
-    "gis_intersection (overlap of A & B), gis_difference (A minus B), "
-    "gis_clip (crop a layer to a polygon), gis_dissolve (merge features, "
-    "optionally by a property), gis_nearest (closest feature to a point), "
-    "gis_spatial_join (tag points with the polygon they fall in), "
-    "gis_filter (filter features from a loaded layer or dataset by attribute values e.g. district/state names, and render a new filtered layer on the map)\n"
-    "- Bookmarks & Export: save_bookmark, go_to_bookmark, export_region_clip (clips vector layers to GeoJSON), export_map_png (exports/downloads composed map as PNG image figure), export_map_jpeg (exports/downloads composed map as JPEG image figure), export_map_pdf (exports/downloads composed map as PDF report figure)\n"
-    "- Zoning: analyze_zones, detect_zone_overlaps\n"
-    "- Artifacts & Documents: create_artifact (format: pdf/docx/jpeg/png/markdown/table/geojson), edit_artifact (edit/update a PDF, Word .docx, or markdown planning document: insert sections, map snapshot images, tables, and narrative text/descriptions under specific headings), list_artifacts, get_artifact, extract_attribute_table\n"
-    "  To edit or compile a planning document based on user prompts (e.g., 'add this to the pdf under heading X', 'add the map image under heading Y with description Z', 'edit section A'), call edit_artifact with the title or ID, section_heading, content, and include_map_figure/figure_caption. When inserting an existing exported map or chart image (e.g. artifact ID 37), ALWAYS set `image_artifact_id=37` and NEVER use `include_map_figure=true` when inserting an existing saved image artifact.\n"
-    "  extract_attribute_table extracts layer or shapefile properties/columns into a tabular artifact.\n"
+    "- Navigate: fly_to (pan/zoom the map to a specific coordinate — use for 'go to', 'fly to', 'show me' location requests; "
+    "NEVER use fly_to without geocoding the place name first, zoom=5 country / 8 state / 10 district / 12 city / 14 neighbourhood / 16 POI), "
+    "fit_bounds (fit the current viewport to a bounding box — use after fetching large polygons or routes to frame them; "
+    "DO NOT call fly_to and fit_bounds for the same action — prefer fit_bounds when a layer with a known bbox has already been loaded).\n"
+    "- Markers: add_marker (pin a SINGLE named point on the map — only use when the user explicitly asks for a pin/marker; "
+    "NEVER add markers automatically when just showing a route or boundary), "
+    "add_markers (batch pin multiple named points in one call — pass a shared 'group' name and per-point 'description' for hover popups; "
+    "use this — not repeated add_marker calls — when the user asks to mark several distinct locations), "
+    "clear_markers (remove ALL existing pins/markers at once — only call when user says 'clear markers' or 'remove pins').\n"
+    "- Layers: add_geojson (load raw GeoJSON data as a new canvas layer — ONLY use for custom geometry not returned by osm_search, osm_boundary, "
+    "overture_*, or nearby_places; those tools auto-display their own layers, so DO NOT call add_geojson after them), "
+    "toggle_layer (show/hide an existing named layer without deleting it — prefer over remove_layer when the user wants to temporarily hide), "
+    "remove_layer (permanently delete a layer from the canvas — only call when the user explicitly says 'remove', 'delete', or 'clear' that layer), "
+    "set_layer_style (change a whole layer to a single flat fill/stroke color — DO NOT use for property-based coloring; use style_layer for that), "
+    "style_layer (color features by a property value: mode='categorized' for string fields like zone_code/land_use, "
+    "mode='graduated' for numeric fields like population/density; add label_property for on-map text labels).\n"
+    "- Highlight: highlight_features (visually emphasize specific features within an existing layer by attribute value — use for 'highlight district X', "
+    "'mark the commercial zones'; DO NOT call this to create new layers — it modifies an existing layer's paint only).\n"
+    "- Search: geocode (resolve ANY place name / address to coordinates — ALWAYS call this first before fly_to or routing; "
+    "NEVER use your training-data knowledge for coordinates directly), "
+    "web_search (live internet search for recent stats, policies, or news — use when the user asks for real-world data not available via GIS tools), "
+    "autogeoreference_image (extract landmarks and align active/attached map image automatically — use when user drops a scanned map image; "
+    "DO NOT call manually before checking if image is already georeferenced), "
+    "georeference_active_document (align a dropped map image to real-world coordinates using 3+ landmark GCPs you manually identify — "
+    "use when autogeoreference fails or the user provides explicit control points), "
+    "digitize_image_features (convert normalized x,y image coordinates to real-world GeoJSON features using the solved affine matrix — "
+    "ONLY call AFTER a successful georeference step; DO NOT call without a georeference matrix).\n"
+    "- OSM: osm_search (query OSM-tagged infrastructure: roads, utilities, public amenities, hand-mapped features — "
+    "PREFER for non-commercial features; DO NOT use for brand-named POIs like restaurants/hotels/retail, use nearby_places for those), "
+    "osm_fetch_bus_routes (fetch actual transit/bus route polylines near a terminal or city center — "
+    "ALWAYS prefer this over osm_search when the user asks for bus routes or transit lines), "
+    "osm_boundary (fetch official administrative boundary polygon for a city/district/state — "
+    "ALWAYS use country_code to disambiguate; if OSM returns no boundary, fall back to geocode + add_marker), "
+    "osm_boundary_union (merge multiple place boundaries into ONE polygon server-side — "
+    "use for metropolitan/multi-district study areas; DO NOT call osm_boundary multiple times then manually stitch), "
+    "osm_reverse_geocode (get readable place name/address from coordinates — use before text-based tools like web_search when only coordinates are known), "
+    "osm_route_overview (calculate driving route distance/duration and render the route line on the map — "
+    "ALWAYS call this for any 'show route / directions / path from A to B' request; NEVER claim a route is marked without calling this).\n"
+    "- Google Places (PREFER for commercial POIs — fresher, brand-named, opens/closes status): "
+    "places_autocomplete (get candidate place_ids for an ambiguous partial name — call first when place is ambiguous, then place_details), "
+    "place_details (get full address, coordinates, opening hours, contact for a specific place_id), "
+    "nearby_places (find POIs within a radius of a coordinate — use for restaurants, hotels, schools, hospitals, retail; DO NOT use osm_search for these), "
+    "nearby_places_in_polygon (find POIs INSIDE a user-drawn polygon or non-circular boundary — use instead of nearby_places when the search area is polygon-shaped), "
+    "places_density (compute POI density per km² across a study area — use for spatial coverage analysis, not for listing individual places).\n"
+    "- Overture Maps (FALLBACK for places when Google tools return empty; building footprints — always available without API key): "
+    "overture_places_search (search POIs from Overture dataset — use ONLY when nearby_places returns empty or upstream_unavailable), "
+    "overture_buildings_search (fetch 3D building footprints for an area — use for urban morphology or built-form analysis; "
+    "DO NOT use for POI search, use nearby_places for that).\n"
+    "- Google Environment: "
+    "get_elevation (fetch terrain elevation at a coordinate — use for slope analysis, flood risk, or infrastructure siting; DO NOT use for air quality), "
+    "get_air_quality_google (per-pollutant AQI with health recommendations from Google Air Quality API — ALWAYS prefer this for air quality; "
+    "fall back to get_air_quality only if this returns an error or upstream_unavailable), "
+    "get_solar_building (rooftop solar potential and panel productivity estimates for a building — use for renewable energy feasibility).\n"
+    "- Weather: get_weather (current conditions and forecast from Open-Meteo — use for temperature/wind/rain; DO NOT use for air quality pollutants), "
+    "get_air_quality (Open-Meteo fallback AQI with PM2.5/PM10 — use ONLY when get_air_quality_google fails).\n"
+    "- GIS: gis_buffer (expand a geometry by a radius — use for catchment/service zones; result auto-displayed, DO NOT call add_geojson after), "
+    "gis_centroid (compute center point of a polygon), "
+    "gis_area (compute geodesic area of a polygon in km² / hectares), "
+    "gis_convex_hull (minimum enclosing convex polygon — use for cluster extent analysis), "
+    "gis_point_in_polygon (test whether a point falls inside a polygon), "
+    "gis_bounding_box (get the rectangular bbox of a geometry), "
+    "gis_union (merge multiple features into one), "
+    "gis_intersection (compute the spatial overlap of two geometries — use to find where two areas coincide; result auto-displayed), "
+    "gis_difference (subtract geometry B from A — use to isolate the part of A outside B; result auto-displayed), "
+    "gis_clip (crop one layer's features to a boundary polygon — use to constrain data to a study area; result auto-displayed, DO NOT add_geojson after), "
+    "gis_dissolve (merge multiple features into district/regional units, optionally by a group property — result auto-displayed), "
+    "gis_nearest (find the closest feature to a point — use for nearest hospital/school queries), "
+    "gis_spatial_join (tag point features with the attribute values of the polygon they fall within — use to assign zone/district attributes to POIs; "
+    "DO NOT use gis_intersection to tag points with polygon attributes, use gis_spatial_join for that), "
+    "gis_filter (filter features from a loaded layer by attribute value — use to extract a subset like 'only commercial zones' or 'districts matching X'; "
+    "always use exact key matching case-insensitively; result auto-displayed on the map).\n"
+    "- Bookmarks & Export: save_bookmark (save the current map view for later recall — use when user says 'save this view'), "
+    "go_to_bookmark (navigate to a previously saved map view), "
+    "export_region_clip (clip and export canvas vector layers to a GeoJSON file), "
+    "export_map_png (export the current map canvas as a lossless PNG image artifact — use for detailed maps; DO NOT use both PNG and JPEG for the same image), "
+    "export_map_jpeg (export the current map canvas as a JPEG image artifact — prefer this for document/report embedding; "
+    "ALWAYS pass layers_to_show=['<Target Layer>', '<Boundary Layer>'] to isolate section visuals; "
+    "ALWAYS pass save_to_artifacts=True when embedding in documents), "
+    "export_map_pdf (export the current map canvas as a PDF image report figure).\n"
+    "- Zoning: analyze_zones (analyse uploaded zoning layers for density, floor-area-ratio, and coverage metrics), "
+    "detect_zone_overlaps (find geometry overlaps or conflicts between zone polygons — use for compliance auditing, not for general spatial overlap).\n"
+    "- Artifacts & Documents: "
+    "create_artifact (create a BRAND NEW document artifact — use for new documents; format options: pdf/docx/html/png/jpg/xlsx/txt/json/markdown/table/geojson; "
+    "NEVER pass an existing artifact_id — always creates fresh), "
+    "edit_artifact (add/update sections in an EXISTING artifact by title or ID — use when user says 'add to', 'edit', 'update', or 'insert into' a specific artifact; "
+    "when inserting an already-exported map snapshot image, set image_artifact_id=<id> and DO NOT also set include_map_figure=true), "
+    "list_artifacts (list all artifacts saved in the current workspace — call before edit_artifact to confirm the artifact exists), "
+    "get_artifact (retrieve content of an existing artifact by ID — use to read a geojson artifact's geometry before passing it to add_geojson), "
+    "extract_attribute_table (extract layer or shapefile columns/properties into a tabular artifact — use for attribute inspection and spreadsheet export).\n"
+    "  To edit or compile a planning document (e.g., 'add this to the pdf under heading X', 'add the map image under heading Y'), call edit_artifact with the title or ID, section_heading, content, and include_map_figure/figure_caption. When inserting an existing exported map or chart image (e.g. artifact ID 37), ALWAYS set `image_artifact_id=37` and NEVER use `include_map_figure=true` when inserting an existing saved image artifact.\n"
     "  Re-adding geometry: call get_artifact to retrieve a geojson artifact's content, then pass it to add_geojson.\n"
-    "- Reports: generate_report — generates a deep research urban planning report using web search. "
-    "Use when user asks to generate/create/write a report or planning analysis.\n"
-    "- Plots & Charts: create_plot (generate publication-ready bar, pie, histogram, line, scatter charts from numeric data/distribution arrays and save them directly as high-resolution image artifacts in the project workspace). "
-    "Whenever the user asks for any chart, graph, or demographic/spatial distribution (e.g., 'pie chart of population', 'bar chart of land use', 'traffic distribution'), you MUST call create_plot with the appropriate plot_type ('pie', 'bar', 'histogram', 'line', 'scatter'), title, x_data (categories/slice labels), and y_data (numeric counts/percentages).\n"
-    "- Street Network (NetworkX): fetch_street_network (automatically pull connected roads within current map bounds or coordinates to the workspace), "
-    "analyze_street_network (topology metrics & bottleneck centrality on a road layer/file), "
-    "find_shortest_path (Dijkstra routing between coordinates on a road layer/file), "
-    "find_freight_route (optimal truck route avoiding residential streets and respecting weight/height restrictions), "
-    "route_multi_stop (continuous multi-waypoint route along the road network). "
-    "Always prefer passing `geojson_path` instead of passing the huge raw `geojson` object to avoid token and WebSocket payload constraints.\n"
-    "- ITS & Parking: optimize_traffic_signal (Webster's Method traffic light timing optimizer), "
-    "analyze_parking_requirements (zoning parking ECS demand calculator matched against OSM-mapped supply).\n"
-    "- GTFS Transit: import_gtfs_feed (download URL or local workspace ZIP/folder — loads stops + route lines on the map), "
-    "analyze_gtfs_service (compute service stats: route counts, trip frequencies, highest-frequency corridors), "
-    "analyze_gtfs_schedules (calculate hourly peak vs off-peak headway histograms and stop arrival timetables), "
-    "analyze_transit_catchment (generate 400m / 800m walking catchment service coverage buffer polygons).\n"
-    "- OD Matrix: import_od_matrix (import CSV-based Origin-Destination matrix from a URL), "
-    "generate_gravity_od_matrix (auto-generate trip productions/attractions from zone population & jobs and distribute them via doubly-constrained Furness/IPFP gravity decay model), "
-    "calculate_mode_choice (split travel demand across car, two-wheeler, transit, and active travel modes using a multinomial logit model based on time/cost utilities), "
-    "visualize_od_flows (render desire lines on the map weighted by trip volume; supports min_trips filter and top_n).\n"
-    "- Planning Scenarios: generate_planning_scenarios (generate structured Baseline/Compact/TOD/Green scenario alternatives "
-    "for a study area context; returns a markdown report with comparison table — always save the result to an artifact), "
-    "compare_scenarios (score and rank 2+ named scenarios across criteria; integrates tailpipe emissions and ambient PM2.5 box model), "
-    "estimate_scenario_emissions (calculate tailpipe CO2, PM2.5, NOx, CO emissions and estimate ambient PM2.5 concentrations using Gifford-Hanna box model).\n"
-    "- Google Land Classification (GEE): get_land_cover (fetch Dynamic World or ESA WorldCover LULC layer "
-    "for a given year — shows water/trees/grass/crops/built/bare classes), "
+    "- Reports: generate_report (run a deep web-research cycle and produce a comprehensive urban planning report — "
+    "use ONLY when the user explicitly asks to 'generate a report', 'write a research report', or 'do deep research'; "
+    "DO NOT use for standard analysis tasks that have dedicated GIS/data tools).\n"
+    "- Plots & Charts: create_plot (generate and save a publication-ready chart as an image artifact — "
+    "ALWAYS call this when user asks for any chart, graph, histogram, or visual breakdown; "
+    "specify plot_type: 'pie' for proportional breakdowns, 'bar' for category comparisons, "
+    "'histogram' for distributions, 'line' for time series, 'scatter' for correlations; "
+    "pass x_data with category labels and y_data with numeric values; "
+    "NEVER call create_plot for a single scalar value — use formatted markdown text instead; "
+    "NEVER insert a chart where a map image was requested).\n"
+    "- Street Network (NetworkX): "
+    "fetch_street_network (pull connected road network within map bounds or coordinates into the workspace — "
+    "call first before any routing or topology analysis that needs the road graph), "
+    "analyze_street_network (compute topology metrics and bottleneck centrality on a road layer — "
+    "use for intersection density and connectivity analysis; requires a road layer/file), "
+    "find_shortest_path (Dijkstra routing between two coordinates on a road network — "
+    "use for pedestrian/cycle routing or custom transport analysis; use osm_route_overview for driving directions), "
+    "find_freight_route (optimal truck route avoiding residential streets and respecting weight/height limits — "
+    "PREFER this over find_shortest_path for heavy vehicle logistics routing), "
+    "route_multi_stop (continuous multi-waypoint route along the road network — use for delivery or tour planning with 3+ stops). "
+    "Always pass geojson_path instead of the raw geojson object to avoid WebSocket payload size limits.\n"
+    "- ITS & Parking: "
+    "optimize_traffic_signal (Webster's Method traffic light cycle/phase timing optimizer — use for intersection signal design; DO NOT use for routing), "
+    "analyze_parking_requirements (compute zoning parking ECS demand and compare against OSM-mapped parking supply — use for parking gap analysis).\n"
+    "- GTFS Transit: "
+    "import_gtfs_feed (download and ingest a GTFS ZIP from URL or local workspace — loads stops and route polylines on the map; "
+    "use this for official transit agency feed data; DO NOT use osm_fetch_bus_routes for agency GTFS data), "
+    "analyze_gtfs_service (compute per-route trip counts and peak/off-peak frequencies — use for transit service coverage analysis), "
+    "analyze_gtfs_schedules (hourly headway histograms and stop arrival timetables — use for detailed schedule analysis), "
+    "analyze_transit_catchment (generate 400m / 800m walking catchment buffers around transit stops — use for accessibility coverage maps).\n"
+    "- OD Matrix: "
+    "import_od_matrix (import a CSV-based Origin-Destination matrix from URL — use when user provides an OD data file), "
+    "generate_gravity_od_matrix (auto-generate trip productions and attractions from zone population and employment data using doubly-constrained Furness/IPFP gravity model), "
+    "calculate_mode_choice (split travel demand across car, two-wheeler, transit, and active modes using a multinomial logit model — call after OD matrix is ready), "
+    "visualize_od_flows (render desire lines weighted by trip volume — call after OD matrix is computed; supports min_trips filter and top_n).\n"
+    "- Planning Scenarios: "
+    "generate_planning_scenarios (produce structured Baseline/Compact/TOD/Green scenario alternatives for a study area — "
+    "always save result to an artifact; DO NOT use compare_scenarios for generating new scenarios), "
+    "compare_scenarios (score and rank 2+ named scenarios across planning criteria with emissions modelling — "
+    "use only after scenarios are defined; pass scenario names not geometry), "
+    "estimate_scenario_emissions (calculate tailpipe CO₂, PM2.5, NOx, CO and ambient PM2.5 using the Gifford-Hanna box model — "
+    "use for emissions impact assessment of a transport or land use scenario).\n"
+    "- Google Land Classification (GEE): "
+    "get_land_cover (adds a full multi-class LULC raster tile showing ALL 9 land classes simultaneously as a colour overlay — "
+    "ONLY use this when the user wants the complete land cover map; DO NOT use it to show a single class), "
     "analyze_lulc_change (compare two years of Dynamic World to detect built-up expansion, deforestation, "
     "or wetland loss — adds a changed-areas mask + class-transition layer), "
     "analyze_land_use_zonal_stats (calculate exact area in km² and percentage composition breakdown of land cover classes inside a study polygon/boundary), "
-    "extract_land_use_polygons (convert raster land cover classes into vector GeoJSON polygons loaded on the map), "
+    "extract_land_use_polygons (extract exactly ONE land cover class as clipped vector GeoJSON polygon features on the map; "
+    "ALWAYS use this — NOT get_land_cover — when the user asks for built-up area, urban footprint, water bodies, trees, cropland, "
+    "or any other single land class; pass place_name='<city name>' to auto-clip to administrative boundary), "
     "get_ndvi_layer (compute NDVI from Sentinel-2 to map vegetation density, green space, and urban heat islands). "
+    "CRITICAL GEE TOOL SELECTION RULE: 'built-up area' / 'built area' / 'impervious surface' / 'urban area' / "
+    "'water bodies' / 'forest' / 'cropland' requests → ALWAYS call extract_land_use_polygons(target_class='Built Area' / 'Water' / 'Trees' / 'Crops'). "
+    "NEVER call get_land_cover for single-class requests. "
     "All GEE tools require the ee-*.json service account credentials file in the workspace root.\n"
     "- Public GIS Datasets: browse_datameet_catalog (list all available public GIS datasets "
     "with dataset_ids, titles, and categories — call this first before importing), "
@@ -340,29 +425,24 @@ SYSTEM_PROMPT = (
     "24. MULTI-SELECTED LAYERS IN CHAT CONTEXT: When the user Shift-clicks or selects multiple layers on the map or in the layers sidebar panel, all selected layers appear under [USER SELECTED MAP ELEMENTS / HIGHLIGHTED LAYERS] with their layer names, centroids, and attributes. When the user asks to analyze, compare, overlay, buffer, intersect, or compute stats/charts for 'these layers', 'selected regions', or 'both areas', directly reference and process ALL selected layers by their exact names/attributes in your spatial GIS tools (e.g. gis_intersection, gis_difference, gis_area, gis_union) and demographic/plotting tools (create_plot).\n"
     "25. ZERO PLACEHOLDER POLICY IN ARTIFACTS / DOCUMENTS:\n"
     "  (a) STRICT PROHIBITION: NEVER emit placeholder sentences like 'Built-up land cover polygons for X should be inserted here as a map figure when the layer is available in the current map context', 'Insert image here', 'Map to be loaded', or 'Figure placeholder'.\n"
-    "  (b) If the user asks to mark or extract a map feature (e.g. boundary, catchment, built-up area, zoning, transit), you MUST execute the respective tool (`osm_boundary`, `analyze_transit_catchment`/`gis_buffer`, `get_land_cover`/`osm_search`), adjust view with `fit_bounds`, export the map via `export_map_jpeg(save_to_artifacts=True)` to get the real artifact image path, and embed that path directly in the markdown as `![Caption](artifacts_store/<ID>.jpg)`.\n"
-    "  (c) Every section requesting visual content MUST have its corresponding real image artifact generated and embedded.\n"
+    "  (b) FEATURE TOOL EXECUTION MANDATE: Before exporting a map image (`export_map_jpeg`) for a specific section (such as built-up area, land use, transit routes, amenities, zoning), you MUST first execute the tool that creates or fetches that feature layer on the map canvas (e.g., `get_land_cover` / `extract_land_use_polygons` for land use / built-up areas, `osm_route_overview` for routes, `osm_search` for amenities). NEVER call `export_map_jpeg` or edit/create document artifacts without first running the feature generation tool.\n"
+    "  (c) If the user asks to mark or extract a map feature (e.g. boundary, catchment, built-up area, zoning, transit), you MUST execute the respective tool (`osm_boundary`, `analyze_transit_catchment`/`gis_buffer`, `get_land_cover`/`extract_land_use_polygons`/`osm_search`), adjust view with `fit_bounds`, export the map via `export_map_jpeg(save_to_artifacts=True, layers_to_show=['<Target Layer>', '<Boundary>'])` to get the real artifact image path, and embed that path directly in the markdown as `![Caption](artifacts_store/<ID>.jpg)`.\n"
+    "  (d) Every section requesting visual content MUST have its corresponding real image artifact generated and embedded.\n"
     "26. MULTI-STEP TASK EXECUTION — SEQUENTIAL PIPELINE & LAYER ISOLATION (FETCH → ISOLATE → EXPORT → COMPILE):\n"
-    "  CRITICAL: The backend BLOCKS create_artifact if image references are missing or are placeholders.\n"
-    "  When the user requests a multi-heading report with distinct visual maps (e.g. Boundary, Hospitals, Schools, Built-up area, Cropland, Water bodies, Population):\n"
-    "  You MUST follow this exact sequential workflow across tool-call rounds:\n"
-    "  - STEP 1 (Boundary): osm_boundary('<Study Area / City / District>') + fit_bounds\n"
-    "  - STEP 2 (Export Boundary): export_map_jpeg(title='<Study Area> Boundary', save_to_artifacts=True, layers_to_show=['<Study Area>']) → returns artifacts_store/1.jpg\n"
-    "  - STEP 3 (Hospitals): osm_search(query='hospital', boundary_name='<Study Area>')\n"
-    "  - STEP 4 (Export Hospitals): export_map_jpeg(title='Hospitals in <Study Area>', save_to_artifacts=True, layers_to_show=['hospital', '<Study Area>']) → returns artifacts_store/2.jpg\n"
-    "  - STEP 5 (Schools): osm_search(query='school', boundary_name='<Study Area>')\n"
-    "  - STEP 6 (Export Schools): export_map_jpeg(title='Schools in <Study Area>', save_to_artifacts=True, layers_to_show=['school', '<Study Area>']) → returns artifacts_store/3.jpg\n"
-    "  - STEP 7 (Built-Up): extract_land_use_polygons(classes=['built'], study_area='<Study Area>')\n"
-    "  - STEP 8 (Export Built-Up): export_map_jpeg(title='Built Up Area of <Study Area>', save_to_artifacts=True, layers_to_show=['built', '<Study Area>']) → returns artifacts_store/4.jpg\n"
-    "  - STEP 9 (Cropland): extract_land_use_polygons(classes=['crops'], study_area='<Study Area>')\n"
-    "  - STEP 10 (Export Cropland): export_map_jpeg(title='Cropland in <Study Area>', save_to_artifacts=True, layers_to_show=['crops', 'cropland', '<Study Area>']) → returns artifacts_store/5.jpg\n"
-    "  - STEP 11 (Water Bodies): extract_land_use_polygons(classes=['water'], study_area='<Study Area>')\n"
-    "  - STEP 12 (Export Water): export_map_jpeg(title='Water Bodies in <Study Area>', save_to_artifacts=True, layers_to_show=['water', '<Study Area>']) → returns artifacts_store/6.jpg\n"
-    "  - STEP 13 (Compile): create_artifact(title='guide to <study area>', format='docx' or 'pdf', content='...') placing each real image artifact path under its respective heading!\n"
+    "  CRITICAL: The backend BLOCKS create_artifact if image references are missing, are placeholders, or contain DUPLICATES.\n"
+    "  When the user requests a report or document containing distinct visual maps under separate headings (e.g. multiple distinct boundaries, routes, or zonal layers):\n"
+    "  Dynamically infer the required sections from the user prompt and execute this generalized sequential pipeline across tool-call rounds:\n"
+    "  - PHASE 1 (Geographic Anchor & Base Data): Resolve each requested boundary or feature layer on the map canvas.\n"
+    "  - PHASE 2 (Per-Section Feature Generation & Snapshot Isolation): For each section requiring a visual figure:\n"
+    "    1. Execute the appropriate tool to generate the requested spatial layer / route line on the map canvas (if not already loaded).\n"
+    "    2. Export the section map figure via `export_map_jpeg(title='<Section Title>', save_to_artifacts=True, layers_to_show=['<Section Layer Name>'])`.\n"
+    "    3. Record the returned distinct image file path (`artifacts_store/<ID>.jpg`).\n"
+    "    CRITICAL: If the document has N visual sections, you MUST execute `export_map_jpeg` exactly N times to obtain N distinct file paths.\n"
+    "  - PHASE 3 (Document Assembly): Call `create_artifact(title='...', format='docx'|'pdf', content='...')`, embedding each section's unique image path directly under its corresponding heading.\n"
     "  RULES:\n"
-    "  - Each export_map_jpeg call MUST specify `layers_to_show` containing ONLY that section's target feature layer and the boundary outline (e.g. layers_to_show=['hospital', '<Study Area>']). This guarantees each heading has a distinct, uncluttered image showing ONLY its requested feature.\n"
+    "  - Each export_map_jpeg call MUST specify `layers_to_show` containing ONLY that section's target feature layer and study area boundary outline. NEVER delete or remove previously created map layers from the canvas — all created layers MUST be preserved on the map canvas while each exported figure displays only its required section layers.\n"
     "  - The file_path returned by each export_map_jpeg tool call is the EXACT path to use in ![...](path) under that specific heading in the document.\n"
-    "  - NEVER repeat the same all-layers-combined image across different headings.\n"
+    "  - STRICT PROHIBITION: NEVER repeat or reuse the same image path across different headings. Every section must have its own distinct image file. Reusing an image path will cause create_artifact to be BLOCKED by the backend pipeline.\n"
     "  - NEVER write artifacts_store/0.jpg or any path that was not returned by a tool call in this session.\n"
     "  - NEVER use (map_snapshot) or (placeholder) as image references — these will be BLOCKED.\n"
     "  - You have 35 rounds to complete the pipeline — execute intermediate steps autonomously.\n"
@@ -385,12 +465,14 @@ SYSTEM_PROMPT = (
     "  - Do NOT require the user to explicitly specify these intermediate GIS operations, and do NOT hardcode behavior for particular places.\n"
     "31. DOCUMENT VISUALIZATION & SECTION HEADING INDEPENDENCE:\n"
     "  - When the user requests separate visuals under separate headings, generate a separate distinct visual for each heading; do NOT combine or merge them unless explicitly requested.\n"
-    "  - Each visual must contain only the layers and information relevant to its corresponding request, with only necessary geographic context. Do NOT carry unrelated layers, markers, or visualizations from one requested section into another (clear, toggle off, or isolate layers by passing `layers_to_show` before capturing each section's map snapshot).\n"
+    "  - Each visual must contain only the layers and information relevant to its corresponding request, with only necessary geographic context. Do NOT carry unrelated layers, markers, or visualizations from one requested section into another (ALWAYS isolate section layers by passing `layers_to_show` containing only the boundary and section target layer before capturing each section's map snapshot, without deleting canvas layers).\n"
+    "  - When N distinct geographic areas or features are requested under separate headings, you MUST execute N separate `export_map_jpeg` calls (one for each heading) with dedicated `layers_to_show=['<Target Layer>']` and distinct descriptive titles. NEVER use a shared or combined view across multiple sections.\n"
     "  - Preserve the user's requested structure and intent while internally determining the necessary data retrieval, spatial processing, visualization, and document-generation steps.\n"
     "  - Do NOT simplify, merge, or reinterpret separately requested outputs merely for convenience.\n"
     "32. AUTONOMOUS EXECUTION & IMPLICIT AUTHORIZATION:\n"
     "  - When the user requests a document, report, map, plot, analysis, or other artifact that requires data to be retrieved or generated first, execute the necessary intermediate operations automatically before producing the requested artifact.\n"
     "  - Do NOT stop to ask the user to confirm that you should proceed when the requested outputs and their geographic scope are already clear.\n"
+    "  - Do NOT stop to ask interactive questions (`ask_question`) or ask the user to confirm whether to generate a new image or use an existing one when editing a document or adding a requested map section. Automatically execute the feature tool, export the map image with `layers_to_show=['<Target Layer>', '<Boundary>']`, and call `edit_artifact` or `create_artifact`.\n"
     "  - Do NOT ask the user to select administrative levels, datasets, data providers, GIS operations, or other implementation details unless the request is genuinely ambiguous and the choice materially affects the requested result.\n"
     "  - Do NOT ask the user to say 'proceed', 'yes', or otherwise confirm execution when the task is already sufficiently specified.\n"
     "  - If required data or maps are not yet available, retrieve or generate them using the appropriate available tools. Never invent figures, statistics, maps, or images; obtain them through the available data and analysis tools.\n"
@@ -400,11 +482,43 @@ SYSTEM_PROMPT = (
     "  - When the user requests multiple geographic analyses or visual outputs, independently produce EACH requested output and maintain its geographic and semantic scope.\n"
     "  - Do NOT combine, omit, substitute, or simplify requested outputs merely for implementation convenience.\n"
     "  - When compiling a document, infer the appropriate document structure from the user's requested headings and content, and generate all required underlying maps, plots, statistics, and other artifacts before assembling the document.\n"
+    "34. EDIT_ARTIFACT LAYER ISOLATION — MANDATORY PIPELINE FOR ADDING MAP IMAGES TO EXISTING DOCUMENTS:\n"
+    "  When the user asks to ADD or INSERT a map image into an EXISTING artifact (e.g. 'add to artifact 77', 'insert a section into the PDF', 'edit the report to include a map'),\n"
+    "  you MUST follow this exact 3-step isolation pipeline — the same as Rule 26 — for every image section, even when editing:\n"
+    "  STEP 1 — FETCH: Execute the feature generation tool for the requested content.\n"
+    "    e.g. extract_land_use_polygons(target_class='Built Area', place_name='<City>') for built-up area,\n"
+    "    osm_search() for amenities, osm_route_overview() for routes, osm_boundary() for a boundary.\n"
+    "    DO NOT skip this step. Do not assume the layer is already on the map.\n"
+    "  STEP 2 — ISOLATE & EXPORT: Call export_map_jpeg with ONLY the relevant layers.\n"
+    "    export_map_jpeg(title='<Section Title>', save_to_artifacts=True,\n"
+    "      layers_to_show=['<section feature layer name>', '<boundary layer name>'])\n"
+    "    CRITICAL: layers_to_show MUST contain ONLY layers for this specific section.\n"
+    "    DO NOT omit layers_to_show — without it ALL canvas layers bleed into the snapshot.\n"
+    "    DO NOT include routes, markers, or layers belonging to other sections.\n"
+    "    Layer names in layers_to_show MUST exactly match names from the current map context.\n"
+    "  STEP 3 — EMBED: Pass the exported image ID to edit_artifact.\n"
+    "    edit_artifact(artifact_id=<existing_id>, section_heading='<Heading>',\n"
+    "      image_artifact_id=<ID returned by Step 2>, content='<section description>')\n"
+    "    NEVER use include_map_figure=true when image_artifact_id is already set.\n"
+    "    NEVER reuse an image ID from a different section or earlier session.\n"
+    "  This 3-step pipeline applies for every 'add to', 'insert into', 'edit', 'update', or 'append to' request on an existing document.\n"
+    "  DO NOT export map snapshots without layers_to_show when adding images to any document.\n"
+    "35. PLOTTING MAP FEATURES VS CHARTS:\n"
+    "  When the user asks to 'plot', 'show', 'map', 'load', or 'display' any geographic feature, land use, or boundary on the map "
+    "  (e.g. 'plot the built up area of <City> on map', 'plot boundary of <City>', 'plot water bodies of <City>', 'plot transit routes'), "
+    "  this is a MAP CANVAS layer request, NOT a chart or graph. You MUST execute the corresponding spatial feature tool "
+    "  (`extract_land_use_polygons` for built-up/land cover classes, `osm_boundary` for boundaries, `osm_route_overview` for routes). "
+    "  NEVER call `create_plot` for map features, and NEVER claim in conversational text that you plotted or loaded a layer on the map "
+    "  without executing the tool call in that turn.\n"
+    "36. MAP IMAGE EXPORT MANDATE:\n"
+    "  When the user asks to 'export', 'extract', 'save', or 'capture' an image or snapshot of the map or a layer "
+    "  (e.g. 'extract the image of built up area of <City>', 'export map image', 'save map as image', 'export this layer as an image'), "
+    "  you MUST execute `export_map_jpeg(title='<Descriptive Title>', save_to_artifacts=True)` (or `export_map_png`). "
+    "  NEVER claim in chat text that you exported an image, and NEVER fabricate an artifact ID (e.g. 'Artifact ID: 103') or file path "
+    "  without actually calling the export tool in that turn.\n"
 )
 
 
-
-# ── Deep research helpers ──────────────────────────────────────────────────────
 
 _RESEARCH_SYSTEM = """
 You are a senior urban planning consultant, transportation planner, GIS analyst,
@@ -1260,7 +1374,7 @@ async def _execute_tool(
             # Detect if the request MENTIONS map/image content but has NO embedded images at all
             _has_image_syntax = bool(_re.search(r'!\[', content))
             _mentions_map = bool(_re.search(
-                r'\b(map|image|figure|boundary|tricity|chandigarh|panchkula|mohali|chart|pie|plot)\b',
+                r'\b(map|image|figure|boundary|chart|pie|plot|route|corridor|catchment|amenity|amenities|land\s*use|zoning|built[\s-]up)\b',
                 content, _re.IGNORECASE
             ))
             # Count how many distinct export_map calls appear in the current message history
@@ -1279,22 +1393,63 @@ async def _execute_tool(
             # If content has placeholder refs → model is hallucinating paths
             if _has_placeholder:
                 missing_exports = []
-                # Extract what images are referenced in the content
                 for _m in _re.findall(r'!\[([^\]]+)\]\([^)]+\)', content):
                     missing_exports.append(_m)
                 return json.dumps({
                     "status": "blocked",
                     "error": "PIPELINE VIOLATION: create_artifact was called with placeholder image references. You MUST call export_map_jpeg(save_to_artifacts=True) for EACH required map view FIRST, then call create_artifact with the real artifact_store/ID.jpg paths.",
                     "required_action": (
-                        "1. For each required map view (Tricity merged, Chandigarh, Panchkula, Mohali), call:\n"
+                        "1. For each required section map view, call:\n"
                         "   a. osm_boundary or osm_boundary_union to fetch the boundary\n"
                         "   b. fit_bounds to frame the view\n"
-                        "   c. export_map_jpeg(title='<name>', save_to_artifacts=True) → note the returned file_path\n"
+                        "   c. export_map_jpeg(title='<name>', save_to_artifacts=True, layers_to_show=['<boundary>', '<section_layer>']) → note the returned file_path\n"
                         "2. For any charts: call create_plot(...) → note the returned file_path\n"
                         "3. THEN call create_artifact with the full document content using the REAL paths returned above.\n"
-                        "   Example: ![Tricity Area](artifacts_store/42.jpg)"
+                        "   Example: ![Study Area Map](artifacts_store/42.jpg)"
                     ),
                     "placeholder_refs_found": missing_exports,
+                })
+
+            # Check for duplicate image references across document sections
+            _all_embedded_paths = _re.findall(r'!\[[^\]]*\]\((artifacts_store/\d+\.(?:jpg|jpeg|png))\)', content, _re.IGNORECASE)
+            if len(_all_embedded_paths) > 1 and len(_all_embedded_paths) > len(set(_all_embedded_paths)):
+                _dup_paths = list(set([p for p in _all_embedded_paths if _all_embedded_paths.count(p) > 1]))
+                return json.dumps({
+                    "status": "blocked",
+                    "error": (
+                        "PIPELINE VIOLATION: Duplicate image references detected in document content. "
+                        f"Found {len(_all_embedded_paths)} image placements but only {len(set(_all_embedded_paths))} unique file path(s). "
+                        f"Duplicate path(s): {_dup_paths}. "
+                        "Each document section requiring a visual figure MUST have its own distinct exported map snapshot. "
+                        "NEVER reuse the same image path across different headings."
+                    ),
+                    "required_action": (
+                        "1. For EACH section requiring a map figure, call export_map_jpeg(title='<Section Title>', save_to_artifacts=True, layers_to_show=['<Section Layer Name>']) sequentially.\n"
+                        "2. Note the distinct file_path returned by each export.\n"
+                        "3. Embed each section's unique file_path under its respective heading.\n"
+                        "4. Re-call create_artifact with the distinct image paths."
+                    ),
+                    "duplicate_paths_found": _dup_paths,
+                })
+
+            # Check if document defines multiple map sections/headings but has fewer unique images
+            _heading_matches = _re.findall(r'^(?:##|###)\s+([^\n]+)', content, _re.MULTILINE)
+            _map_headings = [
+                h.strip() for h in _heading_matches
+                if _re.search(r'\b(boundary|map|route|corridor|catchment|amenities|amenity|land\s*use|zoning|built[\s-]up)\b', h, _re.IGNORECASE)
+            ]
+            if len(_map_headings) > 1 and len(set(_all_embedded_paths)) < len(_map_headings):
+                return json.dumps({
+                    "status": "blocked",
+                    "error": (
+                        f"PIPELINE VIOLATION: Document defines {len(_map_headings)} distinct map sections ({', '.join(_map_headings[:5])}) "
+                        f"but contains only {len(set(_all_embedded_paths))} unique image file(s). "
+                        "Every visual section MUST have its own dedicated exported map figure."
+                    ),
+                    "required_action": (
+                        f"You must call export_map_jpeg(title='<Section Title>', save_to_artifacts=True, layers_to_show=['<Target Layer>']) "
+                        f"for each of the {len(_map_headings)} sections to generate distinct images before creating the document."
+                    ),
                 })
 
             # If content mentions maps but has no image syntax at all → model skipped exports
@@ -1317,8 +1472,106 @@ async def _execute_tool(
         fmt = "jpg" if name == "export_map_jpeg" else ("png" if name == "export_map_png" else "pdf")
         workspace = map_context.get("workspace") if map_context else None
 
+        # Feature existence verification & auto-recovery:
+        # If the export title or user intent explicitly requests a specific analytical feature
+        # (e.g. built-up area, land use, water bodies, routes) but no such layer is currently
+        # loaded on the map canvas, autonomously extract and render it so the export succeeds
+        # without halting or stalling the user.
+        current_layers = map_context.get("layers", []) if map_context else []
+        current_layer_names = [l.get("name", "").lower().strip() for l in current_layers]
+        title_lower = title.lower()
+
+        # Check built-up / land use requests
+        if any(k in title_lower for k in ("built-up", "built up", "built area", "impervious", "urban footprint")):
+            has_built_layer = any(
+                any(w in ln for w in ("built", "land_use", "dynamic_world", "urban"))
+                for ln in current_layer_names
+            )
+            if not has_built_layer:
+                # Auto-recovery: detect the target place and extract built-up layer automatically
+                target_place = None
+                for l in current_layers:
+                    lname = l.get("name", "")
+                    clean_lname = re.sub(r"(?i)\s*(boundary|layer|shape|polygon|area|admin)\b", "", lname).strip()
+                    if clean_lname and clean_lname.lower() in title_lower:
+                        target_place = clean_lname
+                        break
+                if not target_place:
+                    m = re.search(r"(?i)(?:built[-\s]*up(?:\s+area)?(?:\s+of)?|urban\s+footprint\s+of)\s+([a-zA-Z\s]+)", title)
+                    if m:
+                        target_place = m.group(1).strip()
+                    else:
+                        m = re.search(r"(?i)^([a-zA-Z\s]+?)\s+(?:built[-\s]*up|urban\s+footprint)", title)
+                        if m:
+                            target_place = m.group(1).strip()
+
+                if target_place and "environment" in _hubs:
+                    logger.info(f"Auto-recovering missing built-up layer for place: {target_place}")
+                    extract_res = await _hubs["environment"].execute(
+                        "extract_land_use_polygons",
+                        {"target_class": "Built Area", "place_name": target_place},
+                        {
+                            "_workspace": workspace,
+                            "_map_context": map_context,
+                            "_ws": ws,
+                            "_client": client,
+                        },
+                    )
+                    if extract_res.status == "success" and extract_res.map_action:
+                        await _send_action_if_allowed(ws, extract_res.map_action["action"], extract_res.map_action.get("payload", {}))
+                        has_built_layer = True
+                        built_name = extract_res.data.get("layer_name") or f"Built Area - {target_place}"
+                        boundary_name = f"{target_place} boundary"
+                        if not args.get("layers_to_show"):
+                            args["layers_to_show"] = [built_name, boundary_name]
+                        await asyncio.sleep(0.8)
+
+            if not has_built_layer:
+                return json.dumps({
+                    "status": "blocked",
+                    "error": (
+                        f"CANVAS FEATURE MISSING: You called {name} for '{title}', but no built-up or land use layer "
+                        f"is loaded on the map canvas! Current canvas layers: {[l.get('name') for l in current_layers]}. "
+                        "Exporting now would produce a figure showing only boundary outlines without any built-up polygons."
+                    ),
+                    "required_action": (
+                        "1. Call `extract_land_use_polygons(target_class='Built Area', place_name='<City>')` FIRST to generate and display the built-up layer on the canvas.\n"
+                        f"2. THEN call `{name}(title='{title}', save_to_artifacts=True, layers_to_show=['Built Area - <City>', '<City> boundary'])` to capture the real features."
+                    ),
+                })
+
+        # Smart layer isolation: if layers_to_show was not provided, isolate layers matching the target place in title
+        if not args.get("layers_to_show") and not args.get("layer_name") and current_layers:
+            matched_layers = []
+            for l in current_layers:
+                lname = l.get("name", "")
+                # Strip generic words and parentheticals like (12.5 km)
+                clean_lname = re.sub(r"(?i)\s*(boundary|layer|shape|polygon|area|admin|distance)\b", "", lname)
+                clean_lname = re.sub(r"\([^)]*\)", "", clean_lname).strip()
+                if clean_lname and clean_lname.lower() in title_lower:
+                    matched_layers.append(lname)
+
+            # Fallback for semantic matching if exact substring fails
+            if not matched_layers:
+                kw_map = {
+                    "route": ["route", "path", "directions"],
+                    "catchment": ["catchment", "isochrone", "shed", "walk"],
+                    "buffer": ["buffer", "radius"],
+                    "built": ["built", "urban", "land cover"]
+                }
+                for l in current_layers:
+                    lname_lower = l.get("name", "").lower()
+                    for theme, title_kws in kw_map.items():
+                        if any(kw in title_lower for kw in title_kws):
+                            if theme in lname_lower:
+                                matched_layers.append(l.get("name", ""))
+
+            # Deduplicate while preserving order
+            if matched_layers:
+                args["layers_to_show"] = list(dict.fromkeys(matched_layers))
+
         if save_to_art:
-            from tools.artifact_store import save_artifact as _save_artifact
+            from tools.artifact_store import save_artifact as _save_artifact, get_artifacts_dir
             art_row = _save_artifact(
                 title=title,
                 artifact_type="sketch",
@@ -1334,6 +1587,15 @@ async def _execute_tool(
                 return json.dumps({"status": "cancelled"})
 
             await _send_action_if_allowed(ws, "refresh_artifacts", {"id": art_id})
+
+            # Await disk readiness: wait for the frontend to render, encode, and upload the image file to disk.
+            # This prevents race conditions where create_artifact runs before the file is physically written.
+            art_disk_dir = get_artifacts_dir(workspace)
+            expected_disk_file = art_disk_dir / f"{art_id}.{fmt}"
+            for _ in range(35):  # up to 3.5 seconds
+                if expected_disk_file.is_file() and expected_disk_file.stat().st_size > 200:
+                    break
+                await asyncio.sleep(0.1)
 
             return json.dumps({
                 "status": "success",
@@ -1393,7 +1655,13 @@ async def _execute_tool(
             result: ToolResult = await target_hub.execute(
                 name,
                 args,
-                {"_map_context": map_context, "_ws": ws, "_active_image": active_image, "_client": client},
+                {
+                    "_map_context": map_context,
+                    "_workspace": map_context.get("workspace") if map_context else None,
+                    "_ws": ws,
+                    "_active_image": active_image,
+                    "_client": client,
+                },
             )
         except Exception as exc:
             logger.exception(f"Tool '{name}' failed in hub '{target_hub.name}'")
@@ -1559,10 +1827,14 @@ async def _run_agent(
                 if accumulated_text:
                     import re as _re_hall
                     _art_claim = _re_hall.search(
-                        r'artifacts_store/\d+\.(docx|pdf|html|xlsx|md|txt)',
+                        r'(?:artifacts_store[/\\]\d+\.(?:docx|pdf|html|xlsx|md|txt|jpg|jpeg|png|webp)|Artifact:\s*-\s*ID:\s*\d+)',
                         accumulated_text, _re_hall.IGNORECASE
                     )
-                    # Check if create_artifact / edit_artifact was ACTUALLY called and succeeded
+                    _export_claim = _re_hall.search(
+                        r'\b(exported\s+.*?\s+as\s+(?:an?\s+)?image|exported\s+(?:the\s+)?map\s+as|captured\s+(?:the\s+)?map\s+image|exported\s+the\s+.*?\s+figure)\b',
+                        accumulated_text, _re_hall.IGNORECASE
+                    )
+                    # Check if create_artifact / edit_artifact / export_map_* was ACTUALLY called and succeeded
                     # in the current turn (search only recent tool messages from this round)
                     _really_created = False
                     for _m in reversed(messages):
@@ -1572,43 +1844,69 @@ async def _run_agent(
                             break
                         if role == "tool":
                             _tc = _m.get("content", "")
-                            # create_artifact returns {"status": "created", "id": N, "format": "docx", ...}
-                            # edit_artifact returns {"status": "updated", "id": N, ...}
+                            # Matches create_artifact, edit_artifact, export_map_*, or create_plot
                             if (
-                                ('"status": "created"' in _tc or '"status": "updated"' in _tc)
-                                and '"format"' in _tc
-                                and '"id"' in _tc
+                                (
+                                    ('"status": "created"' in _tc or '"status": "updated"' in _tc or '"status": "success"' in _tc)
+                                    and ('"id"' in _tc or '"artifact_id"' in _tc)
+                                    and ('"format"' in _tc or '"file_path"' in _tc)
+                                )
+                                or ('"file_path": "artifacts_store/' in _tc)
                             ):
                                 _really_created = True
                                 break
 
-                    if _art_claim and not _really_created:
+                    if (_art_claim or _export_claim) and not _really_created:
+                        claimed_match = (_art_claim.group(0) if _art_claim else _export_claim.group(0))
                         logger.warning(
-                            "[Hallucination Detected] Model claimed artifact was saved but "
-                            "did not call create_artifact. Injecting correction message."
+                            f"[Hallucination Detected] Model claimed artifact/image export ('{claimed_match}') but "
+                            "did not call export_map_* or create_artifact. Injecting correction message."
                         )
-                        # Inject a system correction into the message history so the next
-                        # loop iteration forces the model to actually call the tools.
-                        messages.append({
-                            "role": "user",
-                            "content": (
-                                "[SYSTEM CORRECTION] You claimed to have created a document "
-                                f"('{_art_claim.group(0)}') but you did NOT call the "
-                                "`create_artifact` tool. No document was actually saved. "
-                                "You MUST now follow the sequential pipeline:\n"
-                                "1. Call osm_boundary_union / osm_boundary + fit_bounds to load the correct boundary\n"
-                                "2. Call export_map_jpeg(title='...', save_to_artifacts=True) for EACH required map view\n"
-                                "3. Call create_plot(...) for any charts\n"
-                                "4. THEN call create_artifact with the real artifact paths returned by the above tools.\n"
-                                "Start NOW — do NOT respond with text first. Call the tools immediately."
-                            ),
-                        })
-                        # Do NOT break — continue the loop to give the model a chance to fix itself
+                        await ws.send_text(json.dumps({"type": "stream_replace", "content": ""}))
+
+                        ext_match = _re_hall.search(r'\.(docx|pdf|html|xlsx|md|txt|jpg|jpeg|png|webp)\b', claimed_match, _re_hall.IGNORECASE)
+                        ext = (ext_match.group(1).lower() if ext_match else "")
+                        is_image = ext in ("jpg", "jpeg", "png", "webp") or bool(_export_claim)
+
+                        if is_image:
+                            messages.append({
+                                "role": "user",
+                                "content": (
+                                    f"[SYSTEM CORRECTION] You claimed to have exported an image artifact ('{claimed_match}'), "
+                                    "but you did NOT call `export_map_jpeg` or `export_map_png`! No image or artifact was saved. "
+                                    "You MUST execute `export_map_jpeg(title='...', save_to_artifacts=True)` NOW. "
+                                    "Start immediately by calling the tool. Do NOT output conversational text without tool calls."
+                                ),
+                            })
+                        else:
+                            messages.append({
+                                "role": "user",
+                                "content": (
+                                    "[SYSTEM CORRECTION] You claimed to have created a document "
+                                    f"('{claimed_match}') but you did NOT call the "
+                                    "`create_artifact` tool. No document was actually saved. "
+                                    "You MUST now follow the sequential pipeline:\n"
+                                    "1. Call osm_boundary_union / osm_boundary + fit_bounds to load the correct boundary\n"
+                                    "2. Call export_map_jpeg(title='...', save_to_artifacts=True) for EACH required map view\n"
+                                    "3. Call create_plot(...) for any charts\n"
+                                    "4. THEN call create_artifact with the real artifact paths returned by the above tools.\n"
+                                    "Start NOW — do NOT respond with text first. Call the tools immediately."
+                                ),
+                            })
                         continue
 
-                    # Check if model claimed to have marked a route or boundary on the map without calling any tool
+                    # Check if model claimed to have plotted, loaded, marked, or added features on the map without calling any tool
                     _map_claim = _re_hall.search(
-                        r'\b(marked the route|marked a route|marked the boundary|marked .* on the map|drawn the route|route details:)\b',
+                        r'\b('
+                        r'(?:marked|plotted|loaded|added|displayed|mapped|drawn)\s+.*?\s+(?:on|to)\s+(?:the\s+)?map\b'
+                        r'|marked\s+(?:the|a)\s+(?:route|boundary)\b'
+                        r'|plotted\s+(?:the|a)\s+(?:built[\s-]up\s+area|boundary|route|land\s+use)\b'
+                        r'|drawn\s+the\s+route\b'
+                        r'|route\s+details:\b'
+                        r'|extracted\s+.*?\s+polygons\b'
+                        r'|loaded\s+them\s+on\s+the\s+map\b'
+                        r'|as\s+a\s+vector\s+layer\b'
+                        r')',
                         accumulated_text, _re_hall.IGNORECASE
                     )
                     _tool_called_this_turn = any(
@@ -1618,18 +1916,20 @@ async def _run_agent(
                     )
                     if _map_claim and not _tool_called_this_turn:
                         logger.warning(
-                            "[Hallucination Detected] Model claimed route/boundary was marked without executing tools. Injecting correction."
+                            f"[Hallucination Detected] Model claimed map action ('{_map_claim.group(0)}') without executing tools. Injecting correction."
                         )
                         await ws.send_text(json.dumps({"type": "stream_replace", "content": ""}))
                         messages.append({
                             "role": "user",
                             "content": (
-                                "[SYSTEM CORRECTION] You claimed in text that you marked the route or boundary on the map, "
-                                "but you did NOT call any map tool (`osm_route_overview`, `osm_boundary`, `add_geojson`, etc.). "
-                                "Nothing appeared on the map! "
-                                "You MUST execute the tool call NOW:\n"
+                                "[SYSTEM CORRECTION] You claimed in text that you plotted, loaded, or marked features on the map "
+                                f"('{_map_claim.group(0)}'), but you did NOT call any map tool. Nothing appeared on the map! "
+                                "You MUST execute the appropriate tool call NOW:\n"
+                                "- For built-up area, urban footprint, water bodies, or land use: call `extract_land_use_polygons(target_class='Built Area' / 'Water' / 'Trees' / 'Crops', place_name='...')`\n"
+                                "- For full multi-class land cover: call `get_land_cover(...)`\n"
+                                "- For boundaries: call `osm_boundary(name='...')` or `osm_boundary_union(names=[...])`\n"
                                 "- For routes: call `osm_route_overview(origin='...', destination='...')`\n"
-                                "- For boundaries: call `osm_boundary(name='...')`\n"
+                                "- For amenities: call `osm_search(...)` or `nearby_places(...)`\n"
                                 "Start immediately by calling the tool. Do NOT output plain text without tool calls."
                             ),
                         })

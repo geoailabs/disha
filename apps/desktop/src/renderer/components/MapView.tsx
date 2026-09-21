@@ -17,7 +17,7 @@ interface NominatimSearchResult {
 export type MapViewHandle = {
   getCanvas: () => HTMLCanvasElement | null
   resize: () => void
-  fitBboxAndSnapshot: (bboxTarget?: any, padding?: number, layersToShow?: string[]) => HTMLCanvasElement | null
+  fitBboxAndSnapshot: (bboxTarget?: any, padding?: number, layersToShow?: string[]) => Promise<HTMLCanvasElement | null>
 }
 
 // Helper to check if a polygon/multipolygon geometry intersects the viewport bounds
@@ -558,7 +558,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
         mapRef.current.zoomTo(mapRef.current.getZoom() - delta, { animate: false })
       }
     },
-    fitBboxAndSnapshot: (bboxTarget?: any, padding = 100, layersToShow?: string[]) => {
+    fitBboxAndSnapshot: async (bboxTarget?: any, padding = 100, layersToShow?: string[]) => {
       const map = mapRef.current
       if (!map) return null
 
@@ -573,12 +573,18 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
 
       if (layersToShow && layersToShow.length > 0) {
         const normalizedFilter = layersToShow.map((s) => s.toLowerCase().trim())
+        const genericWords = new Set(['boundary', 'layer', 'polygon', 'area', 'shape', 'map', 'admin'])
         for (const layer of layersRef.current) {
-          const layerNameLower = layer.name.toLowerCase()
-          const layerIdLower = layer.id.toLowerCase()
-          const isMatch = normalizedFilter.some(
-            (f) => layerNameLower.includes(f) || f.includes(layerNameLower) || layerIdLower === f,
-          )
+          const layerNameLower = layer.name.toLowerCase().trim()
+          const layerIdLower = layer.id.toLowerCase().trim()
+          const isMatch = normalizedFilter.some((f) => {
+            if (!f) return false
+            if (layerIdLower === f || layerNameLower === f) return true
+            if (genericWords.has(f)) {
+              return layerNameLower === f
+            }
+            return layerNameLower.includes(f) || f.includes(layerNameLower)
+          })
           for (const suffix of sublayerSuffixes) {
             const sublayerId = `${layer.id}${suffix}`
             if (map.getLayer(sublayerId)) {
@@ -588,6 +594,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
             }
           }
         }
+        map.triggerRepaint()
       }
 
       let boundsToFit: [[number, number], [number, number]] | null = null
@@ -604,9 +611,16 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
         let combinedBbox: [number, number, number, number] | null = null
         const targetLayers = layersToShow && layersToShow.length > 0
           ? layersRef.current.filter((layer) => {
-              const n = layer.name.toLowerCase()
-              const id = layer.id.toLowerCase()
-              return layersToShow.some((f) => n.includes(f.toLowerCase()) || f.toLowerCase().includes(n) || id === f.toLowerCase())
+              const n = layer.name.toLowerCase().trim()
+              const id = layer.id.toLowerCase().trim()
+              const genericWords = new Set(['boundary', 'layer', 'polygon', 'area', 'shape', 'map', 'admin'])
+              return layersToShow.some((fRaw) => {
+                const f = fRaw.toLowerCase().trim()
+                if (!f) return false
+                if (id === f || n === f) return true
+                if (genericWords.has(f)) return n === f
+                return n.includes(f) || f.includes(n)
+              })
             })
           : layersRef.current.filter((layer) => layer.visible)
 
@@ -638,42 +652,60 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
         const e = boundsToFit[1][0]
         const n = boundsToFit[1][1]
 
-        const lngSpan = Math.max(e - w, 0.01)
-        const latSpan = Math.max(n - s, 0.01)
-
-        // Expand coordinates by 20% margin on all 4 sides so feature fits completely inside canvas
-        const padWest = w - lngSpan * 0.20
-        const padEast = e + lngSpan * 0.20
-        const padSouth = s - latSpan * 0.20
-        const padNorth = n + latSpan * 0.20
-
-        map.fitBounds([[padWest, padSouth], [padEast, padNorth]], { padding: Math.max(padding, 80), animate: false })
+        map.fitBounds([[w, s], [e, n]], { padding: Math.max(padding, 20), animate: false })
       } else {
         map.zoomTo(origZoom - 0.8, { animate: false })
       }
 
-      // Synchronously render the fitted camera scene to the WebGL canvas
+      // Wait for map to load tiles after jump
+      await new Promise<void>((resolve) => {
+        if (map.isStyleLoaded() && map.areTilesLoaded()) {
+          resolve()
+          return
+        }
+        let timeout: any
+        const onIdle = () => {
+          map.off('idle', onIdle)
+          clearTimeout(timeout)
+          resolve()
+        }
+        map.on('idle', onIdle)
+        timeout = setTimeout(() => {
+          map.off('idle', onIdle)
+          resolve()
+        }, 3000) // Fallback timeout
+      })
+
+      // Flush the WebGL pipeline so the GPU reflects visibility & bounds changes
+      map.triggerRepaint()
       if ((map as any)._render) {
-        (map as any)._render()
+        ;(map as any)._render()
+        ;(map as any)._render()
+        ;(map as any)._render()
       }
 
       const canvas = map.getCanvas()
 
-      // Restore camera view and layer visibility asynchronously after snapshot has been collected
-      setTimeout(() => {
-        if (mapRef.current) {
-          for (const item of savedVisibility) {
-            if (mapRef.current.getLayer(item.layerId)) {
-              mapRef.current.setLayoutProperty(item.layerId, 'visibility', item.visibility)
-            }
-          }
-          mapRef.current.jumpTo({ center: origCenter, zoom: origZoom, bearing: origBearing, pitch: origPitch })
-        }
-      }, 150)
+      // Clone canvas immediately to freeze snapshot pixels before restoring visibility
+      const clone = document.createElement('canvas')
+      clone.width = canvas.width
+      clone.height = canvas.height
+      const ctx = clone.getContext('2d')
+      if (ctx) {
+        ctx.drawImage(canvas, 0, 0)
+      }
 
-      return canvas
+      // Restore camera view and layer visibility immediately
+      for (const item of savedVisibility) {
+        if (map.getLayer(item.layerId)) {
+          map.setLayoutProperty(item.layerId, 'visibility', item.visibility)
+        }
+      }
+      map.jumpTo({ center: origCenter, zoom: origZoom, bearing: origBearing, pitch: origPitch })
+
+      return clone
     },
-  }), [])
+  }), [mapReady])
 
   // ── Sync GeoJSON layers ──
 
@@ -1245,15 +1277,6 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
 
     initBasemapRef.current = basemap
   }, [basemap, mapReady])
-
-  useImperativeHandle(
-    ref,
-    () => ({
-      getCanvas: () => mapRef.current?.getCanvas() ?? null,
-      resize: () => mapRef.current?.resize(),
-    }),
-    [mapReady],
-  )
 
   // ── Sync Pegman marker ──
   const pegmanMarkerRef = useRef<maplibregl.Marker | null>(null)

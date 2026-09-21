@@ -312,6 +312,91 @@ class DomainHubsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("generate all required underlying maps, plots, statistics, and other artifacts before assembling the document", SYSTEM_PROMPT)
 
 
+    async def test_environment_hub_extract_land_use_map_action(self):
+        from unittest.mock import AsyncMock
+        mock_res = {
+            "status": "success",
+            "target_class": "Built Area",
+            "place_name": "Delhi",
+            "year": 2023,
+            "color": "#C4281B",
+            "polygons_extracted": 15,
+            "geojson": {
+                "type": "FeatureCollection",
+                "features": [{"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [[[77.1, 28.6], [77.2, 28.6], [77.2, 28.7], [77.1, 28.7], [77.1, 28.6]]]}, "properties": {}}]
+            },
+            "geojson_file": "D:/test/land_use_built_area_delhi_2023.geojson",
+            "layer_name": "Built Area - Delhi",
+        }
+        self.environment_hub.gee_server.execute = AsyncMock(return_value=mock_res)
+
+        res = await self.environment_hub.execute(
+            "extract_land_use_polygons",
+            {"target_class": "Built Area", "place_name": "Delhi"},
+            {"_map_context": {"workspace": "D:/test"}}
+        )
+        self.assertEqual(res.status, "success")
+        self.assertIsNotNone(res.map_action)
+        self.assertEqual(res.map_action["action"], "add_geojson_file")
+        self.assertEqual(res.map_action["payload"]["path"], "D:/test/land_use_built_area_delhi_2023.geojson")
+        self.assertEqual(res.map_action["payload"]["name"], "Built Area - Delhi")
+        self.assertTrue(res.data.get("displayed_on_map"))
+
+    async def test_environment_hub_error_propagation(self):
+        from unittest.mock import AsyncMock
+        self.environment_hub.gee_server.execute = AsyncMock(return_value={"error": "GEE credentials missing", "code": "auth"})
+        res = await self.environment_hub.execute("extract_land_use_polygons", {"target_class": "Built Area"})
+        self.assertEqual(res.status, "error")
+        self.assertEqual(res.error, "GEE credentials missing")
+
+    def test_map_claim_hallucination_regex(self):
+        import re
+        pattern = (
+            r'\b('
+            r'(?:marked|plotted|loaded|added|displayed|mapped|drawn)\s+.*?\s+(?:on|to)\s+(?:the\s+)?map\b'
+            r'|marked\s+(?:the|a)\s+(?:route|boundary)\b'
+            r'|plotted\s+(?:the|a)\s+(?:built[\s-]up\s+area|boundary|route|land\s+use)\b'
+            r'|drawn\s+the\s+route\b'
+            r'|route\s+details:\b'
+            r'|extracted\s+.*?\s+polygons\b'
+            r'|loaded\s+them\s+on\s+the\s+map\b'
+            r'|as\s+a\s+vector\s+layer\b'
+            r')'
+        )
+
+        test_hallucinations = [
+            "Done — I plotted the built-up area of Delhi on the map using the Google Dynamic World 2023 Built Area layer.",
+            "I plotted the built-up area on map",
+            "What I did:\n- extracted Delhi built-up polygons\n- loaded them on the map as a vector layer",
+            "I marked the route on the map for your trip.",
+            "I added the bus routes to the map.",
+            "I have displayed the catchment area on the map.",
+        ]
+
+        for text in test_hallucinations:
+            with self.subTest(text=text):
+                match = re.search(pattern, text, re.IGNORECASE)
+                self.assertIsNotNone(match, f"Failed to match hallucination: {text}")
+
+    def test_art_and_export_claim_hallucination_regex(self):
+        import re
+        art_pattern = r'(?:artifacts_store[/\\]\d+\.(?:docx|pdf|html|xlsx|md|txt|jpg|jpeg|png|webp)|Artifact:\s*-\s*ID:\s*\d+)'
+        export_pattern = r'\b(exported\s+.*?\s+as\s+(?:an?\s+)?image|exported\s+(?:the\s+)?map\s+as|captured\s+(?:the\s+)?map\s+image|exported\s+the\s+.*?\s+figure)\b'
+
+        text = (
+            "Done — I exported the Delhi built-up area as an image.\n\n"
+            "Artifact:\n"
+            "- ID: 103\n"
+            "- Path: artifacts_store/103.jpg\n\n"
+            "If you want, I can also export the Delhi boundary or compare it with Noida/Gurgaon built-up layers."
+        )
+
+        match_art = re.search(art_pattern, text, re.IGNORECASE)
+        match_export = re.search(export_pattern, text, re.IGNORECASE)
+        self.assertIsNotNone(match_art)
+        self.assertIsNotNone(match_export)
+
+
 if __name__ == "__main__":
     unittest.main()
 

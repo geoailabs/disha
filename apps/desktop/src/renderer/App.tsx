@@ -291,6 +291,7 @@ function App() {
   const [futureHistory, setFutureHistory] = useState<{ layers: GeoJSONLayer[]; bookmarks: MapBookmark[] }[]>([])
   const isUndoRedoRef = useRef(false)
   const lastStateRef = useRef<{ layers: GeoJSONLayer[]; bookmarks: MapBookmark[] }>({ layers: [], bookmarks: [] })
+  const exportQueueRef = useRef<Promise<void>>(Promise.resolve())
 
   useEffect(() => {
     if (lastStateRef.current.layers.length === 0 && lastStateRef.current.bookmarks.length === 0) {
@@ -1376,7 +1377,7 @@ function App() {
   // attribution) from the live map canvas + current view state. Single source
   // for all four export paths so decorations are always baked into the output.
   const composeMapFigure = useCallback(
-    (
+    async (
       title: string,
       options?: {
         noTitleBand?: boolean
@@ -1384,13 +1385,13 @@ function App() {
         layers_to_show?: string[]
         layer_name?: string
       },
-    ): HTMLCanvasElement | null => {
+    ): Promise<HTMLCanvasElement | null> => {
       const mapView = mapViewRef.current
       if (!mapView) return null
 
       const layersToShow = options?.layers_to_show || (options?.layer_name ? [options.layer_name] : undefined)
       const canvas = mapView.fitBboxAndSnapshot
-        ? mapView.fitBboxAndSnapshot(options?.bbox, 100, layersToShow)
+        ? await mapView.fitBboxAndSnapshot(options?.bbox, 40, layersToShow)
         : mapView.getCanvas()
       if (!canvas) return null
 
@@ -1436,8 +1437,8 @@ function App() {
     return pdf
   }, [])
 
-  const handleExportMapPng = useCallback((title?: string, options?: { layers_to_show?: string[]; layer_name?: string; bbox?: any }) => {
-    const figure = composeMapFigure(title || suggestExportTitleRef.current(), options)
+  const handleExportMapPng = useCallback(async (title?: string, options?: { layers_to_show?: string[]; layer_name?: string; bbox?: any }) => {
+    const figure = await composeMapFigure(title || suggestExportTitleRef.current(), options)
     if (!figure) return
     figure.toBlob((blob) => {
       if (!blob) return
@@ -1449,8 +1450,8 @@ function App() {
     })
   }, [composeMapFigure])
 
-  const handleExportMapJpeg = useCallback((title?: string, options?: { layers_to_show?: string[]; layer_name?: string; bbox?: any }) => {
-    const figure = composeMapFigure(title || suggestExportTitleRef.current(), options)
+  const handleExportMapJpeg = useCallback(async (title?: string, options?: { layers_to_show?: string[]; layer_name?: string; bbox?: any }) => {
+    const figure = await composeMapFigure(title || suggestExportTitleRef.current(), options)
     if (!figure) return
     figure.toBlob((blob) => {
       if (!blob) return
@@ -1463,26 +1464,93 @@ function App() {
   }, [composeMapFigure])
 
   const handleExportPdf = useCallback(async (title?: string, options?: { layers_to_show?: string[]; layer_name?: string; bbox?: any }) => {
-    const figure = composeMapFigure(title || suggestExportTitleRef.current(), options)
+    const figure = await composeMapFigure(title || suggestExportTitleRef.current(), options)
     if (!figure) return
     const pdf = await composedToPdf(figure)
     pdf.save(`map-report-${Date.now()}.pdf`)
   }, [composeMapFigure, composedToPdf])
 
-  const handleSavePngToArtifact = useCallback(async (title: string, artifactId?: number, options?: { layers_to_show?: string[]; layer_name?: string; bbox?: any }) => {
-    const figure = composeMapFigure(title, options)
-    if (!figure) return
-    figure.toBlob(async (blob) => {
-      if (!blob) return
+  const handleSavePngToArtifact = useCallback((title: string, artifactId?: number, options?: { layers_to_show?: string[]; layer_name?: string; bbox?: any }) => {
+    exportQueueRef.current = exportQueueRef.current.then(async () => {
+      await new Promise((r) => setTimeout(r, 60))
+      const figure = await composeMapFigure(title, options)
+      if (!figure) return
+      await new Promise<void>((resolve) => {
+        figure.toBlob(async (blob) => {
+          if (!blob) { resolve(); return }
+          const form = new FormData()
+          form.append('title', title)
+          form.append('artifact_type', 'sketch')
+          form.append('format', 'png')
+          form.append('content', '')
+          if (artifactId) {
+            form.append('artifact_id', String(artifactId))
+          }
+          form.append('file', blob, `${artifactId ? String(artifactId) : title.replace(/[^a-z0-9-_]/gi, '_')}.png`)
+          if (workspacePath) {
+            form.append('workspace', workspacePath)
+          }
+          try {
+            await fetch('http://localhost:8765/api/artifacts/upload', { method: 'POST', body: form })
+            setArtifactsRevision((n) => n + 1)
+          } catch {
+            /* backend unavailable */
+          }
+          resolve()
+        }, 'image/png')
+      })
+    }).catch(() => {})
+  }, [composeMapFigure, workspacePath])
+
+  const handleSaveJpgToArtifact = useCallback((title: string, artifactId?: number, options?: { layers_to_show?: string[]; layer_name?: string; bbox?: any }) => {
+    exportQueueRef.current = exportQueueRef.current.then(async () => {
+      await new Promise((r) => setTimeout(r, 60))
+      const figure = await composeMapFigure(title, options)
+      if (!figure) return
+      await new Promise<void>((resolve) => {
+        figure.toBlob(async (blob) => {
+          if (!blob) { resolve(); return }
+          const form = new FormData()
+          form.append('title', title)
+          form.append('artifact_type', 'sketch')
+          form.append('format', 'jpg')
+          form.append('content', '')
+          if (artifactId) {
+            form.append('artifact_id', String(artifactId))
+          }
+          form.append('file', blob, `${artifactId ? String(artifactId) : title.replace(/[^a-z0-9-_]/gi, '_')}.jpg`)
+          if (workspacePath) {
+            form.append('workspace', workspacePath)
+          }
+          try {
+            await fetch('http://localhost:8765/api/artifacts/upload', { method: 'POST', body: form })
+            setArtifactsRevision((n) => n + 1)
+          } catch {
+            /* backend unavailable */
+          }
+          resolve()
+        }, 'image/jpeg', 0.92)
+      })
+    }).catch(() => {})
+  }, [composeMapFigure, workspacePath])
+
+  const handleSavePdfToArtifact = useCallback((title: string, artifactId?: number, options?: { layers_to_show?: string[]; layer_name?: string; bbox?: any }) => {
+    exportQueueRef.current = exportQueueRef.current.then(async () => {
+      await new Promise((r) => setTimeout(r, 60))
+      const figure = await composeMapFigure(title, options)
+      if (!figure) return
+      const pdf = await composedToPdf(figure)
+      const pdfBytes = pdf.output('arraybuffer')
+      const blob = new Blob([pdfBytes], { type: 'application/pdf' })
       const form = new FormData()
       form.append('title', title)
       form.append('artifact_type', 'sketch')
-      form.append('format', 'png')
+      form.append('format', 'pdf')
       form.append('content', '')
       if (artifactId) {
         form.append('artifact_id', String(artifactId))
       }
-      form.append('file', blob, `${artifactId ? String(artifactId) : title.replace(/[^a-z0-9-_]/gi, '_')}.png`)
+      form.append('file', blob, `${artifactId ? String(artifactId) : title.replace(/[^a-z0-9-_]/gi, '_')}.pdf`)
       if (workspacePath) {
         form.append('workspace', workspacePath)
       }
@@ -1492,59 +1560,7 @@ function App() {
       } catch {
         /* backend unavailable */
       }
-    }, 'image/png')
-  }, [composeMapFigure, workspacePath])
-
-  const handleSaveJpgToArtifact = useCallback(async (title: string, artifactId?: number, options?: { layers_to_show?: string[]; layer_name?: string; bbox?: any }) => {
-    const figure = composeMapFigure(title, options)
-    if (!figure) return
-    figure.toBlob(async (blob) => {
-      if (!blob) return
-      const form = new FormData()
-      form.append('title', title)
-      form.append('artifact_type', 'sketch')
-      form.append('format', 'jpg')
-      form.append('content', '')
-      if (artifactId) {
-        form.append('artifact_id', String(artifactId))
-      }
-      form.append('file', blob, `${artifactId ? String(artifactId) : title.replace(/[^a-z0-9-_]/gi, '_')}.jpg`)
-      if (workspacePath) {
-        form.append('workspace', workspacePath)
-      }
-      try {
-        await fetch('http://localhost:8765/api/artifacts/upload', { method: 'POST', body: form })
-        setArtifactsRevision((n) => n + 1)
-      } catch {
-        /* backend unavailable */
-      }
-    }, 'image/jpeg', 0.92)
-  }, [composeMapFigure, workspacePath])
-
-  const handleSavePdfToArtifact = useCallback(async (title: string, artifactId?: number, options?: { layers_to_show?: string[]; layer_name?: string; bbox?: any }) => {
-    const figure = composeMapFigure(title, options)
-    if (!figure) return
-    const pdf = await composedToPdf(figure)
-    const pdfBytes = pdf.output('arraybuffer')
-    const blob = new Blob([pdfBytes], { type: 'application/pdf' })
-    const form = new FormData()
-    form.append('title', title)
-    form.append('artifact_type', 'sketch')
-    form.append('format', 'pdf')
-    form.append('content', '')
-    if (artifactId) {
-      form.append('artifact_id', String(artifactId))
-    }
-    form.append('file', blob, `${artifactId ? String(artifactId) : title.replace(/[^a-z0-9-_]/gi, '_')}.pdf`)
-    if (workspacePath) {
-      form.append('workspace', workspacePath)
-    }
-    try {
-      await fetch('http://localhost:8765/api/artifacts/upload', { method: 'POST', body: form })
-      setArtifactsRevision((n) => n + 1)
-    } catch {
-      /* backend unavailable */
-    }
+    }).catch(() => {})
   }, [composeMapFigure, composedToPdf, workspacePath])
 
   const suggestExportTitle = useCallback((): string => {
@@ -2122,17 +2138,18 @@ function App() {
       if (action.payload?.save_to_artifacts) {
         void handleSaveJpgToArtifact(title, artifactId, exportOpts)
       } else {
-        const figure = composeMapFigure(title, exportOpts)
-        if (figure) {
-          figure.toBlob((blob) => {
-            if (!blob) return
-            const a = document.createElement('a')
-            a.href = URL.createObjectURL(blob)
-            a.download = `${title.replace(/[^a-z0-9-_]/gi, '_')}.jpg`
-            a.click()
-            URL.revokeObjectURL(a.href)
-          }, 'image/jpeg', 0.92)
-        }
+        composeMapFigure(title, exportOpts).then((figure) => {
+          if (figure) {
+            figure.toBlob((blob) => {
+              if (!blob) return
+              const a = document.createElement('a')
+              a.href = URL.createObjectURL(blob)
+              a.download = `${title.replace(/[^a-z0-9-_]/gi, '_')}.jpg`
+              a.click()
+              URL.revokeObjectURL(a.href)
+            }, 'image/jpeg', 0.92)
+          }
+        }).catch(console.error)
       }
       return
     }
