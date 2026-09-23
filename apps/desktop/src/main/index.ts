@@ -280,11 +280,46 @@ let backendProcess: ChildProcess | null = null
 let allowMainWindowClose = false
 let quitFlushTimer: ReturnType<typeof setTimeout> | null = null
 
-function startBackend(): void {
-  if (isDev) return
+async function startBackend(): Promise<void> {
+  // Reuse a backend started manually or by another app instance.
+  try {
+    const response = await fetch(`http://localhost:${BACKEND_PORT}/health`)
+    if (response.ok) {
+      console.log(`[backend] already running on port ${BACKEND_PORT}`)
+      return
+    }
+  } catch {
+    /* start the backend below */
+  }
 
-  const backendBinary = process.platform === 'win32' ? 'backend.exe' : 'backend'
-  const backendPath = path.join(process.resourcesPath, 'backend', backendBinary)
+  let command: string
+  let args: string[]
+  let cwd: string | undefined
+
+  if (isDev) {
+    const backendCandidates = [
+      path.resolve(process.cwd(), 'packages/backend'),
+      path.resolve(__dirname, '../../../../packages/backend'),
+      path.resolve(__dirname, '../../../packages/backend'),
+    ]
+    const backendDir = backendCandidates.find((candidate) => fs.existsSync(path.join(candidate, 'main.py')))
+
+    if (!backendDir) {
+      console.error('[backend] could not find packages/backend/main.py')
+      return
+    }
+
+    const venvPython = process.platform === 'win32'
+      ? path.join(backendDir, '.buildenv', 'Scripts', 'python.exe')
+      : path.join(backendDir, '.buildenv', 'bin', 'python')
+    command = fs.existsSync(venvPython) ? venvPython : (process.platform === 'win32' ? 'python' : 'python3')
+    args = ['-m', 'uvicorn', 'main:app', '--port', String(BACKEND_PORT)]
+    cwd = backendDir
+  } else {
+    const backendBinary = process.platform === 'win32' ? 'backend.exe' : 'backend'
+    command = path.join(process.resourcesPath, 'backend', backendBinary)
+    args = ['--port', String(BACKEND_PORT)]
+  }
 
   const env = { ...process.env }
   env['OPENAI_API_KEY'] = env['OPENAI_API_KEY'] || readEnvValue(['OPENAI_API_KEY'])
@@ -295,13 +330,15 @@ function startBackend(): void {
     env['GOOGLE_EARTH_ENGINE_CREDS'] = geeCreds
   }
 
-  backendProcess = spawn(backendPath, ['--port', String(BACKEND_PORT)], {
+  backendProcess = spawn(command, args, {
+    cwd,
     env,
     stdio: ['ignore', 'pipe', 'pipe']
   })
 
   backendProcess.stdout?.on('data', (d) => console.log(`[backend] ${d}`))
   backendProcess.stderr?.on('data', (d) => console.error(`[backend] ${d}`))
+  backendProcess.on('error', (err) => console.error('[backend] failed to start', err))
   backendProcess.on('exit', (code) => console.log(`[backend] exited ${code}`))
 }
 
@@ -593,12 +630,9 @@ app.whenReady().then(async () => {
     return net.fetch(request.url.replace(/^localfile:/, 'file:'))
   })
 
-  startBackend()
-
-  if (!isDev) {
-    const backendReady = await waitForBackend()
-    if (!backendReady) console.error('Backend failed to start')
-  }
+  await startBackend()
+  const backendReady = await waitForBackend()
+  if (!backendReady) console.error('Backend failed to start')
 
   createWindow()
 
