@@ -516,6 +516,11 @@ SYSTEM_PROMPT = (
     "  you MUST execute `export_map_jpeg(title='<Descriptive Title>', save_to_artifacts=True)` (or `export_map_png`). "
     "  NEVER claim in chat text that you exported an image, and NEVER fabricate an artifact ID (e.g. 'Artifact ID: 103') or file path "
     "  without actually calling the export tool in that turn.\n"
+    "37. MANDATORY DATA SOURCES & METHODOLOGY PROVENANCE IN ARTIFACTS:\n"
+    "  - Whenever compiling or generating any project artifact, report, summary, or Word/PDF document, you MUST include a dedicated '## Data Sources & Methodology' section at the end of the document.\n"
+    "  - Every quantitative figure, spatial area, demographic count, route metric, environmental score, or planning projection stated in the document must be clearly accounted for: state WHERE it came from (exact tool, API endpoint, dataset title, query tags/scope) and WHAT BASIS it was determined on (geodesic ellipsoidal calculation, per-capita norms, planning regulations, or model formulas).\n"
+    "  - Format this section with a structured markdown table containing columns: | Data Source / Tool | Category | Provider / Endpoint | Query Scope & Parameters | Date / Timestamp | Analytical Basis & Assumptions |. Include authoritative markdown hyperlinks for data sources (e.g. [**Open-Meteo Air Quality**](https://open-meteo.com/en/docs/air-quality-api), [**WorldPop**](https://hub.worldpop.org), [**OpenStreetMap**](https://www.openstreetmap.org)).\n"
+    "  - Never state unverified or uncited metrics; always specify the factual provenance.\n"
 )
 
 
@@ -1463,6 +1468,45 @@ async def _execute_tool(
                         "then call create_artifact."
                     ),
                 })
+
+        # Ensure 'Data Sources & Methodology' section is synthesized and merged with turn telemetry
+        if content and fmt in ("markdown", "docx", "pdf", "html", "txt"):
+            from tools.provenance import create_source_entry_from_tool, synthesize_sources_section
+            telemetry_sources = []
+            if messages:
+                tool_calls_by_id = {}
+                for _m in messages:
+                    if _m.get("role") == "assistant" and _m.get("tool_calls"):
+                        for _tc in _m["tool_calls"]:
+                            _tcid = _tc.get("id")
+                            if _tcid:
+                                tool_calls_by_id[_tcid] = _tc
+                for _m in messages:
+                    if _m.get("role") == "tool":
+                        _tcid = _m.get("tool_call_id")
+                        _tc = tool_calls_by_id.get(_tcid)
+                        if _tc:
+                            _tname = _tc.get("function", {}).get("name") or _tc.get("name")
+                            _targs_str = _tc.get("function", {}).get("arguments") or _tc.get("arguments") or "{}"
+                            try:
+                                _targs = json.loads(_targs_str) if isinstance(_targs_str, str) else _targs_str
+                            except Exception:
+                                _targs = {}
+                            _entry = create_source_entry_from_tool(_tname, _targs, _m.get("content"))
+                            if _entry:
+                                telemetry_sources.append(_entry)
+
+            title = args.get("title", "")
+            content, enriched_sources = synthesize_sources_section(
+                telemetry_sources,
+                content,
+                title=title,
+                messages=messages,
+                map_context=map_context,
+            )
+            args["content"] = content
+            if enriched_sources:
+                args["sources"] = enriched_sources
 
     # 3b. Map export tools with automatic artifact reservation
 

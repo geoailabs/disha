@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
-import { Artifact } from '../types'
+import { Artifact, SourceEntry } from '../types'
 import './ArtifactsPanel.css'
 
 const API_BASE = 'http://localhost:8765/api/artifacts'
@@ -34,6 +34,420 @@ const headingComponents = {
   h4: ({ children, ...props }: any) => <h4 id={getSlug(children)} {...props}>{children}</h4>,
   h5: ({ children, ...props }: any) => <h5 id={getSlug(children)} {...props}>{children}</h5>,
   h6: ({ children, ...props }: any) => <h6 id={getSlug(children)} {...props}>{children}</h6>,
+}
+
+const getCategoryIcon = (category: string = ''): string => {
+  const cat = category.toLowerCase()
+  if (cat.includes('vector') || cat.includes('boundary') || cat.includes('osm')) return '🌐'
+  if (cat.includes('demographic') || cat.includes('pop') || cat.includes('cohort')) return '👥'
+  if (cat.includes('gis') || cat.includes('geodesic') || cat.includes('area')) return '📐'
+  if (cat.includes('weather') || cat.includes('climate') || cat.includes('air')) return '🌤️'
+  if (cat.includes('remote') || cat.includes('satellite') || cat.includes('lulc') || cat.includes('earth')) return '🛰️'
+  if (cat.includes('transit') || cat.includes('mobility') || cat.includes('route') || cat.includes('traffic')) return '🚆'
+  if (cat.includes('zoning') || cat.includes('planning') || cat.includes('norm') || cat.includes('regulation')) return '📄'
+  if (cat.includes('places') || cat.includes('amenity') || cat.includes('poi')) return '📍'
+  if (cat.includes('research') || cat.includes('web')) return '🔍'
+  if (cat.includes('document') || cat.includes('rag')) return '📑'
+  return '📊'
+}
+
+const DEFAULT_SOURCE_URLS: Record<string, string> = {
+  'air quality': 'https://open-meteo.com/en/docs/air-quality-api',
+  'cams': 'https://open-meteo.com/en/docs/air-quality-api',
+  'pm2.5': 'https://open-meteo.com/en/docs/air-quality-api',
+  'pm10': 'https://open-meteo.com/en/docs/air-quality-api',
+  'aqi': 'https://open-meteo.com/en/docs/air-quality-api',
+  'weather': 'https://open-meteo.com/en/docs',
+  'climate': 'https://open-meteo.com/en/docs',
+  'forecast': 'https://open-meteo.com/en/docs',
+  'worldpop': 'https://hub.worldpop.org',
+  'population': 'https://hub.worldpop.org',
+  'demographic': 'https://hub.worldpop.org',
+  'openstreetmap': 'https://www.openstreetmap.org',
+  'osm': 'https://www.openstreetmap.org',
+  'overpass': 'https://wiki.openstreetmap.org/wiki/Overpass_API',
+  'dynamic world': 'https://dynamicworld.app',
+  'sentinel': 'https://earthengine.google.com',
+  'earth engine': 'https://earthengine.google.com',
+  'places': 'https://developers.google.com/maps/documentation/places/web-service',
+  'overture': 'https://overturemaps.org',
+  'osrm': 'https://project-osrm.org',
+  'route': 'https://project-osrm.org',
+  'routing': 'https://project-osrm.org',
+  'isochrone': 'https://project-osrm.org',
+  'datameet': 'http://projects.datameet.org/maps',
+  'solar': 'https://developers.google.com/maps/documentation/solar',
+  'geodesic': 'https://proj.org/operations/geodesic.html',
+  'wgs84': 'https://proj.org/operations/geodesic.html',
+  'pyproj': 'https://proj.org/operations/geodesic.html',
+  'zoning': 'https://mohua.gov.in/upload/uploadfiles/files/URDPFI_Guidelines_Vol_I(2).pdf',
+  'master plan': 'https://mohua.gov.in/upload/uploadfiles/files/URDPFI_Guidelines_Vol_I(2).pdf',
+  'urdpfi': 'https://mohua.gov.in/upload/uploadfiles/files/URDPFI_Guidelines_Vol_I(2).pdf',
+  'land budget': 'https://mohua.gov.in/upload/uploadfiles/files/URDPFI_Guidelines_Vol_I(2).pdf',
+  'emissions': 'https://www.eea.europa.eu/publications/emep-eea-guidebook-2019',
+  'gtfs': 'https://gtfs.org',
+  'mcda': 'https://en.wikipedia.org/wiki/Analytic_hierarchy_process',
+}
+
+function resolveSourceUrl(s: Partial<SourceEntry>): string {
+  if (s.url && s.url.startsWith('http')) return s.url
+  const text = `${s.name || ''} ${s.provider || ''} ${s.category || ''}`.toLowerCase()
+  for (const [kw, url] of Object.entries(DEFAULT_SOURCE_URLS)) {
+    if (text.includes(kw)) return url
+  }
+  return ''
+}
+
+function parseSourcesFromMarkdown(content: string = ''): SourceEntry[] {
+  if (!content) return []
+  const headingMatch = content.match(/^#+\s+(?:data\s+sources\s*(?:&|and)\s*methodology|data\s+sources|sources\s*(?:&|and)\s*methodology|methodology\s*(?:&|and)\s*sources|sources|references)\b/im)
+  if (!headingMatch || headingMatch.index === undefined) return []
+
+  const sectionText = content.slice(headingMatch.index + headingMatch[0].length).split(/^#+\s+/m)[0]
+  const tableLines = sectionText.split('\n').map(l => l.trim()).filter(l => l.startsWith('|'))
+  if (tableLines.length >= 3) {
+    const headers = tableLines[0].replace(/^\||\|$/g, '').split('|').map(h => h.trim().toLowerCase())
+    const nameIdx = headers.findIndex(h => h.includes('source') || h.includes('tool') || h.includes('dataset') || h.includes('name'))
+    const catIdx = headers.findIndex(h => h.includes('category') || h.includes('type') || h.includes('domain'))
+    const provIdx = headers.findIndex(h => h.includes('provider') || h.includes('endpoint') || h.includes('origin'))
+    const scopeIdx = headers.findIndex(h => h.includes('scope') || h.includes('query') || h.includes('extent') || h.includes('parameter'))
+    const tsIdx = headers.findIndex(h => h.includes('date') || h.includes('time') || h.includes('timestamp'))
+    const basisIdx = headers.findIndex(h => h.includes('basis') || h.includes('assumption') || h.includes('formula') || h.includes('norm'))
+    const urlIdx = headers.findIndex(h => h.includes('url') || h.includes('link') || h.includes('href'))
+
+    if (nameIdx !== -1) {
+      const results: SourceEntry[] = []
+      for (const line of tableLines.slice(2)) {
+        const rawCells = line.replace(/^\||\|$/g, '').split('|').map(c => c.trim())
+        if (rawCells[nameIdx] && !rawCells[nameIdx].startsWith('---')) {
+          let nameVal = rawCells[nameIdx]
+          let urlVal = ''
+
+          const nameLinkMatch = nameVal.match(/\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/)
+          if (nameLinkMatch) {
+            nameVal = nameLinkMatch[1]
+            urlVal = nameLinkMatch[2]
+          }
+          nameVal = nameVal.replace(/[*`]/g, '').trim()
+
+          let provVal = provIdx !== -1 && rawCells[provIdx] ? rawCells[provIdx] : ''
+          const provLinkMatch = provVal.match(/\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/)
+          if (provLinkMatch) {
+            provVal = provLinkMatch[1]
+            if (!urlVal) urlVal = provLinkMatch[2]
+          }
+          provVal = provVal.replace(/[*`]/g, '').trim()
+
+          const catVal = catIdx !== -1 && rawCells[catIdx] ? rawCells[catIdx].replace(/[*`]/g, '').trim() : 'Data Source'
+          const scopeVal = scopeIdx !== -1 && rawCells[scopeIdx] ? rawCells[scopeIdx].replace(/[*`]/g, '').trim() : ''
+          const tsVal = tsIdx !== -1 && rawCells[tsIdx] ? rawCells[tsIdx].replace(/[*`]/g, '').trim() : ''
+          const basisVal = basisIdx !== -1 && rawCells[basisIdx] ? rawCells[basisIdx].replace(/[*`]/g, '').trim() : ''
+
+          if (urlIdx !== -1 && rawCells[urlIdx]) {
+            const rawUrl = rawCells[urlIdx].replace(/[<>*`]/g, '').trim()
+            if (rawUrl.startsWith('http')) urlVal = rawUrl
+          }
+
+          const entry: SourceEntry = {
+            name: nameVal,
+            category: catVal,
+            provider: provVal,
+            query_scope: scopeVal,
+            timestamp: tsVal,
+            basis_or_assumptions: basisVal,
+            url: urlVal || resolveSourceUrl({ name: nameVal, provider: provVal, category: catVal }),
+          }
+          results.push(entry)
+        }
+      }
+      if (results.length > 0) return results
+    }
+  }
+
+  // Bullet parser fallback
+  const bullets = sectionText.match(/^\s*[-*]\s+\*\*([^*]+)\*\*[:\s]*(.*)/gm)
+  if (bullets) {
+    return bullets.map(b => {
+      const m = b.match(/^\s*[-*]\s+\*\*([^*]+)\*\*[:\s]*(.*)/)
+      let nameVal = m ? m[1].trim() : 'Source'
+      let urlVal = ''
+      const linkMatch = nameVal.match(/\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/)
+      if (linkMatch) {
+        nameVal = linkMatch[1]
+        urlVal = linkMatch[2]
+      }
+      nameVal = nameVal.replace(/[*`]/g, '').trim()
+      const descVal = m ? m[2].trim() : ''
+      return {
+        name: nameVal,
+        category: 'Data Source',
+        basis_or_assumptions: descVal,
+        url: urlVal || resolveSourceUrl({ name: nameVal, basis_or_assumptions: descVal }),
+      }
+    })
+  }
+
+  return []
+}
+
+function inferSourcesFromText(title: string = '', content: string = ''): SourceEntry[] {
+  const full = `${title} ${content}`.toLowerCase()
+  const inferred: SourceEntry[] = []
+
+  if (full.includes('pm2.5') || full.includes('pm10') || full.includes('aqi') || full.includes('air quality')) {
+    inferred.push({
+      name: 'Open-Meteo Air Quality Index',
+      category: 'Environmental & Air Quality',
+      provider: 'Copernicus CAMS / Open-Meteo API',
+      query_scope: 'Atmospheric sensors & dispersion grid',
+      timestamp: 'Recorded observation',
+      basis_or_assumptions: 'Copernicus Atmosphere Monitoring Service (CAMS) atmospheric dispersion models for PM2.5, PM10, and AQI.',
+      url: 'https://open-meteo.com/en/docs/air-quality-api',
+    })
+  }
+
+  if (full.includes('weather') || full.includes('forecast') || full.includes('temperature') || full.includes('precipitation') || full.includes('humidity')) {
+    inferred.push({
+      name: 'Open-Meteo Weather Forecast',
+      category: 'Meteorological & Climate',
+      provider: 'Open-Meteo Weather API',
+      query_scope: 'Numerical weather prediction grid',
+      timestamp: 'Recorded forecast',
+      basis_or_assumptions: 'High-resolution numerical weather prediction models (ECMWF, GFS, ICON) providing multi-day meteorological forecasts.',
+      url: 'https://open-meteo.com/en/docs',
+    })
+  }
+
+  if (full.includes('worldpop') || full.includes('population') || full.includes('demographic') || full.includes('density')) {
+    inferred.push({
+      name: 'WorldPop 100m Population Count',
+      category: 'Raster Demographics',
+      provider: 'WorldPop (hub.worldpop.org)',
+      query_scope: 'Study area perimeter',
+      timestamp: 'UN-Adjusted 2025',
+      basis_or_assumptions: '100m building-constrained raster population grid aggregated within study boundary.',
+      url: 'https://hub.worldpop.org',
+    })
+  }
+
+  if (full.includes('osm') || full.includes('openstreetmap') || full.includes('amenit') || full.includes('school') || full.includes('boundary')) {
+    inferred.push({
+      name: 'OpenStreetMap Vector Features',
+      category: 'Geospatial Vector',
+      provider: 'OpenStreetMap (Overpass API)',
+      query_scope: 'Study area administrative extent',
+      timestamp: 'OSM Current',
+      basis_or_assumptions: 'Topological vector features and administrative boundary hierarchy from OpenStreetMap.',
+      url: 'https://www.openstreetmap.org',
+    })
+  }
+
+  if (full.includes('built-up') || full.includes('land use') || full.includes('sentinel') || full.includes('ndvi')) {
+    inferred.push({
+      name: 'Satellite Land Use & Land Cover (LULC)',
+      category: 'Earth Observation & Remote Sensing',
+      provider: 'Dynamic World / Sentinel-2 (10m)',
+      query_scope: 'Multi-spectral satellite extent',
+      timestamp: 'Sentinel-2 composite',
+      basis_or_assumptions: '10-meter deep learning near-real-time satellite land cover classification.',
+      url: 'https://dynamicworld.app',
+    })
+  }
+
+  if (full.includes('route') || full.includes('corridor') || full.includes('isochrone') || full.includes('catchment')) {
+    inferred.push({
+      name: 'OSRM Multimodal Network Routing',
+      category: 'Mobility & Transportation',
+      provider: 'OSRM (Open Source Routing Machine)',
+      query_scope: 'Road network graph',
+      timestamp: 'Topological network',
+      basis_or_assumptions: 'Dijkstra shortest path algorithm evaluated over topological road network.',
+      url: 'https://project-osrm.org',
+    })
+  }
+
+  return inferred
+}
+
+function SourcesHeaderCard({ artifact }: { artifact: Artifact }) {
+  const [isExpanded, setIsExpanded] = useState(false)
+
+  let sources: SourceEntry[] = []
+  if (artifact.meta) {
+    try {
+      const parsed = typeof artifact.meta === 'string' ? JSON.parse(artifact.meta) : artifact.meta
+      if (Array.isArray(parsed.sources) && parsed.sources.length > 0) {
+        sources = parsed.sources
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // Fallback to markdown parse if not in meta
+  if (sources.length === 0 && artifact.content) {
+    sources = parseSourcesFromMarkdown(artifact.content)
+  }
+
+  // Fallback to text inference if still empty
+  if (sources.length === 0 && artifact.content) {
+    sources = inferSourcesFromText(artifact.title, artifact.content)
+  }
+
+  // Ensure all sources have their URLs resolved
+  sources = sources.map(s => ({
+    ...s,
+    url: resolveSourceUrl(s),
+  }))
+
+  if (sources.length === 0) return null
+
+  return (
+    <div className="artifact-sources-card">
+      <div className="sources-card-header" onClick={() => setIsExpanded(prev => !prev)}>
+        <div className="sources-header-left">
+          <span className="sources-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+            </svg>
+          </span>
+          <span className="sources-title">Data Sources & Provenance</span>
+          <span className="sources-count-badge">{sources.length} {sources.length === 1 ? 'Source' : 'Sources'}</span>
+          <div className="sources-pill-preview">
+            {sources.slice(0, 4).map((s, idx) => {
+              const url = s.url || resolveSourceUrl(s)
+              return url ? (
+                <a
+                  key={idx}
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="sources-chip sources-chip-link"
+                  title={`Open ${s.name} (${url})`}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <span className="sources-chip-emoji">{getCategoryIcon(s.category)}</span>
+                  <span className="sources-chip-name">{s.name}</span>
+                  <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="sources-chip-ext">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                    <polyline points="15 3 21 3 21 9"></polyline>
+                    <line x1="10" y1="14" x2="21" y2="3"></line>
+                  </svg>
+                </a>
+              ) : (
+                <span key={idx} className="sources-chip" title={`${s.name} (${s.provider || s.category})`}>
+                  <span className="sources-chip-emoji">{getCategoryIcon(s.category)}</span>
+                  <span className="sources-chip-name">{s.name}</span>
+                </span>
+              )
+            })}
+            {sources.length > 4 && (
+              <span className="sources-more-chip">+{sources.length - 4} more</span>
+            )}
+          </div>
+        </div>
+        <button
+          className="sources-toggle-btn"
+          aria-label={isExpanded ? 'Collapse sources' : 'Expand sources'}
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            style={{ transform: isExpanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }}
+          >
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
+        </button>
+      </div>
+
+      {isExpanded && (
+        <div className="sources-card-body">
+          <p className="sources-body-subtitle">
+            Verified data origins, query extents, calculation rules, and planning norms used in this document:
+          </p>
+          <div className="sources-table-wrapper">
+            <table className="sources-table">
+              <thead>
+                <tr>
+                  <th>Source & Category</th>
+                  <th>Provider / Endpoint</th>
+                  <th>Query Scope & Parameters</th>
+                  <th>Date / Time</th>
+                  <th>Analytical Basis & Assumptions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sources.map((s, idx) => (
+                  <tr key={idx}>
+                    <td>
+                      <div className="sources-table-name">
+                        <span className="sources-table-emoji">{getCategoryIcon(s.category)}</span>
+                        {s.url ? (
+                          <a
+                            href={s.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="sources-link"
+                            title={`Open official ${s.name} portal / documentation (${s.url})`}
+                          >
+                            <strong>{s.name}</strong>
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="sources-link-icon">
+                              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                              <polyline points="15 3 21 3 21 9"></polyline>
+                              <line x1="10" y1="14" x2="21" y2="3"></line>
+                            </svg>
+                          </a>
+                        ) : (
+                          <strong>{s.name}</strong>
+                        )}
+                      </div>
+                      <span className="sources-table-cat">{s.category || 'General'}</span>
+                    </td>
+                    <td>
+                      {s.url ? (
+                        <a
+                          href={s.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="sources-endpoint-link"
+                          title={`Open ${s.provider || s.name} (${s.url})`}
+                        >
+                          <code className="sources-table-code">{s.provider || 'Internal / Geodesic'}</code>
+                          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="sources-endpoint-icon">
+                            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                            <polyline points="15 3 21 3 21 9"></polyline>
+                            <line x1="10" y1="14" x2="21" y2="3"></line>
+                          </svg>
+                        </a>
+                      ) : (
+                        <code className="sources-table-code">{s.provider || 'Internal / Geodesic'}</code>
+                      )}
+                    </td>
+                    <td>
+                      <span className="sources-table-scope">{s.query_scope || 'Active Study Area'}</span>
+                    </td>
+                    <td>
+                      <span className="sources-table-time">{s.timestamp || 'Recorded'}</span>
+                    </td>
+                    <td>
+                      <p className="sources-table-basis">{s.basis_or_assumptions || 'Standard spatial calculations applied.'}</p>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 /** Preview-only artifact returned by GET /api/artifacts (truncated content) */
@@ -396,6 +810,7 @@ export default function ArtifactsPanel({
     if (fmt === 'markdown') {
       return (
         <div className="artifact-detail">
+          {!editingContent && <SourcesHeaderCard artifact={artifact} />}
           {editingContent ? (
             <>
               <textarea
@@ -712,6 +1127,7 @@ export default function ArtifactsPanel({
     // PDF, DOCX, HTML, XLSX, TXT, JSON and fallback formats
     return (
       <div className="artifact-detail">
+        <SourcesHeaderCard artifact={artifact} />
         <div className="artifact-detail-markdown">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}

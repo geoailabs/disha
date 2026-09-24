@@ -288,6 +288,21 @@ export interface ChatErrorMessage {
 
 export type MapActionType = MapAction['type']
 
+export interface SourceEntry {
+  name: string
+  category: string
+  provider?: string
+  query_scope?: string
+  timestamp?: string
+  basis_or_assumptions?: string
+  url?: string
+}
+
+export interface ArtifactMeta {
+  sources?: SourceEntry[]
+  [key: string]: any
+}
+
 export interface Artifact {
   id: number
   title: string

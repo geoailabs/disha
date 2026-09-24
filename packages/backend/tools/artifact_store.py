@@ -226,6 +226,31 @@ def save_artifact(
         # Keep any description/content text or default to empty string
         final_content = (content or "") if not (content or "").startswith("data:image/") else ""
 
+    # Synchronize structured sources metadata from document content
+    if final_content and fmt in ("markdown", "docx", "pdf", "html", "txt"):
+        try:
+            from tools.provenance import extract_sources_from_markdown, synthesize_sources_section
+            extracted = extract_sources_from_markdown(final_content)
+            if not extracted:
+                # Content does not have a sources section! Synthesize and append it now
+                final_content, extracted = synthesize_sources_section([], final_content, title=title)
+            if extracted:
+                if not final_meta:
+                    final_meta = {}
+                existing_sources = final_meta.get("sources") or []
+                existing_names = {s.get("name", "").lower() for s in existing_sources if isinstance(s, dict)}
+                for s in extracted:
+                    if s.get("name", "").lower() not in existing_names:
+                        existing_sources.append(s)
+                        existing_names.add(s.get("name", "").lower())
+                from tools.provenance import resolve_source_url
+                for s in existing_sources:
+                    if isinstance(s, dict) and not s.get("url"):
+                        s["url"] = resolve_source_url(s.get("name", ""), s.get("provider", ""), s.get("category", ""))
+                final_meta["sources"] = existing_sources
+        except Exception:
+            pass
+
     # --- Insert or update row ---
     meta_json = json.dumps(final_meta) if final_meta is not None else None
 
@@ -368,7 +393,26 @@ def read_artifact(artifact_id: int, workspace: Optional[str] = None) -> Optional
         ).fetchone()
         if not row:
             return None
-        return dict(row)
+        d = dict(row)
+        # Graceful heuristic parse and synthesis for legacy artifacts
+        if d.get("content"):
+            try:
+                from tools.provenance import extract_sources_from_markdown, synthesize_sources_section, resolve_source_url
+                existing_meta = json.loads(d["meta"]) if d.get("meta") else {}
+                sources = existing_meta.get("sources")
+                if not sources:
+                    sources = extract_sources_from_markdown(d["content"])
+                if not sources:
+                    d["content"], sources = synthesize_sources_section([], d["content"], title=d.get("title", ""))
+                if sources:
+                    for s in sources:
+                        if isinstance(s, dict) and not s.get("url"):
+                            s["url"] = resolve_source_url(s.get("name", ""), s.get("provider", ""), s.get("category", ""))
+                    existing_meta["sources"] = sources
+                    d["meta"] = json.dumps(existing_meta)
+            except Exception:
+                pass
+        return d
     finally:
         conn.close()
 

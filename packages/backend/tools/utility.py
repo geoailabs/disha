@@ -200,6 +200,22 @@ class UtilityServer:
                                 "The full document body in Markdown. For Word (.docx) and PDF, include all headings (#, ##), paragraphs, lists, tables, and image figures formatted as ![Figure: Caption](artifacts_store/ID.png)."
                             ),
                         },
+                        "sources": {
+                            "type": "array",
+                            "description": "Optional list of data sources, tools, planning norms, and analytical bases used in this artifact.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string", "description": "Source name or tool title"},
+                                    "category": {"type": "string", "description": "Data domain category"},
+                                    "provider": {"type": "string", "description": "Data provider or API endpoint"},
+                                    "query_scope": {"type": "string", "description": "Query extent, tags, or parameters"},
+                                    "timestamp": {"type": "string", "description": "Retrieval date or timestamp"},
+                                    "basis_or_assumptions": {"type": "string", "description": "Analytical formula, calculation norms, or baseline assumptions"},
+                                },
+                                "required": ["name", "basis_or_assumptions"],
+                            },
+                        },
                     },
                     "required": ["title", "format", "content"],
                 },
@@ -628,8 +644,17 @@ class UtilityServer:
             artifact_type = args.get("artifact_type", "note")
             fmt = args.get("format", "markdown")
             content = args.get("content", "")
+            raw_sources = args.get("sources") or []
             map_context = args.get("_map_context", {})
             workspace = map_context.get("workspace") if map_context else None
+
+            # Synthesize and auto-enrich sources section if present or needed
+            from tools.provenance import synthesize_sources_section
+            content, merged_sources = synthesize_sources_section(raw_sources, content, title=title, map_context=map_context)
+
+            meta = args.get("meta") or {}
+            if merged_sources:
+                meta["sources"] = merged_sources
 
             file_bytes = None
             file_ext = None
@@ -649,6 +674,7 @@ class UtilityServer:
                 content=content,
                 file_bytes=file_bytes,
                 file_ext=file_ext,
+                meta=meta,
                 workspace=workspace,
             )
             return {

@@ -309,6 +309,20 @@ async def update_artifact(artifact_id: int, update: ArtifactUpdate, workspace: s
         if update.content is not None and existing["format"] != "image":
             fields.append("content = ?")
             values.append(update.content)
+            # Synchronize structured sources if content has a sources section
+            if update.meta is None:
+                try:
+                    from tools.provenance import extract_sources_from_markdown
+                    extracted = extract_sources_from_markdown(update.content)
+                    current_meta = json.loads(existing["meta"]) if existing["meta"] else {}
+                    if extracted:
+                        current_meta["sources"] = extracted
+                    elif "sources" in current_meta:
+                        current_meta.pop("sources", None)
+                    fields.append("meta = ?")
+                    values.append(json.dumps(current_meta))
+                except Exception:
+                    pass
         if update.artifact_type is not None:
             fields.append("artifact_type = ?")
             values.append(update.artifact_type)
