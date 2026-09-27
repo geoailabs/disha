@@ -450,6 +450,71 @@ function SourcesHeaderCard({ artifact }: { artifact: Artifact }) {
   )
 }
 
+export interface SupportedFormatOption {
+  fmt: string
+  badge: string
+  label: string
+  description?: string
+}
+
+export function getSupportedFormats(art: Artifact | null): SupportedFormatOption[] {
+  if (!art) return []
+  const rawFmt = (art.format || '').toLowerCase()
+  const rawType = (art.artifact_type || '').toLowerCase()
+  const filePath = (art.file_path || '').toLowerCase()
+
+  const isImg = ['image', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(rawFmt) ||
+                Boolean(art.file_path && /\.(png|jpe?g|webp|gif|svg)$/i.test(art.file_path))
+
+  // 1. Image artifacts: only image formats
+  if (isImg) {
+    const isJpg = rawFmt === 'jpg' || rawFmt === 'jpeg' || /\.(jpe?g|jpg)$/i.test(filePath)
+    return [
+      { fmt: isJpg ? 'jpg' : 'png', badge: isJpg ? 'JPEG' : 'PNG', label: isJpg ? 'JPEG Image (.jpg)' : 'PNG Image (.png)', description: 'Raster image format' },
+      { fmt: isJpg ? 'png' : 'jpg', badge: isJpg ? 'PNG' : 'JPEG', label: isJpg ? 'PNG Image (.png)' : 'JPEG Image (.jpg)', description: isJpg ? 'Lossless raster graphic' : 'Compressed raster graphic' },
+    ]
+  }
+
+  // 2. Spatial GeoJSON artifacts: only spatial formats
+  if (rawFmt === 'geojson') {
+    return [
+      { fmt: 'geojson', badge: 'GEOJSON', label: 'GeoJSON (.geojson)', description: 'Spatial vector features' },
+      { fmt: 'json', badge: 'JSON', label: 'JSON Data (.json)', description: 'Standard GeoJSON dataset' },
+    ]
+  }
+
+  // 3. Tabular data artifacts: only spreadsheet formats
+  if (rawFmt === 'table' || rawType === 'table') {
+    return [
+      { fmt: 'csv', badge: 'CSV', label: 'CSV Spreadsheet (.csv)', description: 'Comma-separated tabular data' },
+      { fmt: 'xlsx', badge: 'EXCEL', label: 'Excel Workbook (.xlsx)', description: 'Microsoft Excel spreadsheet' },
+    ]
+  }
+
+  // 4. Word Document artifacts / reports: only DOCX and PDF!
+  if (rawFmt === 'docx' || filePath.endsWith('.docx') || rawType === 'report') {
+    return [
+      { fmt: 'docx', badge: 'DOCX', label: 'Word Document (.docx)', description: 'Formatted Microsoft Word file' },
+      { fmt: 'pdf', badge: 'PDF', label: 'PDF Document (.pdf)', description: 'Printable formatted report' },
+    ]
+  }
+
+  // 5. PDF artifacts: only PDF and DOCX
+  if (rawFmt === 'pdf' || filePath.endsWith('.pdf')) {
+    return [
+      { fmt: 'pdf', badge: 'PDF', label: 'PDF Document (.pdf)', description: 'Printable formatted report' },
+      { fmt: 'docx', badge: 'DOCX', label: 'Word Document (.docx)', description: 'Formatted Microsoft Word file' },
+    ]
+  }
+
+  // 6. Generic markdown reports / analyses / notes
+  return [
+    { fmt: 'docx', badge: 'DOCX', label: 'Word Document (.docx)', description: 'Formatted Microsoft Word file' },
+    { fmt: 'pdf', badge: 'PDF', label: 'PDF Document (.pdf)', description: 'Printable formatted report' },
+    { fmt: 'md', badge: 'MD', label: 'Markdown (.md)', description: 'Raw markdown document source' },
+  ]
+}
+
 /** Preview-only artifact returned by GET /api/artifacts (truncated content) */
 interface ArtifactPreview extends Omit<Artifact, 'content'> {
   preview: string
@@ -461,7 +526,7 @@ interface ArtifactsPanelProps {
   selectedArtifactId?: number | null
   onSelectArtifactId?: (id: number | null) => void
   onAddToMap: (geojson: object, name: string) => void
-  onComposeMapFigure?: (title: string, options?: { noTitleBand?: boolean }) => HTMLCanvasElement | null
+  onComposeMapFigure?: (title: string, options?: { noTitleBand?: boolean }) => Promise<HTMLCanvasElement | null> | HTMLCanvasElement | null
   onFitBounds?: (bounds: { west: number; south: number; east: number; north: number }, padding?: number) => void
   showSidebar?: boolean
   sidebarWidth?: number
@@ -628,10 +693,16 @@ export default function ArtifactsPanel({
         await new Promise((r) => setTimeout(r, 120))
       }
 
-      const figure = onComposeMapFigure?.(fullArtifact?.title || 'Map Snapshot', { noTitleBand: true })
       let mapImageBase64 = ''
-      if (figure) {
-        mapImageBase64 = figure.toDataURL('image/png')
+      try {
+        const figure = onComposeMapFigure
+          ? await onComposeMapFigure(fullArtifact?.title || 'Map Snapshot', { noTitleBand: true })
+          : null
+        if (figure && typeof (figure as any).toDataURL === 'function') {
+          mapImageBase64 = (figure as any).toDataURL('image/png')
+        }
+      } catch (figErr) {
+        console.warn('Map figure could not be composed for export:', figErr)
       }
 
       const formData = new FormData()
@@ -643,20 +714,158 @@ export default function ArtifactsPanel({
         body: formData,
       })
 
-      if (!res.ok) throw new Error('Export failed')
+      if (!res.ok) throw new Error(`Export failed with HTTP ${res.status}`)
 
       const blob = await res.blob()
       const downloadUrl = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = downloadUrl
       const safeTitle = (fullArtifact?.title || 'export').replace(/[^a-z0-9-_]/gi, '_')
-      a.download = `${safeTitle}.${targetFmt}`
+      const ext = targetFmt === 'markdown' ? 'md' : targetFmt
+      a.download = `${safeTitle}.${ext}`
       document.body.appendChild(a)
       a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(downloadUrl)
+      setTimeout(() => {
+        try {
+          document.body.removeChild(a)
+          URL.revokeObjectURL(downloadUrl)
+        } catch {}
+      }, 60000)
     } catch (err) {
       console.error('Failed to export artifact with map figure:', err)
+      throw err
+    }
+  }
+
+  // Download menu dropdown state
+  const [isDownloadMenuOpen, setIsDownloadMenuOpen] = useState(false)
+  const [downloadingFmt, setDownloadingFmt] = useState<string | null>(null)
+  const downloadDropdownRef = useRef<HTMLDivElement>(null)
+
+  // Close download menu on outside click or Escape
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (downloadDropdownRef.current && !downloadDropdownRef.current.contains(e.target as Node)) {
+        setIsDownloadMenuOpen(false)
+      }
+    }
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsDownloadMenuOpen(false)
+      }
+    }
+    if (isDownloadMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+      window.addEventListener('keydown', handleKeyDown)
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isDownloadMenuOpen])
+
+  // Reset dropdown when selection changes
+  useEffect(() => {
+    setIsDownloadMenuOpen(false)
+    setDownloadingFmt(null)
+  }, [selectedId])
+
+  const handleDownloadFormat = async (targetFmt: string) => {
+    if (!fullArtifact) return
+    setIsDownloadMenuOpen(false)
+    setDownloadingFmt(targetFmt)
+
+    const artId = fullArtifact.id
+    const safeTitle = (fullArtifact.title || 'artifact').replace(/[^a-z0-9-_]/gi, '_')
+    const rawFmt = (fullArtifact.format || '').toLowerCase()
+    const rawType = (fullArtifact.artifact_type || '').toLowerCase()
+    const filePath = (fullArtifact.file_path || '').toLowerCase()
+
+    try {
+      // 1. Direct file download: DOCX pre-compiled file on disk
+      if (targetFmt === 'docx' && fullArtifact.file_path && filePath.endsWith('.docx')) {
+        const downloadUrl = getUrl(`/${artId}/download`)
+        const a = document.createElement('a')
+        a.href = downloadUrl
+        a.setAttribute('download', `${safeTitle}.docx`)
+        document.body.appendChild(a)
+        a.click()
+        setTimeout(() => {
+          try {
+            document.body.removeChild(a)
+          } catch {}
+        }, 1500)
+        setCopiedNotification('Downloaded Word Document (.docx)!')
+        setTimeout(() => setCopiedNotification(null), 2500)
+        return
+      }
+
+      // 2. Direct table CSV download
+      if ((rawFmt === 'table' || rawType === 'table') && targetFmt === 'csv') {
+        const downloadUrl = getUrl(`/${artId}/download`)
+        const a = document.createElement('a')
+        a.href = downloadUrl
+        a.setAttribute('download', `${safeTitle}.csv`)
+        document.body.appendChild(a)
+        a.click()
+        setTimeout(() => {
+          try {
+            document.body.removeChild(a)
+          } catch {}
+        }, 1500)
+        setCopiedNotification('Downloaded CSV Spreadsheet!')
+        setTimeout(() => setCopiedNotification(null), 2500)
+        return
+      }
+
+      // 3. Direct GeoJSON download
+      if (rawFmt === 'geojson' && targetFmt === 'geojson') {
+        const downloadUrl = getUrl(`/${artId}/download`)
+        const a = document.createElement('a')
+        a.href = downloadUrl
+        a.setAttribute('download', `${safeTitle}.geojson`)
+        document.body.appendChild(a)
+        a.click()
+        setTimeout(() => {
+          try {
+            document.body.removeChild(a)
+          } catch {}
+        }, 1500)
+        setCopiedNotification('Downloaded GeoJSON!')
+        setTimeout(() => setCopiedNotification(null), 2500)
+        return
+      }
+
+      // 4. Image direct download
+      const isImg = ['image', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(rawFmt) ||
+                    Boolean(fullArtifact.file_path && /\.(png|jpe?g|webp|gif|svg)$/i.test(fullArtifact.file_path))
+
+      if (isImg && (targetFmt === 'jpg' || targetFmt === 'jpeg' || targetFmt === 'png' || targetFmt === 'original')) {
+        const downloadUrl = getUrl(`/${artId}/download`)
+        const a = document.createElement('a')
+        a.href = downloadUrl
+        const ext = targetFmt === 'original' ? (fullArtifact.file_path?.split('.').pop() || 'png') : targetFmt
+        a.setAttribute('download', `${safeTitle}.${ext}`)
+        document.body.appendChild(a)
+        a.click()
+        setTimeout(() => {
+          try {
+            document.body.removeChild(a)
+          } catch {}
+        }, 1500)
+        setCopiedNotification(`Downloaded ${ext.toUpperCase()} Image!`)
+        setTimeout(() => setCopiedNotification(null), 2500)
+        return
+      }
+
+      // 5. Multi-format export pipeline (PDF, DOCX generation, etc.)
+      await handleExportWithMap(artId, targetFmt)
+      setCopiedNotification(`Downloaded ${targetFmt.toUpperCase()}!`)
+      setTimeout(() => setCopiedNotification(null), 2500)
+    } catch (err) {
+      console.error(`Download failed for format ${targetFmt}:`, err)
+    } finally {
+      setDownloadingFmt(null)
     }
   }
 
@@ -1441,14 +1650,84 @@ export default function ArtifactsPanel({
           ) : fullArtifact && fullArtifact.id === selectedId ? (
             <div className="artifacts-detail-content">
               <div className="artifacts-detail-header">
-                <h2 className="artifacts-detail-title">{fullArtifact.title}</h2>
-                <span className="artifacts-detail-badge">
-                  {fullArtifact.file_path && /\.(jpe?g|jpg)$/i.test(fullArtifact.file_path)
-                    ? 'JPEG'
-                    : fullArtifact.format === 'jpg' || fullArtifact.format === 'jpeg'
-                    ? 'JPEG'
-                    : (fullArtifact.format ?? fullArtifact.artifact_type ?? 'PNG').toUpperCase()}
-                </span>
+                <h2 className="artifacts-detail-title" title={fullArtifact.title}>{fullArtifact.title}</h2>
+                <div className="artifacts-detail-header-actions">
+                  <span className="artifacts-detail-badge">
+                    {fullArtifact.file_path && /\.(jpe?g|jpg)$/i.test(fullArtifact.file_path)
+                      ? 'JPEG'
+                      : fullArtifact.format === 'jpg' || fullArtifact.format === 'jpeg'
+                      ? 'JPEG'
+                      : (fullArtifact.format ?? fullArtifact.artifact_type ?? 'PNG').toUpperCase()}
+                  </span>
+
+                  <div className="artifact-download-dropdown-container" ref={downloadDropdownRef}>
+                    <button
+                      className="artifact-header-download-btn"
+                      onClick={() => setIsDownloadMenuOpen((prev) => !prev)}
+                      disabled={Boolean(downloadingFmt)}
+                      title="Download artifact in supported formats"
+                    >
+                      {downloadingFmt ? (
+                        <>
+                          <svg className="spinning" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                            <path d="M23 4v6h-6"></path>
+                            <path d="M1 20v-6h6"></path>
+                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                          </svg>
+                          <span>Exporting...</span>
+                        </>
+                      ) : (
+                        <>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                          </svg>
+                          <span>Download</span>
+                          <svg
+                            width="10"
+                            height="10"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.5"
+                            style={{
+                              transform: isDownloadMenuOpen ? 'rotate(180deg)' : 'none',
+                              transition: 'transform 0.15s ease',
+                              opacity: 0.8,
+                            }}
+                          >
+                            <polyline points="6 9 12 15 18 9"></polyline>
+                          </svg>
+                        </>
+                      )}
+                    </button>
+
+                    {isDownloadMenuOpen && (
+                      <div className="artifact-download-menu">
+                        <div className="artifact-download-menu-header">Supported Formats</div>
+                        {getSupportedFormats(fullArtifact).map((opt) => (
+                          <button
+                            key={opt.fmt}
+                            className="artifact-download-menu-item"
+                            onClick={() => handleDownloadFormat(opt.fmt)}
+                          >
+                            <span className="format-badge-mini">{opt.badge}</span>
+                            <div className="format-info">
+                              <span className="format-label">{opt.label}</span>
+                              {opt.description && <span className="format-desc">{opt.description}</span>}
+                            </div>
+                            <svg className="download-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                              <polyline points="7 10 12 15 17 10"></polyline>
+                              <line x1="12" y1="15" x2="12" y2="3"></line>
+                            </svg>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
               {renderDetail(fullArtifact)}
             </div>

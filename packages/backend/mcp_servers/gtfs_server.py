@@ -126,7 +126,7 @@ class GTFSServer:
     async def _import_gtfs_feed(self, args: dict) -> dict:
         url = args.get("url", "").strip()
         path = args.get("path", "").strip()
-        workspace = args.get("workspace", "").strip()
+        workspace = (args.get("workspace") or args.get("_workspace") or "").strip()
         title = args.get("title", "").strip() or "Transit"
         ws = args.get("_ws")
 
@@ -296,6 +296,11 @@ class GTFSServer:
         with open(routes_path, "w") as f:
             json.dump(routes_geojson, f)
 
+        # Compute bounding box across all stops
+        stop_lons = [f["geometry"]["coordinates"][0] for f in stop_features]
+        stop_lats = [f["geometry"]["coordinates"][1] for f in stop_features]
+        bbox = [min(stop_lons), min(stop_lats), max(stop_lons), max(stop_lats)] if stop_lons and stop_lats else None
+
         return {
             "status": "success",
             "summary": {
@@ -303,11 +308,18 @@ class GTFSServer:
                 "routes": len(route_map),
                 "trips": len(trips)
             },
-            "workspace": workspace
+            "routes_file": str(routes_path) if route_features else None,
+            "stops_file": str(stops_path) if stop_features else None,
+            "routes_layer_name": f"{title} Routes",
+            "stops_layer_name": f"{title} Stops",
+            "bbox": bbox,
+            "workspace": workspace,
+            "displayed_on_map": True,
+            "message": f"Successfully imported GTFS feed with {len(stop_features)} stops and {len(route_map)} routes, loaded on map."
         }
 
     async def _analyze_gtfs_service(self, args: dict) -> dict:
-        workspace = args.get("workspace", "").strip()
+        workspace = (args.get("workspace") or args.get("_workspace") or "").strip()
 
         if not workspace:
             return {"error": "workspace is required"}
@@ -373,7 +385,7 @@ class GTFSServer:
         }
 
     async def _analyze_gtfs_schedules(self, args: dict) -> dict:
-        workspace = args.get("workspace", "").strip()
+        workspace = (args.get("workspace") or args.get("_workspace") or "").strip()
         stop_id_filter = args.get("stop_id", "").strip()
         if not workspace:
             return {"error": "workspace is required"}
@@ -437,7 +449,7 @@ class GTFSServer:
         }
 
     async def _analyze_transit_catchment(self, args: dict) -> dict:
-        workspace = args.get("workspace", "").strip()
+        workspace = (args.get("workspace") or args.get("_workspace") or "").strip()
         radius_meters = float(args.get("radius_meters", 400))
         layer_name = args.get("layer_name", "").strip() or f"Transit Catchment ({int(radius_meters)}m)"
         ws = args.get("_ws")
@@ -530,5 +542,7 @@ class GTFSServer:
                 "area_hectares": round(total_area_m2 / 1e4, 2)
             },
             "layer_name": layer_name,
-            "file_path": str(out_path)
+            "file_path": str(out_path),
+            "output_file": str(out_path),
+            "output_layer": layer_name
         }

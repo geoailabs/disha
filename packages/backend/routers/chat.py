@@ -1136,6 +1136,15 @@ def _build_tools() -> list[dict]:
             },
             "required": ["geojson", "name"],
         }),
+        ("add_geojson_file", "Load a local GeoJSON file from the active workspace path as a map layer", {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Absolute or workspace-relative path to GeoJSON file"},
+                "name": {"type": "string", "description": "Layer display name"},
+                "color": {"type": "string", "description": "Optional hex color e.g. #3b82f6 or #e11d48"},
+            },
+            "required": ["path", "name"],
+        }),
         ("highlight_features", "Highlight features in a loaded layer by a property value", {
             "type": "object",
             "properties": {
@@ -2182,15 +2191,33 @@ async def chat_websocket(websocket: WebSocket):
     active_task: asyncio.Task | None = None
     current_full_messages: list[dict] | None = None
 
+    queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+    async def _ws_reader():
+        try:
+            while True:
+                msg = await websocket.receive_text()
+                await queue.put(msg)
+        except WebSocketDisconnect:
+            await queue.put(None)
+        except Exception as e:
+            logger.debug(f"WS reader terminated: {e}")
+            await queue.put(None)
+
+    reader_task = asyncio.create_task(_ws_reader())
+
     try:
         while True:
             if active_task is not None and not active_task.done():
-                receive_task = asyncio.create_task(websocket.receive_text())
-                done, pending = await asyncio.wait({active_task, receive_task}, return_when=asyncio.FIRST_COMPLETED)
+                get_task = asyncio.create_task(queue.get())
+                done, pending = await asyncio.wait({active_task, get_task}, return_when=asyncio.FIRST_COMPLETED)
 
                 if active_task in done:
-                    for p in pending:
-                        p.cancel()
+                    get_task.cancel()
+                    try:
+                        await get_task
+                    except asyncio.CancelledError:
+                        pass
                     try:
                         await active_task
                     except (Exception, asyncio.CancelledError):
@@ -2203,7 +2230,7 @@ async def chat_websocket(websocket: WebSocket):
                                 continue
                             if isinstance(m.get("content"), list):
                                 # Strip image parts from stored history to save memory
-                                text_parts = [p["text"] for p in m["content"] if p.get("type") == "text"]
+                                text_parts = [p.get("text", "") for p in m["content"] if isinstance(p, dict) and p.get("type") == "text"]
                                 new_history.append({"role": m["role"], "content": " ".join(text_parts)})
                             else:
                                 new_history.append(m)
@@ -2212,22 +2239,24 @@ async def chat_websocket(websocket: WebSocket):
                     await websocket.send_text(json.dumps({"type": "end"}))
                     continue
 
-                if receive_task in done:
-                    for p in pending:
-                        if p is not active_task:
-                            p.cancel()
+                if get_task in done:
+                    raw_data = get_task.result()
+                    if raw_data is None:
+                        break
                     try:
-                        data = receive_task.result()
+                        payload = json.loads(raw_data)
                     except Exception:
-                        data = None
-                    if data is None:
                         continue
-                    payload = json.loads(data)
                 else:
                     continue
             else:
-                data = await websocket.receive_text()
-                payload = json.loads(data)
+                raw_data = await queue.get()
+                if raw_data is None:
+                    break
+                try:
+                    payload = json.loads(raw_data)
+                except Exception:
+                    continue
 
             if payload.get("type") == "stop":
                 if stop_event is not None:
@@ -2441,6 +2470,7 @@ async def chat_websocket(websocket: WebSocket):
             except (Exception, asyncio.CancelledError):
                 pass
     except Exception as e:
+        logger.exception(f"Unhandled error in chat_websocket: {e}")
         if active_task and not active_task.done():
             active_task.cancel()
             try:
@@ -2455,6 +2485,11 @@ async def chat_websocket(websocket: WebSocket):
         except Exception:
             pass
     finally:
+        reader_task.cancel()
+        try:
+            await reader_task
+        except (Exception, asyncio.CancelledError):
+            pass
         _active_websockets.discard(websocket)
 
 

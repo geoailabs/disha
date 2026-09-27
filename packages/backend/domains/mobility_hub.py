@@ -122,9 +122,68 @@ class MobilityHub(BaseDomainHub):
             return ToolResult(status=res.get("status", "success"), data=clean_data, map_action=map_action)
 
         if tool_name in self.gtfs_server.tool_names:
-            res = await self.gtfs_server.execute(tool_name, {**args, **context})
+            pass_args = dict(args)
+            if not pass_args.get("workspace") and context.get("_workspace"):
+                pass_args["workspace"] = context["_workspace"]
+            res = await self.gtfs_server.execute(tool_name, {**pass_args, **context})
             map_action = None
-            if "geojson" in res:
+            send_act_fn = context.get("send_action")
+            ws = context.get("_ws")
+
+            async def _dispatch_act(act: str, payload: dict):
+                if send_act_fn:
+                    await send_act_fn(act, payload)
+                elif ws:
+                    from tools.action_utils import send_action
+                    await send_action(ws, act, payload)
+
+            if tool_name == "import_gtfs_feed" and res.get("status") == "success":
+                # 1. Add routes layer (line strings)
+                if res.get("routes_file"):
+                    await _dispatch_act("add_geojson_file", {
+                        "path": res["routes_file"],
+                        "name": res.get("routes_layer_name", "Transit Routes"),
+                        "color": "#e11d48",
+                    })
+                # 2. Add stops layer (points)
+                if res.get("stops_file"):
+                    await _dispatch_act("add_geojson_file", {
+                        "path": res["stops_file"],
+                        "name": res.get("stops_layer_name", "Transit Stops"),
+                        "color": "#2563eb",
+                    })
+                # 3. Fit bounds to transit network extent
+                if res.get("bbox"):
+                    b = res["bbox"]
+                    await _dispatch_act("fit_bounds", {
+                        "west": b[0], "south": b[1], "east": b[2], "north": b[3],
+                    })
+
+                primary_path = res.get("routes_file") or res.get("stops_file")
+                primary_name = res.get("routes_layer_name") if res.get("routes_file") else res.get("stops_layer_name")
+                if primary_path:
+                    map_action = {
+                        "action": "add_geojson_file",
+                        "payload": {
+                            "path": primary_path,
+                            "name": primary_name or "Transit Network",
+                            "color": "#e11d48" if res.get("routes_file") else "#2563eb",
+                        },
+                    }
+
+            elif tool_name == "analyze_transit_catchment" or "output_file" in res or "file_path" in res:
+                out_path = res.get("output_file") or res.get("file_path")
+                if out_path:
+                    map_action = {
+                        "action": "add_geojson_file",
+                        "payload": {
+                            "path": out_path,
+                            "name": res.get("output_layer") or res.get("layer_name") or args.get("layer_name") or "Transit Catchment",
+                            "color": args.get("color") or "#3b82f6",
+                        },
+                    }
+
+            elif "geojson" in res:
                 map_action = {
                     "action": "add_geojson",
                     "payload": {
@@ -133,6 +192,7 @@ class MobilityHub(BaseDomainHub):
                         "color": args.get("color") or "#3b82f6",
                     },
                 }
+
             clean_data = {k: v for k, v in res.items() if k != "geojson"}
             return ToolResult(status=res.get("status", "success"), data=clean_data, map_action=map_action)
 

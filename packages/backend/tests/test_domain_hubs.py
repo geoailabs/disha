@@ -349,6 +349,65 @@ class DomainHubsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res.status, "error")
         self.assertEqual(res.error, "GEE credentials missing")
 
+    async def test_mobility_hub_gtfs_map_action(self):
+        from unittest.mock import AsyncMock
+        mock_gtfs_res = {
+            "status": "success",
+            "feed_path": "D:/test/sample_gtfs.zip",
+            "stops_count": 42,
+            "routes_count": 4,
+            "trips_count": 120,
+            "agencies_count": 1,
+            "stops_file": "D:/test/gtfs_stops.geojson",
+            "routes_file": "D:/test/gtfs_routes.geojson",
+            "stops_layer_name": "GTFS Stops",
+            "routes_layer_name": "GTFS Routes",
+            "bbox": [77.1, 28.5, 77.3, 28.7],
+            "displayed_on_map": True,
+        }
+        self.mobility_hub.gtfs_server.execute = AsyncMock(return_value=mock_gtfs_res)
+
+        actions_sent = []
+        async def send_action(action, payload):
+            actions_sent.append((action, payload))
+
+        res = await self.mobility_hub.execute(
+            "import_gtfs_feed",
+            {"gtfs_path": "D:/test/sample_gtfs.zip"},
+            context={"send_action": send_action, "workspace": "D:/test"}
+        )
+        self.assertEqual(res.status, "success")
+        self.assertIsNotNone(res.map_action)
+        self.assertTrue(res.data.get("displayed_on_map"))
+        # Verify routes and stops were sent via send_action and map_action
+        sent_action_names = [a[0] for a in actions_sent]
+        self.assertIn("add_geojson_file", sent_action_names)
+        self.assertIn("fit_bounds", sent_action_names)
+
+    async def test_mobility_hub_catchment_map_action(self):
+        from unittest.mock import AsyncMock
+        mock_catchment_res = {
+            "status": "success",
+            "distance_m": 400,
+            "stops_count": 10,
+            "output_file": "D:/test/catchment_400m.geojson",
+            "output_layer": "Catchment 400m",
+            "displayed_on_map": True,
+        }
+        self.mobility_hub.gtfs_server.execute = AsyncMock(return_value=mock_catchment_res)
+
+        res = await self.mobility_hub.execute(
+            "analyze_transit_catchment",
+            {"distance_m": 400},
+            context={"workspace": "D:/test"}
+        )
+        self.assertEqual(res.status, "success")
+        self.assertIsNotNone(res.map_action)
+        self.assertEqual(res.map_action["action"], "add_geojson_file")
+        self.assertEqual(res.map_action["payload"]["path"], "D:/test/catchment_400m.geojson")
+        self.assertEqual(res.map_action["payload"]["name"], "Catchment 400m")
+        self.assertTrue(res.data.get("displayed_on_map"))
+
     def test_map_claim_hallucination_regex(self):
         import re
         pattern = (
