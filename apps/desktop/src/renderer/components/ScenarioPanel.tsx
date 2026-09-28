@@ -98,8 +98,20 @@ export default function ScenarioPanel({
 
       {scenarios.length === 0 && !showForm && (
         <div className="scenario-empty">
-          <p>No scenarios yet.</p>
-          <p>Create scenarios to branch layer states and compare planning alternatives.</p>
+          <div className="scenario-empty-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 2L2 7l10 5 10-5-10-5z" />
+              <path d="M2 17l10 5 10-5" />
+              <path d="M2 12l10 5 10-5" />
+            </svg>
+          </div>
+          <p className="scenario-empty-title">No scenarios yet</p>
+          <p className="scenario-empty-sub">
+            Create scenarios to branch layer states, test zoning variations, and compare planning alternatives.
+          </p>
+          <button className="scenario-empty-btn" onClick={() => setShowForm(true)}>
+            + Create Scenario
+          </button>
         </div>
       )}
 

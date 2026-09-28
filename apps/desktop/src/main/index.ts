@@ -59,10 +59,31 @@ function readEnvValue(names: string[]): string {
   return ''
 }
 
+function getConfigCandidates(filename: string): string[] {
+  const paths: string[] = []
+  if (isDev) {
+    paths.push(
+      path.resolve(__dirname, '../../.tmp', filename),
+      path.resolve(__dirname, '../../../../.tmp', filename),
+      path.resolve(process.cwd(), '.tmp', filename),
+      path.resolve(process.cwd(), 'apps/desktop/.tmp', filename),
+    )
+  }
+  paths.push(path.join(app.getPath('userData'), filename))
+  return Array.from(new Set(paths))
+}
+
+function getPrimaryConfigPath(filename: string): string {
+  if (isDev) {
+    return path.resolve(__dirname, '../../.tmp', filename)
+  }
+  return path.join(app.getPath('userData'), filename)
+}
+
 function getKeyStatus(): { openai: boolean; google_maps: boolean } {
   return {
-    openai: !!readEnvValue(['OPENAI_API_KEY']),
-    google_maps: !!readEnvValue(['GOOGLE_MAPS_API_KEY', 'GOOGLE_API_KEY']),
+    openai: !!(readEnvValue(['OPENAI_API_KEY']) || readAndDecryptKey()),
+    google_maps: !!(readEnvValue(['GOOGLE_MAPS_API_KEY', 'GOOGLE_API_KEY']) || readAndDecryptGoogleMapsKey()),
   }
 }
 
@@ -72,37 +93,50 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 // Workspace persistence
-const LAST_WORKSPACE_PATH = path.join(
-  isDev ? path.resolve(process.cwd(), '.tmp') : app.getPath('userData'),
-  'last-workspace.json'
-)
-
 function readLastWorkspace(): string | null {
-  try { return JSON.parse(fs.readFileSync(LAST_WORKSPACE_PATH, 'utf-8')).path || null } catch { return null }
+  try {
+    for (const p of getConfigCandidates('last-workspace.json')) {
+      if (fs.existsSync(p)) {
+        const val = JSON.parse(fs.readFileSync(p, 'utf-8')).path
+        if (val) return val
+      }
+    }
+    return null
+  } catch { return null }
 }
+
 function writeLastWorkspace(p: string | null): void {
   try {
-    fs.mkdirSync(path.dirname(LAST_WORKSPACE_PATH), { recursive: true })
-    fs.writeFileSync(LAST_WORKSPACE_PATH, JSON.stringify({ path: p }))
+    const primary = getPrimaryConfigPath('last-workspace.json')
+    fs.mkdirSync(path.dirname(primary), { recursive: true })
+    fs.writeFileSync(primary, JSON.stringify({ path: p }))
+    if (isDev) {
+      const rootTmp = path.resolve(__dirname, '../../../../.tmp', 'last-workspace.json')
+      if (rootTmp !== primary) {
+        try {
+          fs.mkdirSync(path.dirname(rootTmp), { recursive: true })
+          fs.writeFileSync(rootTmp, JSON.stringify({ path: p }))
+        } catch { /* ignore */ }
+      }
+    }
   } catch { /* ignore */ }
 }
 
 // API Key persistence with safeStorage encryption
-const API_KEY_CONFIG_PATH = path.join(
-  isDev ? path.resolve(process.cwd(), '.tmp') : app.getPath('userData'),
-  'api-key.json'
-)
-
 function readAndDecryptKey(): string {
   try {
-    if (!fs.existsSync(API_KEY_CONFIG_PATH)) return ''
-    const config = JSON.parse(fs.readFileSync(API_KEY_CONFIG_PATH, 'utf-8'))
-    if (!config.key) return ''
-    if (config.encrypted && safeStorage.isEncryptionAvailable()) {
-      const encryptedBuffer = Buffer.from(config.key, 'hex')
-      return safeStorage.decryptString(encryptedBuffer)
-    } else if (!config.encrypted) {
-      return Buffer.from(config.key, 'base64').toString('utf-8')
+    for (const configPath of getConfigCandidates('api-key.json')) {
+      if (!fs.existsSync(configPath)) continue
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+      if (!config.key) continue
+      if (config.encrypted && safeStorage.isEncryptionAvailable()) {
+        const encryptedBuffer = Buffer.from(config.key, 'hex')
+        const decrypted = safeStorage.decryptString(encryptedBuffer)
+        if (decrypted) return decrypted
+      } else if (!config.encrypted) {
+        const decrypted = Buffer.from(config.key, 'base64').toString('utf-8')
+        if (decrypted) return decrypted
+      }
     }
     return ''
   } catch (err) {
@@ -113,10 +147,14 @@ function readAndDecryptKey(): string {
 
 function encryptAndSaveKey(key: string): boolean {
   try {
+    const primary = getPrimaryConfigPath('api-key.json')
     if (!key || !key.trim()) {
-      if (fs.existsSync(API_KEY_CONFIG_PATH)) {
-        fs.unlinkSync(API_KEY_CONFIG_PATH)
+      for (const p of getConfigCandidates('api-key.json')) {
+        if (fs.existsSync(p)) {
+          try { fs.unlinkSync(p) } catch { /* ignore */ }
+        }
       }
+      delete process.env['OPENAI_API_KEY']
       return true
     }
 
@@ -128,8 +166,19 @@ function encryptAndSaveKey(key: string): boolean {
     } else {
       storedValue = Buffer.from(key.trim()).toString('base64')
     }
-    fs.mkdirSync(path.dirname(API_KEY_CONFIG_PATH), { recursive: true })
-    fs.writeFileSync(API_KEY_CONFIG_PATH, JSON.stringify({ key: storedValue, encrypted: useEncryption }))
+    const data = JSON.stringify({ key: storedValue, encrypted: useEncryption })
+    fs.mkdirSync(path.dirname(primary), { recursive: true })
+    fs.writeFileSync(primary, data)
+    if (isDev) {
+      const rootTmp = path.resolve(__dirname, '../../../../.tmp', 'api-key.json')
+      if (rootTmp !== primary) {
+        try {
+          fs.mkdirSync(path.dirname(rootTmp), { recursive: true })
+          fs.writeFileSync(rootTmp, data)
+        } catch { /* ignore */ }
+      }
+    }
+    process.env['OPENAI_API_KEY'] = key.trim()
     return true
   } catch (err) {
     console.error('Failed to encrypt/save API key:', err)
@@ -138,21 +187,20 @@ function encryptAndSaveKey(key: string): boolean {
 }
 
 // Google Maps API Key persistence with safeStorage encryption
-const GOOGLE_MAPS_KEY_CONFIG_PATH = path.join(
-  isDev ? path.resolve(process.cwd(), '.tmp') : app.getPath('userData'),
-  'google-maps-key.json'
-)
-
 function readAndDecryptGoogleMapsKey(): string {
   try {
-    if (!fs.existsSync(GOOGLE_MAPS_KEY_CONFIG_PATH)) return ''
-    const config = JSON.parse(fs.readFileSync(GOOGLE_MAPS_KEY_CONFIG_PATH, 'utf-8'))
-    if (!config.key) return ''
-    if (config.encrypted && safeStorage.isEncryptionAvailable()) {
-      const encryptedBuffer = Buffer.from(config.key, 'hex')
-      return safeStorage.decryptString(encryptedBuffer)
-    } else if (!config.encrypted) {
-      return Buffer.from(config.key, 'base64').toString('utf-8')
+    for (const configPath of getConfigCandidates('google-maps-key.json')) {
+      if (!fs.existsSync(configPath)) continue
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+      if (!config.key) continue
+      if (config.encrypted && safeStorage.isEncryptionAvailable()) {
+        const encryptedBuffer = Buffer.from(config.key, 'hex')
+        const decrypted = safeStorage.decryptString(encryptedBuffer)
+        if (decrypted) return decrypted
+      } else if (!config.encrypted) {
+        const decrypted = Buffer.from(config.key, 'base64').toString('utf-8')
+        if (decrypted) return decrypted
+      }
     }
     return ''
   } catch (err) {
@@ -163,10 +211,14 @@ function readAndDecryptGoogleMapsKey(): string {
 
 function encryptAndSaveGoogleMapsKey(key: string): boolean {
   try {
+    const primary = getPrimaryConfigPath('google-maps-key.json')
     if (!key || !key.trim()) {
-      if (fs.existsSync(GOOGLE_MAPS_KEY_CONFIG_PATH)) {
-        fs.unlinkSync(GOOGLE_MAPS_KEY_CONFIG_PATH)
+      for (const p of getConfigCandidates('google-maps-key.json')) {
+        if (fs.existsSync(p)) {
+          try { fs.unlinkSync(p) } catch { /* ignore */ }
+        }
       }
+      delete process.env['GOOGLE_MAPS_API_KEY']
       return true
     }
 
@@ -178,8 +230,19 @@ function encryptAndSaveGoogleMapsKey(key: string): boolean {
     } else {
       storedValue = Buffer.from(key.trim()).toString('base64')
     }
-    fs.mkdirSync(path.dirname(GOOGLE_MAPS_KEY_CONFIG_PATH), { recursive: true })
-    fs.writeFileSync(GOOGLE_MAPS_KEY_CONFIG_PATH, JSON.stringify({ key: storedValue, encrypted: useEncryption }))
+    const data = JSON.stringify({ key: storedValue, encrypted: useEncryption })
+    fs.mkdirSync(path.dirname(primary), { recursive: true })
+    fs.writeFileSync(primary, data)
+    if (isDev) {
+      const rootTmp = path.resolve(__dirname, '../../../../.tmp', 'google-maps-key.json')
+      if (rootTmp !== primary) {
+        try {
+          fs.mkdirSync(path.dirname(rootTmp), { recursive: true })
+          fs.writeFileSync(rootTmp, data)
+        } catch { /* ignore */ }
+      }
+    }
+    process.env['GOOGLE_MAPS_API_KEY'] = key.trim()
     return true
   } catch (err) {
     console.error('Failed to encrypt/save Google Maps API key:', err)
@@ -188,21 +251,20 @@ function encryptAndSaveGoogleMapsKey(key: string): boolean {
 }
 
 // Google Earth Engine Credentials persistence with safeStorage encryption
-const GEE_KEY_CONFIG_PATH = path.join(
-  isDev ? path.resolve(process.cwd(), '.tmp') : app.getPath('userData'),
-  'gee-credentials.json'
-)
-
 function readAndDecryptGEEKey(): string {
   try {
-    if (!fs.existsSync(GEE_KEY_CONFIG_PATH)) return ''
-    const config = JSON.parse(fs.readFileSync(GEE_KEY_CONFIG_PATH, 'utf-8'))
-    if (!config.key) return ''
-    if (config.encrypted && safeStorage.isEncryptionAvailable()) {
-      const encryptedBuffer = Buffer.from(config.key, 'hex')
-      return safeStorage.decryptString(encryptedBuffer)
-    } else if (!config.encrypted) {
-      return Buffer.from(config.key, 'base64').toString('utf-8')
+    for (const configPath of getConfigCandidates('gee-credentials.json')) {
+      if (!fs.existsSync(configPath)) continue
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+      if (!config.key) continue
+      if (config.encrypted && safeStorage.isEncryptionAvailable()) {
+        const encryptedBuffer = Buffer.from(config.key, 'hex')
+        const decrypted = safeStorage.decryptString(encryptedBuffer)
+        if (decrypted) return decrypted
+      } else if (!config.encrypted) {
+        const decrypted = Buffer.from(config.key, 'base64').toString('utf-8')
+        if (decrypted) return decrypted
+      }
     }
     return ''
   } catch (err) {
@@ -213,10 +275,14 @@ function readAndDecryptGEEKey(): string {
 
 function encryptAndSaveGEEKey(key: string): boolean {
   try {
+    const primary = getPrimaryConfigPath('gee-credentials.json')
     if (!key || !key.trim()) {
-      if (fs.existsSync(GEE_KEY_CONFIG_PATH)) {
-        fs.unlinkSync(GEE_KEY_CONFIG_PATH)
+      for (const p of getConfigCandidates('gee-credentials.json')) {
+        if (fs.existsSync(p)) {
+          try { fs.unlinkSync(p) } catch { /* ignore */ }
+        }
       }
+      delete process.env['GOOGLE_EARTH_ENGINE_CREDS']
       return true
     }
 
@@ -228,8 +294,19 @@ function encryptAndSaveGEEKey(key: string): boolean {
     } else {
       storedValue = Buffer.from(key.trim()).toString('base64')
     }
-    fs.mkdirSync(path.dirname(GEE_KEY_CONFIG_PATH), { recursive: true })
-    fs.writeFileSync(GEE_KEY_CONFIG_PATH, JSON.stringify({ key: storedValue, encrypted: useEncryption }))
+    const data = JSON.stringify({ key: storedValue, encrypted: useEncryption })
+    fs.mkdirSync(path.dirname(primary), { recursive: true })
+    fs.writeFileSync(primary, data)
+    if (isDev) {
+      const rootTmp = path.resolve(__dirname, '../../../../.tmp', 'gee-credentials.json')
+      if (rootTmp !== primary) {
+        try {
+          fs.mkdirSync(path.dirname(rootTmp), { recursive: true })
+          fs.writeFileSync(rootTmp, data)
+        } catch { /* ignore */ }
+      }
+    }
+    process.env['GOOGLE_EARTH_ENGINE_CREDS'] = key.trim()
     return true
   } catch (err) {
     console.error('Failed to encrypt/save GEE key:', err)
@@ -322,8 +399,10 @@ async function startBackend(): Promise<void> {
   }
 
   const env = { ...process.env }
-  env['OPENAI_API_KEY'] = env['OPENAI_API_KEY'] || readEnvValue(['OPENAI_API_KEY'])
-  env['GOOGLE_MAPS_API_KEY'] = env['GOOGLE_MAPS_API_KEY'] || readEnvValue(['GOOGLE_MAPS_API_KEY', 'GOOGLE_API_KEY'])
+  const storedOpenAI = readAndDecryptKey()
+  const storedGoogle = readAndDecryptGoogleMapsKey()
+  env['OPENAI_API_KEY'] = env['OPENAI_API_KEY'] || readEnvValue(['OPENAI_API_KEY']) || storedOpenAI
+  env['GOOGLE_MAPS_API_KEY'] = env['GOOGLE_MAPS_API_KEY'] || readEnvValue(['GOOGLE_MAPS_API_KEY', 'GOOGLE_API_KEY']) || storedGoogle
   env['MAPILLARY_ACCESS_TOKEN'] = env['MAPILLARY_ACCESS_TOKEN'] || readEnvValue(['MAPILLARY_ACCESS_TOKEN', 'MAPILLARY_CLIENT_TOKEN'])
   const geeCreds = readAndDecryptGEEKey()
   if (geeCreds) {
@@ -396,6 +475,18 @@ ipcMain.handle('get-current-model', () => readCurrentModel())
 ipcMain.handle('switch-model', async (_event, newModel: string) => {
   writeCurrentModel(newModel)
   return { ok: true, requiresManualRestart: false }
+})
+
+// Window control handlers for MenuBar
+ipcMain.handle('window-minimize', () => mainWindow?.minimize())
+ipcMain.handle('window-maximize', () => {
+  if (mainWindow?.isMaximized()) mainWindow.unmaximize()
+  else mainWindow?.maximize()
+})
+ipcMain.handle('window-close', () => mainWindow?.close())
+ipcMain.handle('window-reload', () => mainWindow?.webContents.reload())
+ipcMain.handle('window-toggle-fullscreen', () => {
+  if (mainWindow) mainWindow.setFullScreen(!mainWindow.isFullScreen())
 })
 
 function createWindow(): void {

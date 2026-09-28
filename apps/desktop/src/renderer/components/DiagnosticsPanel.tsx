@@ -102,17 +102,17 @@ export default function DiagnosticsPanel({ onClose, workspacePath }: Diagnostics
     switch (status) {
       case 'valid':
       case 'online':
-        return <span className="diag-badge pass">✔ PASS</span>
+        return <span className="diag-badge pass">PASS</span>
       case 'missing':
-        return <span className="diag-badge warn">⚠ ACTION REQUIRED</span>
+        return <span className="diag-badge warn">ACTION REQUIRED</span>
       case 'degraded':
       case 'configured':
-        return <span className="diag-badge warn">⚡ DEGRADED</span>
+        return <span className="diag-badge warn">DEGRADED</span>
       case 'invalid':
       case 'offline':
-        return <span className="diag-badge fail">✖ FAIL</span>
+        return <span className="diag-badge fail">FAIL</span>
       default:
-        return <span className="diag-badge checking">⏱ CHECKING</span>
+        return <span className="diag-badge checking">CHECKING</span>
     }
   }
 
@@ -121,7 +121,12 @@ export default function DiagnosticsPanel({ onClose, workspacePath }: Diagnostics
       <div className="diag-modal-card">
         <header className="diag-header">
           <h2>System Diagnostics & Setup</h2>
-          <button className="diag-close-btn" onClick={onClose}>✕</button>
+          <button className="diag-close-btn" onClick={onClose} title="Close Diagnostics">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
         </header>
 
         <main className="diag-body">

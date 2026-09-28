@@ -33,4 +33,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('fullscreen-change')
     ipcRenderer.on('fullscreen-change', (_event, value: boolean) => handler(value))
   },
+  minimizeWindow: () => ipcRenderer.invoke('window-minimize'),
+  maximizeWindow: () => ipcRenderer.invoke('window-maximize'),
+  closeWindow: () => ipcRenderer.invoke('window-close'),
+  reloadWindow: () => ipcRenderer.invoke('window-reload'),
+  toggleFullscreen: () => ipcRenderer.invoke('window-toggle-fullscreen'),
 })

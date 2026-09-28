@@ -4,25 +4,26 @@
   display: flex;
   flex-direction: column;
   overflow: auto;
-  background: var(--bg-secondary);
+  background: #0b0f19;
 }
 
 .sv-empty {
   justify-content: center;
   padding: 22px;
-  color: var(--text-secondary);
+  color: #94a3b8;
 }
 
 .sv-empty-title {
   font-size: 16px;
   font-weight: 700;
-  color: var(--text-primary);
+  color: #f8fafc;
   margin-bottom: 8px;
 }
 
 .sv-empty-text {
   font-size: 13px;
   line-height: 1.5;
+  color: #94a3b8;
 }
 
 .sv-panel-header,
@@ -35,21 +36,22 @@
 
 .sv-panel-header {
   padding: 12px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid rgba(85, 91, 110, 0.35);
   flex-shrink: 0;
+  background: #11141a;
 }
 
 .sv-eyebrow {
   font-size: 10px;
   text-transform: uppercase;
-  color: var(--text-muted);
+  color: var(--frozen-water, #bee3db);
   font-weight: 700;
-  letter-spacing: 0;
+  letter-spacing: 0.05em;
 }
 
 .sv-heading,
 .sv-subheading {
-  color: var(--text-primary);
+  color: #f8fafc;
   font-weight: 700;
   line-height: 1.25;
 }
@@ -72,37 +74,38 @@
   width: 28px;
   height: 28px;
   border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: #94a3b8;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.15s ease;
 }
 
 .sv-layout-toggle-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.1);
+  color: #f8fafc;
 }
 
 .sv-icon-btn {
   width: 28px;
   height: 28px;
   border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: #94a3b8;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: all 0.15s ease;
 }
 
 .sv-icon-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.1);
+  color: #f8fafc;
 }
 
 

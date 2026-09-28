@@ -71,13 +71,24 @@ export default function AttributeTable({
     commit(features.filter((_, i) => i !== rowIdx))
   }
 
+  const selectedCount = selectedFeatures.filter((e) => e.layerId === layer.id).length
+
   if (features.length === 0) {
     return (
       <div className="attr-table">
         <div className="attr-header">
           <div className="attr-title-group">
-            <span className="attr-title">Attributes</span>
+            <span className="attr-title">Attributes: {layer.name}</span>
+            <span className="attr-count-badge">0 features</span>
           </div>
+          {onClose && (
+            <button className="attr-close-btn" onClick={onClose} title="Close attribute table">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          )}
         </div>
         <p className="attr-empty">This layer has no features.</p>
       </div>
@@ -88,19 +99,33 @@ export default function AttributeTable({
     <div className="attr-table">
       <div className="attr-header">
         <div className="attr-title-group">
-          <span className="attr-title">Attributes</span>
+          <span className="attr-title">Attributes: {layer.name}</span>
+          <span className="attr-count-badge">
+            {features.length} {features.length === 1 ? 'feature' : 'features'}
+            {selectedCount > 0 ? ` (${selectedCount} selected)` : ''}
+          </span>
         </div>
-        <div className="attr-header-addcol">
-          <input
-            className="attr-input attr-header-input"
-            placeholder="New property (e.g. zone_code)"
-            value={newCol}
-            onChange={(e) => setNewCol(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && addColumn()}
-          />
-          <button className="attr-btn attr-header-btn" onClick={addColumn} disabled={!newCol.trim()}>
-            Add
-          </button>
+        <div className="attr-header-actions">
+          <div className="attr-header-addcol">
+            <input
+              className="attr-input attr-header-input"
+              placeholder="New column (e.g. zone_code)"
+              value={newCol}
+              onChange={(e) => setNewCol(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && addColumn()}
+            />
+            <button className="attr-btn attr-header-btn" onClick={addColumn} disabled={!newCol.trim()}>
+              + Add
+            </button>
+          </div>
+          {onClose && (
+            <button className="attr-close-btn" onClick={onClose} title="Close attribute table">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          )}
         </div>
       </div>
 
@@ -111,7 +136,16 @@ export default function AttributeTable({
               <th className="attr-rownum">#</th>
               {columns.map((c) => (
                 <th key={c}>
-                  <span className="attr-colname" title={c}>{c}</span>
+                  <div className="attr-th-content">
+                    <span className="attr-colname" title={c}>{c}</span>
+                    <button
+                      className="attr-coldel"
+                      onClick={() => deleteColumn(c)}
+                      title={`Delete column "${c}"`}
+                    >
+                      ×
+                    </button>
+                  </div>
                 </th>
               ))}
               <th className="attr-rowdel-h" />
@@ -164,6 +198,11 @@ export default function AttributeTable({
             })}
           </tbody>
         </table>
+      </div>
+
+      <div className="attr-footer-info">
+        <span>{columns.length} columns • {features.length} features</span>
+        {selectedCount > 0 && <span className="attr-footer-selected">{selectedCount} selected</span>}
       </div>
     </div>
   )

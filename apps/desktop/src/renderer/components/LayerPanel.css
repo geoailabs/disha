@@ -1,10 +1,11 @@
 .layer-panel {
   flex: 1;
   overflow-y: auto;
-  padding: 8px;
+  padding: 10px 8px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
+  background: var(--bg-secondary);
 }
 
 .layer-panel-empty {
@@ -16,74 +17,98 @@
   gap: 8px;
   color: var(--text-muted);
   font-size: 13px;
-  padding: 24px;
+  padding: 32px 16px;
   text-align: center;
 }
 
 .layer-panel-empty .hint {
   font-size: 11px;
-  opacity: 0.6;
+  color: var(--text-muted);
+  opacity: 0.7;
 }
 
 .layer-item {
   display: flex;
   align-items: center;
-  padding: 8px 12px;
+  padding: 7px 10px;
   gap: 8px;
-  border-radius: 6px;
-  border: 1px solid transparent;
-  transition: all 0.15s;
-  margin-bottom: 4px;
+  border-radius: var(--radius-lg, 8px);
+  background: rgba(22, 31, 48, 0.5);
+  border: 1px solid var(--border);
+  transition: all 0.15s ease;
+  user-select: none;
 }
 
 .layer-item:hover {
-  background: var(--bg-hover);
+  background: rgba(30, 41, 59, 0.85);
+  border-color: rgba(255, 255, 255, 0.12);
 }
 
 .layer-item.grouped {
-  padding-left: 34px;
+  padding-left: 28px;
 }
 
 .layer-item.hidden {
-  opacity: 0.5;
+  opacity: 0.45;
+}
+
+.layer-drag-handle {
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  cursor: grab;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  flex-shrink: 0;
+  margin-right: -4px;
+}
+
+.layer-item:hover .layer-drag-handle {
+  opacity: 0.65;
 }
 
 .layer-group {
-  border-top: 1px solid color-mix(in srgb, var(--border, #2a2d3a) 60%, transparent);
+  border-top: 1px solid var(--border);
+  padding-top: 4px;
 }
 
 .layer-group:first-child {
   border-top: none;
+  padding-top: 0;
 }
 
 .layer-group-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  background: transparent;
-  border-radius: 6px;
+  padding: 7px 10px;
+  background: rgba(15, 23, 42, 0.6);
+  border-radius: var(--radius-lg, 8px);
   margin-bottom: 4px;
   border: 1px solid transparent;
-  transition: all 0.15s;
+  transition: all 0.15s ease;
+  cursor: grab;
 }
 
 .layer-group-header:hover {
   background: var(--bg-hover);
+  border-color: var(--border);
 }
 
 .layer-group-header.selected {
-  background: color-mix(in srgb, var(--accent) 10%, transparent) !important;
-  border-color: color-mix(in srgb, var(--accent) 25%, transparent) !important;
+  background: var(--accent-subtle) !important;
+  border-color: rgba(190, 227, 219, 0.35) !important;
 }
 
 .layer-group-header.hidden {
-  opacity: 0.62;
+  opacity: 0.5;
 }
 
 .layer-group-toggle {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -94,6 +119,13 @@
   font-size: 12px;
   line-height: 1;
   padding: 0;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+
+.layer-group-toggle:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .layer-group-name {
@@ -114,49 +146,49 @@
   width: 22px;
   height: 22px;
   padding: 0;
-  color: var(--text-secondary);
-  opacity: 0.65;
+  color: var(--text-muted);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.15s ease;
   border-radius: 4px;
+  flex-shrink: 0;
 }
 
 .layer-visibility:hover {
-  opacity: 1;
-  background: var(--bg-hover);
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .layer-color {
-  width: 12px;
-  height: 12px;
-  border-radius: 3.5px;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
   flex-shrink: 0;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.15);
   box-sizing: border-box;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
 .layer-color.clickable {
   cursor: pointer;
-  transition: transform 0.15s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.15s ease, border-color 0.15s ease;
+  transition: transform 0.15s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.15s ease;
 }
 
 .layer-color.clickable:hover {
-  transform: scale(1.18);
-  box-shadow: 0 0 0 2.5px var(--bg-hover, #252735), 0 0 0 4px var(--accent, #89b4fa);
-  border-color: rgba(255, 255, 255, 0.3);
+  transform: scale(1.15);
+  box-shadow: 0 0 0 2px var(--bg-hover), 0 0 0 3.5px var(--accent);
 }
 
 .layer-color.active {
-  transform: scale(1.18);
-  box-shadow: 0 0 0 2.5px var(--bg-hover, #252735), 0 0 0 4px var(--accent, #89b4fa);
-  border-color: rgba(255, 255, 255, 0.4);
+  transform: scale(1.15);
+  box-shadow: 0 0 0 2px var(--bg-hover), 0 0 0 3.5px var(--accent);
 }
 
 .layer-name {
   flex: 1;
-  font-size: 13px;
+  font-size: 12.5px;
+  font-weight: 500;
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -166,16 +198,17 @@
 .layer-name-input,
 .layer-group-name-input {
   flex: 1;
-  font-size: 13px;
+  font-size: 12.5px;
+  font-weight: 500;
   color: var(--text-primary);
-  background: transparent;
-  border: 1px solid transparent;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--accent);
   border-radius: 4px;
-  padding: 2px 4px;
+  padding: 2px 6px;
   outline: none;
   width: 0;
   min-width: 0;
-  transition: border-color 0.15s, background 0.15s;
+  transition: all 0.15s ease;
 }
 
 .layer-group-name-input {
@@ -183,165 +216,155 @@
   font-weight: 600;
 }
 
-.layer-name-input:focus,
-.layer-name-input:hover,
-.layer-group-name-input:focus,
-.layer-group-name-input:hover {
-  border-color: var(--border, #45475a);
-  background: var(--input-bg, #1a1a26);
-}
-
 .layer-count {
-  font-size: 11px;
+  font-size: 10px;
+  font-weight: 600;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 2px 6px;
+  border-radius: 9999px;
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.04);
 }
 
-.layer-style {
-  background: none;
-  border: none;
-  cursor: pointer;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  color: var(--text-muted);
-  opacity: 0.5;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  border-radius: 4px;
-}
-
-.layer-item:hover .layer-style {
-  opacity: 1;
-}
-
-.layer-style:hover,
-.layer-style.active {
-  opacity: 1;
-  background: var(--bg-hover);
-}
-
-.layer-zoom {
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0.5;
-  border-radius: 4px;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.layer-item:hover .layer-zoom {
-  opacity: 1;
-}
-
-.layer-zoom:hover {
-  background: var(--bg-hover);
-  opacity: 1;
-}
-
+.layer-style,
+.layer-zoom,
+.layer-more-btn,
 .layer-remove {
   background: none;
   border: none;
-  color: var(--text-muted);
   cursor: pointer;
   width: 22px;
   height: 22px;
   padding: 0;
+  color: var(--text-muted);
+  opacity: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  opacity: 0.5;
+  transition: all 0.15s ease;
   border-radius: 4px;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  flex-shrink: 0;
 }
 
+.layer-item:hover .layer-style,
+.layer-item:hover .layer-zoom,
+.layer-item:hover .layer-more-btn,
 .layer-item:hover .layer-remove,
 .layer-group-header:hover .layer-remove {
-  opacity: 1;
+  opacity: 0.7;
+}
+
+.layer-style:hover,
+.layer-zoom:hover,
+.layer-more-btn:hover {
+  opacity: 1 !important;
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.layer-style.active {
+  opacity: 1 !important;
+  color: var(--accent);
+  background: var(--accent-subtle);
 }
 
 .layer-remove:hover {
-  background: rgba(243, 139, 168, 0.12);
-  opacity: 1;
+  opacity: 1 !important;
+  color: var(--danger);
+  background: rgba(248, 113, 113, 0.15);
 }
 
 .layer-context-menu {
   position: fixed;
-  z-index: 50;
-  min-width: 190px;
-  max-width: 260px;
-  max-height: 320px;
+  z-index: 10000;
+  min-width: 220px;
+  max-width: 300px;
+  max-height: 420px;
   overflow-y: auto;
   padding: 6px;
-  background: var(--panel-bg, #181a22);
-  border: 1px solid var(--border, #343746);
-  border-radius: 6px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.32);
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.22) 0%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0.04) 100%
+  ), rgba(24, 28, 38, 0.76);
+  backdrop-filter: blur(36px) saturate(200%) contrast(105%);
+  -webkit-backdrop-filter: blur(36px) saturate(200%) contrast(105%);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 14px;
+  box-shadow: 
+    0 24px 64px -8px rgba(0, 0, 0, 0.55),
+    0 8px 24px -2px rgba(0, 0, 0, 0.35),
+    inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.65),
+    inset 0 -1px 1px 0 rgba(0, 0, 0, 0.3);
+  animation: macosMenuIn 0.14s cubic-bezier(0.16, 1, 0.3, 1);
+  user-select: none;
 }
 
 .layer-context-title {
-  padding: 5px 8px 6px;
-  color: var(--text-muted);
+  padding: 5px 10px 3px;
+  color: rgba(255, 255, 255, 0.5);
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0;
+  letter-spacing: 0.05em;
 }
 
 .layer-context-menu button {
   width: 100%;
-  display: block;
-  padding: 7px 8px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
   background: transparent;
   border: none;
-  border-radius: 4px;
-  color: var(--text-primary);
+  border-radius: 7px;
+  color: rgba(255, 255, 255, 0.94);
   cursor: pointer;
-  font-size: 12px;
-  line-height: 1.25;
+  font-size: 13px;
+  font-weight: 450;
+  font-family: 'Canva Sans', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', system-ui, sans-serif;
   text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: all 0.1s ease;
 }
 
 .layer-context-menu button:hover {
-  background: var(--bg-hover);
+  background: linear-gradient(90deg, #007aff 0%, #0a84ff 100%);
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 122, 255, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.4);
 }
 
 .layer-context-empty {
-  padding: 7px 8px;
-  color: var(--text-muted);
+  padding: 8px 10px;
+  color: rgba(255, 255, 255, 0.5);
   font-size: 12px;
+  font-style: italic;
 }
 
 .layer-context-divider {
   height: 1px;
-  margin: 5px 2px;
-  background: var(--border, #343746);
+  margin: 5px 6px;
+  background: rgba(255, 255, 255, 0.14);
 }
 
 /* ── Floating Absolute Popovers for Symbology / Attributes ── */
 .layer-popup-container {
   position: absolute;
   left: 6px;
-  background: var(--bg-surface, #11111b);
-  border: 1px solid var(--border, #313244);
-  border-radius: 8px;
-  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.55);
+  background: var(--bg-card-solid);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl, 12px);
+  box-shadow: var(--shadow-lg);
   z-index: 1000;
-  max-height: 450px;
+  max-height: 480px;
   overflow-y: auto;
-  padding: 10px 12px;
+  padding: 12px 14px;
+  backdrop-filter: blur(16px);
 }
 
 .layer-symbology-popup {
@@ -356,12 +379,12 @@
 
 .popup-below {
   top: 100%;
-  margin-top: 4px;
+  margin-top: 6px;
 }
 
 .popup-above {
   bottom: 100%;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 
 /* Prevent outer layer panel hidden clips */
@@ -380,14 +403,14 @@
 }
 
 .layer-group-header.drag-over-inside {
-  background: color-mix(in srgb, var(--accent) 15%, transparent) !important;
-  border-color: color-mix(in srgb, var(--accent) 40%, transparent) !important;
-  border-radius: 6px;
+  background: var(--accent-subtle) !important;
+  border-color: rgba(190, 227, 219, 0.45) !important;
+  border-radius: var(--radius-lg, 8px);
 }
 
 .layer-group-children {
   padding-left: 14px;
-  border-left: 1px dashed rgba(255, 255, 255, 0.08);
+  border-left: 1px dashed rgba(255, 255, 255, 0.12);
   margin-left: 10px;
   display: flex;
   flex-direction: column;
@@ -401,8 +424,8 @@
 
 /* Drag and Drop & Selection Styles */
 .layer-item.selected {
-  background: color-mix(in srgb, var(--accent) 10%, transparent) !important;
-  border-color: color-mix(in srgb, var(--accent) 25%, transparent) !important;
+  background: var(--accent-subtle) !important;
+  border-color: rgba(190, 227, 219, 0.4) !important;
 }
 
 .layer-item.drag-over-before,

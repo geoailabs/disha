@@ -4,8 +4,8 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(4px);
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(12px);
   display: flex;
   justify-content: center;
   align-items: center;
@@ -13,44 +13,52 @@
 }
 
 .diag-modal-card {
-  background: #1e1e24;
-  border: 1px solid #33333f;
-  border-radius: 8px;
+  background: #11141a;
+  border: 1px solid rgba(85, 91, 110, 0.4);
+  border-radius: 12px;
   width: 650px;
   max-width: 90%;
   max-height: 85vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-  color: #f3f3f5;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.9), 0 0 20px rgba(190, 227, 219, 0.15);
+  color: var(--bright-snow, #faf9f9);
   font-family: inherit;
+  overflow: hidden;
 }
 
 .diag-header {
   padding: 16px 20px;
-  border-bottom: 1px solid #33333f;
+  border-bottom: 1px solid rgba(85, 91, 110, 0.35);
   display: flex;
   justify-content: space-between;
   align-items: center;
+  background: #171b22;
 }
 
 .diag-header h2 {
   margin: 0;
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 600;
-  color: #fff;
+  color: var(--bright-snow, #faf9f9);
 }
 
 .diag-close-btn {
   background: transparent;
   border: none;
-  color: #888;
-  font-size: 20px;
+  color: var(--muted-teal, #89b0ae);
   cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
 }
 
 .diag-close-btn:hover {
-  color: #fff;
+  background: rgba(190, 227, 219, 0.18);
+  color: var(--bright-snow, #faf9f9);
 }
 
 .diag-body {
@@ -60,149 +68,167 @@
 }
 
 .diag-intro {
+  font-size: 13px;
+  color: var(--muted-teal, #89b0ae);
   margin-top: 0;
-  color: #b0b0b8;
-  font-size: 14px;
+  margin-bottom: 20px;
   line-height: 1.5;
-  margin-bottom: 24px;
 }
 
 .diag-section {
   margin-bottom: 24px;
+  background: rgba(11, 13, 17, 0.6);
+  border: 1px solid rgba(85, 91, 110, 0.35);
+  border-radius: 8px;
+  padding: 16px;
 }
 
 .diag-section h3 {
-  margin: 0 0 12px 0;
+  margin: 0 0 14px 0;
   font-size: 14px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: #888899;
+  color: var(--bright-snow, #faf9f9);
+  font-weight: 600;
+}
+
+.diag-status {
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  margin-bottom: 12px;
+}
+
+.diag-error {
+  background: rgba(255, 214, 186, 0.15);
+  color: var(--peach-fuzz, #ffd6ba);
+  border: 1px solid rgba(255, 214, 186, 0.35);
 }
 
 .diag-grid {
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 12px;
   margin-bottom: 16px;
 }
 
 .diag-item {
-  background: #25252d;
-  border: 1px solid #2e2e38;
-  border-radius: 6px;
-  padding: 10px 14px;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  padding: 10px 12px;
+  background: rgba(22, 26, 34, 0.7);
+  border: 1px solid rgba(85, 91, 110, 0.3);
+  border-radius: 6px;
 }
 
-.diag-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.diag-meta strong {
-  font-size: 13.5px;
-  color: #fff;
-}
-
-.diag-meta span {
-  font-size: 12px;
-  color: #b0b0b8;
+.diag-item-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--bright-snow, #faf9f9);
 }
 
 .diag-badge {
   font-size: 11px;
-  font-weight: bold;
-  padding: 4px 8px;
+  padding: 2px 8px;
   border-radius: 4px;
-  white-space: nowrap;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .diag-badge.pass {
-  background: rgba(40, 167, 69, 0.15);
-  color: #28a745;
-  border: 1px solid rgba(40, 167, 69, 0.3);
+  background: rgba(190, 227, 219, 0.16);
+  color: var(--frozen-water, #bee3db);
+  border: 1px solid rgba(190, 227, 219, 0.4);
 }
 
 .diag-badge.warn {
-  background: rgba(255, 193, 7, 0.15);
-  color: #ffc107;
-  border: 1px solid rgba(255, 193, 7, 0.3);
+  background: rgba(255, 214, 186, 0.16);
+  color: var(--peach-fuzz, #ffd6ba);
+  border: 1px solid rgba(255, 214, 186, 0.4);
 }
 
 .diag-badge.fail {
-  background: rgba(220, 53, 69, 0.15);
-  color: #dc3545;
-  border: 1px solid rgba(220, 53, 69, 0.3);
+  background: rgba(255, 214, 186, 0.2);
+  color: var(--peach-fuzz, #ffd6ba);
+  border: 1px solid rgba(255, 214, 186, 0.5);
 }
 
 .diag-badge.checking {
-  background: rgba(255, 255, 255, 0.08);
-  color: #ccc;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(85, 91, 110, 0.25);
+  color: var(--muted-teal, #89b0ae);
+  border: 1px solid rgba(85, 91, 110, 0.4);
 }
 
 .diag-retry-btn {
-  background: #2e2e38;
-  border: 1px solid #3e3e4d;
-  color: #fff;
-  border-radius: 4px;
+  background: rgba(85, 91, 110, 0.25);
+  border: 1px solid rgba(85, 91, 110, 0.45);
+  color: var(--bright-snow, #faf9f9);
+  border-radius: 6px;
   padding: 8px 14px;
-  font-size: 13px;
+  font-size: 12px;
   cursor: pointer;
   font-weight: 500;
+  transition: all 0.15s ease;
 }
 
 .diag-retry-btn:hover {
-  background: #3e3e4d;
+  background: rgba(190, 227, 219, 0.18);
+  border-color: var(--frozen-water, #bee3db);
 }
 
 .credentials-form .form-group {
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 
 .credentials-form label {
   display: block;
-  font-size: 13px;
+  font-size: 12px;
   margin-bottom: 6px;
-  color: #b0b0b8;
+  color: var(--muted-teal, #89b0ae);
+  font-weight: 500;
 }
 
 .credentials-form input {
   width: 100%;
   box-sizing: border-box;
-  background: #15151a;
-  border: 1px solid #2e2e38;
-  border-radius: 4px;
+  background: #0b0d11;
+  border: 1px solid rgba(85, 91, 110, 0.45);
+  border-radius: 6px;
   padding: 8px 12px;
-  color: #fff;
+  color: var(--bright-snow, #faf9f9);
   font-size: 13px;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
 .credentials-form input:focus {
   outline: none;
-  border-color: #555566;
+  border-color: var(--frozen-water, #bee3db);
+  box-shadow: 0 0 0 2px rgba(190, 227, 219, 0.25);
 }
 
 .diag-save-btn {
-  background: #007acc;
+  background: var(--frozen-water, #bee3db);
   border: none;
-  color: #fff;
-  border-radius: 4px;
+  color: #0b0d11;
+  border-radius: 6px;
   padding: 8px 16px;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 700;
   cursor: pointer;
+  transition: all 0.15s ease;
 }
 
-.diag-save-btn:hover {
-  background: #008be6;
+.diag-save-btn:hover:not(:disabled) {
+  background: var(--bright-snow, #faf9f9);
+  box-shadow: 0 0 14px rgba(190, 227, 219, 0.6);
+  transform: translateY(-1px);
 }
 
-.form-status-msg {
+.diag-save-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.diag-save-status {
   font-size: 12px;
   margin-top: 10px;
-  color: #ffc107;
 }

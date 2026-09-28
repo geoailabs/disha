@@ -1,18 +1,59 @@
+@font-face {
+  font-family: 'Canva Sans';
+  src: local('Canva Sans'), local('CanvaSans'),
+       url('./assets/fonts/CanvaSans-Regular.woff2') format('woff2');
+  font-weight: 300 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Canva Sans';
+  src: local('Canva Sans Bold'), local('CanvaSans-Bold'),
+       url('./assets/fonts/CanvaSans-Bold.woff2') format('woff2');
+  font-weight: 600 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
-  --bg-primary: #1e1e2e;
-  --bg-secondary: #181825;
-  --bg-surface: #11111b;
-  --bg-hover: #313244;
-  --text-primary: #cdd6f4;
-  --text-secondary: #a6adc8;
-  --text-muted: #6c7086;
-  --border: #313244;
-  --accent: #89b4fa;
-  --accent-hover: #74c7ec;
-  --success: #a6e3a1;
-  --danger: #f38ba8;
-  --warning: #f9e2af;
-  --titlebar-height: 38px;
+  --blue-slate: #555b6e;
+  --muted-teal: #89b0ae;
+  --frozen-water: #bee3db;
+  --bright-snow: #faf9f9;
+  --peach-fuzz: #ffd6ba;
+
+  --bg-primary: #0b0d11;
+  --bg-secondary: #11141a;
+  --bg-surface: #171b22;
+  --bg-card: rgba(17, 20, 26, 0.94);
+  --bg-card-solid: #11141a;
+  --bg-hover: rgba(137, 176, 174, 0.15);
+  --bg-active: rgba(190, 227, 219, 0.22);
+  --text-primary: #faf9f9;
+  --text-secondary: #bee3db;
+  --text-muted: #89b0ae;
+  --border: rgba(85, 91, 110, 0.35);
+  --border-strong: rgba(190, 227, 219, 0.45);
+  --accent: #bee3db;
+  --accent-hover: #faf9f9;
+  --accent-foreground: #0b0d11;
+  --accent-subtle: rgba(190, 227, 219, 0.16);
+  --accent-peach: #ffd6ba;
+  --accent-teal: #89b0ae;
+  --accent-slate: #555b6e;
+  --success: #bee3db;
+  --danger: #ffd6ba;
+  --warning: #ffd6ba;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.65);
+  --shadow-lg: 0 16px 36px rgba(0, 0, 0, 0.85);
+  --glass-bg: rgba(17, 20, 26, 0.92);
+  --glass-border: 1px solid rgba(85, 91, 110, 0.35);
 }
 
 * {
@@ -23,29 +64,35 @@
 
 /* ── Global Scrollbar Styling ── */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--bg-surface);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--text-muted);
+  background: rgba(255, 255, 255, 0.25);
+}
+
+body, button, input, select, textarea {
+  font-family: 'Canva Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-family: 'Canva Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: var(--bg-primary);
   color: var(--text-primary);
   overflow: hidden;
   height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 body.resizing *,
@@ -67,13 +114,16 @@ body.resizing .resize-handle {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  background: var(--bg-primary);
 }
 
 /* ── Title bar ── */
 
 .titlebar {
   height: var(--titlebar-height);
-  background: var(--bg-surface);
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--border);
   /* 3-column grid: left (title+workspace) | centre (mode-switcher) | right (mirror) */
   display: grid;
@@ -82,12 +132,11 @@ body.resizing .resize-handle {
   padding: 0 16px;
   -webkit-app-region: drag;
   user-select: none;
+  z-index: 100;
 }
 
 /* Dynamically-sized drag zone — adapts to macOS traffic-light button width */
 .titlebar-drag {
-  /* env(titlebar-area-x) is the exact pixel offset Electron reports for the
-     window control area; falls back to 70 px if the env var isn't available. */
   width: env(titlebar-area-x, 70px);
   min-width: 0;
 }
@@ -95,21 +144,24 @@ body.resizing .resize-handle {
 .titlebar-brand {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   flex-shrink: 0;
+  padding-right: 4px;
 }
 
 .titlebar-logo {
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
   object-fit: contain;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
 .titlebar-text {
   font-size: 13px;
-  font-weight: 600;
-  color: var(--text-secondary);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
 }
 
 .titlebar-left {
@@ -125,28 +177,60 @@ body.resizing .resize-handle {
 .workspace-container {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+}
+
+.workspace-btn {
+  -webkit-app-region: no-drag;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 4px 12px;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: var(--shadow-sm);
+}
+
+.workspace-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.workspace-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px rgba(190, 227, 219, 0.6);
+  flex-shrink: 0;
 }
 
 .workspace-close-mini-btn {
-  background: var(--bg-secondary);
+  background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--border);
-  color: var(--text-secondary);
+  color: var(--text-muted);
   width: 22px;
   height: 22px;
-  border-radius: 6px;
+  border-radius: 9999px;
   font-size: 10px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.15s;
+  transition: all 0.15s ease;
 }
 
 .workspace-close-mini-btn:hover {
-  background: rgba(220, 50, 50, 0.95);
-  color: #fff;
-  border-color: rgba(220, 50, 50, 0.3);
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.35);
 }
 
 .titlebar-center {
@@ -168,44 +252,51 @@ body.resizing .resize-handle {
 
 .sidebar-toggles {
   display: flex;
-  gap: 6px;
+  gap: 4px;
   -webkit-app-region: no-drag;
 }
 
 .sidebar-toggle-btn {
-  background: none;
-  border: none;
-  color: var(--text-muted, #a0a6b2);
-  padding: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  width: 30px;
+  height: 30px;
+  padding: 0;
   border-radius: 6px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.15s, color 0.15s;
+  transition: all 0.15s ease;
 }
 
 .sidebar-toggle-btn:hover {
-  background: var(--bg-hover, #2e3047);
-  color: var(--text-primary, #f4f4f7);
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border);
 }
 
 .sidebar-toggle-btn.active {
-  color: var(--accent, #3b82f6);
+  color: var(--accent);
+  background: rgba(190, 227, 219, 0.12);
+  border-color: rgba(190, 227, 219, 0.25);
 }
 
 .sidebar-toggle-btn svg {
-  transition: fill-opacity 0.15s;
+  transition: all 0.15s;
 }
 
 .mode-switcher {
   display: flex;
   gap: 2px;
-  background: var(--bg-hover);
-  border-radius: 6px;
-  padding: 2px;
-  max-width: 250px;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px;
+  max-width: 280px;
   -webkit-app-region: no-drag;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 .mode-btn {
@@ -214,37 +305,24 @@ body.resizing .resize-handle {
   border: none;
   color: var(--text-muted);
   font-size: 12px;
-  padding: 3px 10px;
-  border-radius: 4px;
+  font-weight: 500;
+  padding: 4px 12px;
+  border-radius: 5px;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: all 0.15s ease;
+  white-space: nowrap;
 }
 
 .mode-btn.active {
-  background: var(--accent);
-  color: var(--bg-surface);
+  background: var(--bg-hover);
+  color: #ffffff;
   font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
 .mode-btn:not(.active):hover {
   color: var(--text-primary);
-}
-
-.workspace-btn {
-  -webkit-app-region: no-drag;
-  background: var(--bg-hover);
-  border: 1px solid var(--border);
-  color: var(--text-primary);
-  padding: 4px 12px;
-  border-radius: 6px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.workspace-btn:hover {
-  background: var(--accent);
-  color: var(--bg-surface);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 /* ── Layout ── */
@@ -343,44 +421,51 @@ body.resizing .resize-handle {
 
 .tab-bar {
   display: flex;
+  background: rgba(11, 15, 25, 0.95);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  padding: 4px 6px 0 6px;
+  gap: 2px;
 }
 
 .tab {
   flex: 1;
-  padding: 10px 16px;
+  padding: 8px 10px;
   background: none;
   border: none;
   color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 500;
   cursor: pointer;
   border-bottom: 2px solid transparent;
-  transition: all 0.15s;
+  transition: all 0.15s ease;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 5px;
+  border-radius: 6px 6px 0 0;
 }
 
 .tab:hover {
-  color: var(--text-secondary);
-  background: var(--bg-hover);
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .tab.active {
-  color: var(--accent);
+  color: #ffffff;
   border-bottom-color: var(--accent);
+  background: rgba(255, 255, 255, 0.06);
+  font-weight: 600;
 }
 
 .tab-badge {
   background: var(--accent);
-  color: var(--bg-surface);
-  font-size: 10px;
+  color: var(--accent-foreground);
+  font-size: 9px;
   font-weight: 700;
-  padding: 1px 6px;
-  border-radius: 10px;
+  padding: 1px 5px;
+  border-radius: 9999px;
+  line-height: 1.2;
 }
 
 .panel-header {
@@ -438,8 +523,8 @@ body.resizing .resize-handle {
   width: 220px;
   height: 220px;
   border-radius: 12px;
-  border: 2px solid var(--border);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-lg);
   z-index: 1005;
   overflow: hidden;
   background: var(--bg-surface);
@@ -461,36 +546,35 @@ body.resizing .resize-handle {
 }
 
 /* ── Global consistent <select> styling (cross-platform) ── */
-/* Overrides the native OS select to look the same on macOS, Windows, Linux */
 select {
   -webkit-appearance: none;
   appearance: none;
-  background-color: var(--bg-surface);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236c7086' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-color: var(--bg-hover);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 8px center;
   border: 1px solid var(--border);
   color: var(--text-primary);
   font-family: inherit;
   font-size: 12px;
-  padding: 6px 28px 6px 10px;
+  padding: 5px 26px 5px 10px;
   border-radius: 6px;
   cursor: pointer;
   outline: none;
-  transition: border-color 0.15s;
+  transition: all 0.15s ease;
 }
 
 select:hover {
-  border-color: var(--text-muted);
+  border-color: rgba(255, 255, 255, 0.18);
 }
 
 select:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(137, 180, 250, 0.15);
+  box-shadow: 0 0 0 2px var(--accent-subtle);
 }
 
 select option {
-  background: var(--bg-surface);
+  background: var(--bg-secondary);
   color: var(--text-primary);
 }
 
@@ -555,4 +639,201 @@ select option {
 }
 
 @keyframes spin { to { transform: rotate(360deg) } }
+
+/* ==========================================================================
+   Mundi.ai Full-Bleed Layout Architecture
+   ========================================================================== */
+
+.mundi-titlebar {
+  height: 38px;
+  background: rgba(3, 4, 94, 0.96);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid rgba(144, 224, 239, 0.18);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  -webkit-app-region: drag;
+  user-select: none;
+  z-index: 100;
+  color: #90e0ef;
+  font-size: 12px;
+}
+
+.titlebar-window-title {
+  font-weight: 600;
+  color: #caf0f8;
+  font-size: 12.5px;
+  letter-spacing: -0.01em;
+}
+
+.mundi-top-btn {
+  -webkit-app-region: no-drag;
+  background: rgba(0, 119, 182, 0.25);
+  border: 1px solid rgba(144, 224, 239, 0.25);
+  color: #caf0f8;
+  padding: 5px 11px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+}
+
+.mundi-top-btn:hover {
+  background: rgba(0, 180, 216, 0.35);
+  color: #ffffff;
+  border-color: #00b4d8;
+  box-shadow: 0 0 10px rgba(0, 180, 216, 0.35);
+}
+
+.mundi-top-btn.active {
+  background: #00b4d8;
+  color: #03045e;
+  border-color: #caf0f8;
+  box-shadow: 0 0 12px rgba(0, 180, 216, 0.6);
+}
+
+.mundi-app-body {
+  display: flex;
+  flex: 1;
+  height: 100vh;
+  overflow: hidden;
+  position: relative;
+  background: var(--bg-primary);
+}
+
+.mundi-main-canvas {
+  flex: 1;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+}
+
+.mundi-map-viewport {
+  position: relative;
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.mundi-full-map-container {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+}
+
+.mundi-full-map-container .map-container,
+.mundi-full-map-container .map-view {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.mundi-workspace-view {
+  flex: 1;
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-primary);
+  z-index: 2;
+}
+
+/* Floating Slide-out Right Chat Drawer */
+.mundi-chat-drawer {
+  position: absolute;
+  top: 14px;
+  bottom: 14px;
+  right: 14px;
+  height: calc(100vh - 28px);
+  max-width: calc(100vw - 40px);
+  background: rgba(14, 20, 32, 0.65);
+  backdrop-filter: blur(36px) saturate(200%) contrast(105%);
+  -webkit-backdrop-filter: blur(36px) saturate(200%) contrast(105%);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 20px;
+  box-shadow: 
+    inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.35),
+    inset 0 -1px 1px 0 rgba(255, 255, 255, 0.08),
+    0 24px 50px -12px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  z-index: 48;
+  transition: width 0.22s cubic-bezier(0.16, 1, 0.3, 1), transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+  font-family: 'Canva Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  animation: chatDrawerSlideIn 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes chatDrawerSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Modal Backdrops & Overlays for Attribute Table & Symbology */
+.mundi-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 3, 50, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  z-index: 1050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.mundi-modal-container {
+  width: 90%;
+  max-width: 980px;
+  max-height: 85vh;
+  background: #03045e;
+  border: 1px solid rgba(0, 180, 216, 0.45);
+  border-radius: 14px;
+  box-shadow: 0 25px 60px -15px rgba(2, 3, 50, 0.95), 0 0 20px rgba(0, 180, 216, 0.25);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+}
+
+.mundi-symbology-container {
+  width: 90%;
+  max-width: 480px;
+  max-height: 85vh;
+  background: #03045e;
+  border: 1px solid rgba(0, 180, 216, 0.45);
+  border-radius: 14px;
+  box-shadow: 0 25px 60px -15px rgba(2, 3, 50, 0.95), 0 0 20px rgba(0, 180, 216, 0.25);
+  overflow-y: auto;
+  padding: 16px;
+}
+
+@keyframes macosMenuIn {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
 

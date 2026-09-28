@@ -981,6 +981,16 @@ function LayerItemRow({
         onSelect(layer.id, e)
       }}
     >
+      <div className="layer-drag-handle" title="Drag to reorder">
+        <svg width="10" height="14" viewBox="0 0 10 16" fill="currentColor">
+          <circle cx="3" cy="2" r="1.5" />
+          <circle cx="7" cy="2" r="1.5" />
+          <circle cx="3" cy="8" r="1.5" />
+          <circle cx="7" cy="8" r="1.5" />
+          <circle cx="3" cy="14" r="1.5" />
+          <circle cx="7" cy="14" r="1.5" />
+        </svg>
+      </div>
       <button
         className="layer-visibility"
         onClick={() => onToggle(layer.id)}
@@ -1068,6 +1078,22 @@ function LayerItemRow({
           </svg>
         </button>
       )}
+
+      <button
+        className="layer-more-btn"
+        onClick={(e) => {
+          e.stopPropagation()
+          onContextMenu(e)
+        }}
+        title="More layer options"
+        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+      >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="1" />
+          <circle cx="19" cy="12" r="1" />
+          <circle cx="5" cy="12" r="1" />
+        </svg>
+      </button>
 
       <button
         className="layer-remove"

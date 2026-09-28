@@ -320,7 +320,7 @@ export default function ScenarioBuilderPanel({ mapBounds, onOpenArtifacts, works
               </div>
               {baseline.fetch_errors && baseline.fetch_errors.length > 0 && (
                 <div className="sb-metrics-warn">
-                  ⚠ {baseline.fetch_errors.length} metric(s) unavailable (OSM rate limit)
+                  Notice: {baseline.fetch_errors.length} metric(s) unavailable (OSM rate limit)
                 </div>
               )}
             </div>
@@ -419,12 +419,12 @@ export default function ScenarioBuilderPanel({ mapBounds, onOpenArtifacts, works
                 </div>
                 {!baseline && (
                   <div className="sb-disclaimer">
-                    ⚠ Qualitative framework — Analyse Area first for data-anchored scores.
+                    Qualitative framework — Analyse Area first for data-anchored scores.
                   </div>
                 )}
                 {baseline && (
                   <div className="sb-disclaimer real-data">
-                    ✓ Scenarios contextualised using real OSM data.
+                    Scenarios contextualised using real OSM data.
                   </div>
                 )}
               </div>
@@ -504,11 +504,11 @@ export default function ScenarioBuilderPanel({ mapBounds, onOpenArtifacts, works
               <div className="sb-result-card">
                 <div className="sb-result-header">
                   <span className="sb-result-badge recommended">
-                    ★ {compareResult.recommended_scenario}
+                    RECOMMENDED: {compareResult.recommended_scenario}
                   </span>
                   {savedToArtifacts && (
                     <button className="sb-view-artifacts-btn" onClick={onOpenArtifacts}>
-                      View in Artifacts →
+                      View in Artifacts
                     </button>
                   )}
                 </div>

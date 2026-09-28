@@ -1,5 +1,10 @@
 export {}
 
+declare module '*.png' {
+  const value: string
+  export default value
+}
+
 declare global {
   interface FileEntry {
     name: string
@@ -37,6 +42,11 @@ declare global {
     setGEEKey: (key: string) => Promise<boolean>
     savePDF: (htmlContent: string, defaultName: string) => Promise<boolean>
     onFullscreenChange: (handler: (isFullscreen: boolean) => void) => void
+    minimizeWindow?: () => Promise<void>
+    maximizeWindow?: () => Promise<void>
+    closeWindow?: () => Promise<void>
+    reloadWindow?: () => Promise<void>
+    toggleFullscreen?: () => Promise<void>
   }
 
   interface Window {

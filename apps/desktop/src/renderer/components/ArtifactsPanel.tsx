@@ -36,19 +36,8 @@ const headingComponents = {
   h6: ({ children, ...props }: any) => <h6 id={getSlug(children)} {...props}>{children}</h6>,
 }
 
-const getCategoryIcon = (category: string = ''): string => {
-  const cat = category.toLowerCase()
-  if (cat.includes('vector') || cat.includes('boundary') || cat.includes('osm')) return '🌐'
-  if (cat.includes('demographic') || cat.includes('pop') || cat.includes('cohort')) return '👥'
-  if (cat.includes('gis') || cat.includes('geodesic') || cat.includes('area')) return '📐'
-  if (cat.includes('weather') || cat.includes('climate') || cat.includes('air')) return '🌤️'
-  if (cat.includes('remote') || cat.includes('satellite') || cat.includes('lulc') || cat.includes('earth')) return '🛰️'
-  if (cat.includes('transit') || cat.includes('mobility') || cat.includes('route') || cat.includes('traffic')) return '🚆'
-  if (cat.includes('zoning') || cat.includes('planning') || cat.includes('norm') || cat.includes('regulation')) return '📄'
-  if (cat.includes('places') || cat.includes('amenity') || cat.includes('poi')) return '📍'
-  if (cat.includes('research') || cat.includes('web')) return '🔍'
-  if (cat.includes('document') || cat.includes('rag')) return '📑'
-  return '📊'
+const getCategoryIcon = (_category: string = ''): string => {
+  return ''
 }
 
 const DEFAULT_SOURCE_URLS: Record<string, string> = {

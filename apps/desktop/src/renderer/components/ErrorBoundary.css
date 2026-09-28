@@ -9,7 +9,7 @@
   gap: 12px;
   background: #1a1a1a;
   color: #e5e5e5;
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: 'Canva Sans', system-ui, -apple-system, sans-serif;
   text-align: center;
   overflow: auto;
 }

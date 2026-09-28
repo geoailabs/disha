@@ -23,34 +23,38 @@
 .export-btn {
   padding: 8px 12px;
   border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg-secondary);
-  color: var(--text-primary);
+  border: 1px solid var(--border-subtle, rgba(85, 91, 110, 0.3));
+  background: var(--bg-tertiary, #171b22);
+  color: var(--bright-snow, #faf9f9);
   cursor: pointer;
   font-size: 12px;
+  font-weight: 500;
   transition: all 0.15s ease;
 }
 
 .export-btn:hover:not(:disabled) {
-  background: var(--bg-hover);
-  border-color: var(--text-muted);
+  background: var(--bg-hover, rgba(137, 176, 174, 0.15));
+  border-color: var(--muted-teal, #89b0ae);
+  color: var(--bright-snow, #faf9f9);
+  transform: translateY(-0.5px);
 }
 
 .export-btn.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--bg-surface);
-  font-weight: 600;
+  background: var(--frozen-water, #bee3db);
+  border-color: var(--frozen-water, #bee3db);
+  color: #0b0d11;
+  font-weight: 700;
 }
 
 .export-btn.primary:hover:not(:disabled) {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
-  color: var(--bg-surface);
+  background: var(--bright-snow, #faf9f9);
+  border-color: var(--bright-snow, #faf9f9);
+  color: #0b0d11;
+  box-shadow: 0 0 14px rgba(190, 227, 219, 0.5);
 }
 
 .export-btn.small {
-  padding: 6px 10px;
+  padding: 5px 10px;
   font-size: 11px;
 }
 

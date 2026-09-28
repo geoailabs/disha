@@ -296,6 +296,7 @@ interface MapViewProps {
   canRedo?: boolean
   selectedFeatures?: SelectedFeatureEntry[]
   onSelectFeature?: (entry: SelectedFeatureEntry | null, shiftKey: boolean) => void
+  onHoverFeature?: (entry: SelectedFeatureEntry | null) => void
 }
 
 type DrawMode = 'point' | 'line' | 'polygon' | null
@@ -331,10 +332,13 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
     canRedo = false,
     selectedFeatures = [],
     onSelectFeature,
+    onHoverFeature,
   },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const onHoverFeatureRef = useRef(onHoverFeature)
+  onHoverFeatureRef.current = onHoverFeature
   const [zoomTooLow, setZoomTooLow] = useState(false)
   // Each off-screen indicator: position on edge + angle + the entry it refers to
   type IndicatorPos = { x: number; y: number; angle: number; entry: SelectedFeatureEntry }
@@ -1054,7 +1058,13 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
 
     source.setData({
       type: 'FeatureCollection',
-      features: selectedFeatures.map((e) => e.feature),
+      features: selectedFeatures.flatMap((e) => {
+        const matching = layersRef.current.find((l) => l.id === e.layerId)
+        if (matching?.data?.features?.length) {
+          return matching.data.features
+        }
+        return [e.feature]
+      }),
     })
   }, [selectedFeatures, mapReady])
 
@@ -1188,9 +1198,16 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
     // Update the glow source
     const glowSource = map.getSource('selected-feature-edge-glow') as maplibregl.GeoJSONSource | undefined
     if (glowSource) {
+      const glowFeatures = intersecting.flatMap((e) => {
+        const matching = layersRef.current.find((l) => l.id === e.layerId)
+        if (matching?.data?.features?.length) {
+          return matching.data.features
+        }
+        return [e.feature]
+      })
       glowSource.setData({
         type: 'FeatureCollection',
-        features: intersecting.map((e) => e.feature),
+        features: glowFeatures,
       })
     }
 
@@ -1947,48 +1964,81 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
                 const layerFeatures: Feature[] = matchingLayer.data?.features || []
                 let fullFeature: Feature
 
-                if (layerFeatures.length > 1) {
-                  const geoms = layerFeatures.map((f) => f.geometry).filter(Boolean)
-                  let combinedGeometry: Geometry
-                  if (geoms.every((g) => g.type === 'Polygon')) {
+                const geoms = layerFeatures.map((f) => f.geometry).filter(Boolean)
+                let combinedGeometry: Geometry = JSON.parse(JSON.stringify(feat.geometry))
+
+                if (layerFeatures.length > 0) {
+                  const polyCoords: any[] = []
+                  const lineCoords: any[] = []
+                  const pointCoords: any[] = []
+
+                  for (const g of geoms) {
+                    if (g.type === 'Polygon') {
+                      polyCoords.push((g as any).coordinates)
+                    } else if (g.type === 'MultiPolygon') {
+                      polyCoords.push(...(g as any).coordinates)
+                    } else if (g.type === 'LineString') {
+                      lineCoords.push((g as any).coordinates)
+                    } else if (g.type === 'MultiLineString') {
+                      lineCoords.push(...(g as any).coordinates)
+                    } else if (g.type === 'Point') {
+                      pointCoords.push((g as any).coordinates)
+                    } else if (g.type === 'MultiPoint') {
+                      pointCoords.push(...(g as any).coordinates)
+                    }
+                  }
+
+                  if (polyCoords.length > 1) {
                     combinedGeometry = {
                       type: 'MultiPolygon',
-                      coordinates: geoms.map((g: any) => g.coordinates),
+                      coordinates: polyCoords,
                     }
-                  } else if (geoms.every((g) => g.type === 'Point')) {
+                  } else if (polyCoords.length === 1) {
                     combinedGeometry = {
-                      type: 'MultiPoint',
-                      coordinates: geoms.map((g: any) => g.coordinates),
+                      type: 'Polygon',
+                      coordinates: polyCoords[0],
                     }
-                  } else if (geoms.every((g) => g.type === 'LineString')) {
+                  } else if (lineCoords.length > 1) {
                     combinedGeometry = {
                       type: 'MultiLineString',
-                      coordinates: geoms.map((g: any) => g.coordinates),
+                      coordinates: lineCoords,
                     }
-                  } else {
-                    combinedGeometry = JSON.parse(JSON.stringify(feat.geometry))
+                  } else if (lineCoords.length === 1) {
+                    combinedGeometry = {
+                      type: 'LineString',
+                      coordinates: lineCoords[0],
+                    }
+                  } else if (pointCoords.length > 1) {
+                    combinedGeometry = {
+                      type: 'MultiPoint',
+                      coordinates: pointCoords,
+                    }
+                  } else if (pointCoords.length === 1) {
+                    combinedGeometry = {
+                      type: 'Point',
+                      coordinates: pointCoords[0],
+                    }
+                  } else if (geoms.length > 0) {
+                    combinedGeometry = {
+                      type: 'GeometryCollection',
+                      geometries: geoms,
+                    }
                   }
+                }
 
-                  const firstProps = layerFeatures[0]?.properties || {}
-                  const clickedProps = feat.properties || {}
-                  const mergedProps = {
-                    ...firstProps,
-                    ...clickedProps,
-                    layer_name: matchingLayer.name,
-                    total_feature_count: layerFeatures.length,
-                  }
+                const firstProps = layerFeatures[0]?.properties || {}
+                const clickedProps = feat.properties || {}
+                const mergedProps = {
+                  ...firstProps,
+                  ...clickedProps,
+                  layer_name: matchingLayer.name,
+                  total_feature_count: layerFeatures.length,
+                }
 
-                  fullFeature = {
-                    type: 'Feature',
-                    geometry: combinedGeometry,
-                    properties: mergedProps,
-                  }
-                } else {
-                  fullFeature = {
-                    type: 'Feature',
-                    geometry: JSON.parse(JSON.stringify(feat.geometry)),
-                    properties: { ...(feat.properties || {}), layer_name: matchingLayer.name },
-                  }
+                fullFeature = {
+                  type: 'Feature',
+                  geometry: combinedGeometry,
+                  properties: mergedProps,
                 }
 
                 onSelectFeature?.(
@@ -2045,6 +2095,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       hoverPopupRef.current?.remove()
       hoverPopupRef.current = null
       map.getCanvas().style.cursor = ''
+      onHoverFeatureRef.current?.(null)
     }
 
     const onMouseMove = (e: maplibregl.MapMouseEvent) => {
@@ -2060,32 +2111,105 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       const ids = renderLayerIds()
       if (!ids.length) {
         if (!hasVisibleWms) hidePopup()
+        onHoverFeatureRef.current?.(null)
         return
       }
       const feats = map.queryRenderedFeatures(e.point, { layers: ids })
-      const html = feats.length ? popupHtmlForProps(feats[0].properties) : ''
-      if (!html) {
+      if (!feats.length) {
         if (!hasVisibleWms) hidePopup()
+        onHoverFeatureRef.current?.(null)
         return
       }
 
       map.getCanvas().style.cursor = 'pointer'
-      if (!hoverPopupRef.current) {
-        hoverPopupRef.current = new maplibregl.Popup({
-          closeButton: false,
-          closeOnClick: false,
-          offset: 12,
-          className: 'mv-hover-popup',
-        }).addTo(map)
+      const feat = feats[0]
+      const matchingLayer = layersRef.current.find((l) => {
+        for (const suffix of ['-fill', '-outline', '-line', '-circle']) {
+          if (feat.layer?.id === `${l.id}${suffix}`) return true
+        }
+        return false
+      })
+
+      if (matchingLayer) {
+        const layerFeatures: Feature[] = matchingLayer.data?.features || []
+        const firstProps = layerFeatures[0]?.properties || {}
+        const featProps = feat.properties || {}
+        const mergedProps = {
+          ...firstProps,
+          ...featProps,
+          layer_name: matchingLayer.name,
+          total_feature_count: layerFeatures.length,
+        }
+        const fullFeature: Feature = {
+          type: 'Feature',
+          geometry: JSON.parse(JSON.stringify(feat.geometry || { type: 'Point', coordinates: [0, 0] })),
+          properties: mergedProps,
+        }
+
+        // Compute geodesic area if geometry is a polygon
+        let areaStr: string | undefined
+        try {
+          if (feat.geometry && (feat.geometry.type === 'Polygon' || feat.geometry.type === 'MultiPolygon')) {
+            const sqM = turf.area(feat as any)
+            if (sqM >= 1_000_000) {
+              areaStr = `${(sqM / 1_000_000).toFixed(2)} km²`
+            } else if (sqM >= 10_000) {
+              areaStr = `${(sqM / 10_000).toFixed(2)} ha`
+            } else {
+              areaStr = `${Math.round(sqM).toLocaleString()} m²`
+            }
+          } else if (matchingLayer.data) {
+            let totalSqM = 0
+            for (const f of matchingLayer.data.features || []) {
+              if (f.geometry && (f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon')) {
+                totalSqM += turf.area(f as any)
+              }
+            }
+            if (totalSqM > 0) {
+              if (totalSqM >= 1_000_000) {
+                areaStr = `${(totalSqM / 1_000_000).toFixed(2)} km²`
+              } else if (totalSqM >= 10_000) {
+                areaStr = `${(totalSqM / 10_000).toFixed(2)} ha`
+              } else {
+                areaStr = `${Math.round(totalSqM).toLocaleString()} m²`
+              }
+            }
+          }
+        } catch {
+          // ignore
+        }
+
+        onHoverFeatureRef.current?.({
+          feature: fullFeature,
+          layerId: matchingLayer.id,
+          layerName: matchingLayer.name,
+          cursorPos: { x: e.originalEvent.clientX, y: e.originalEvent.clientY },
+          calculatedArea: areaStr,
+        })
+      } else {
+        onHoverFeatureRef.current?.(null)
       }
-      hoverPopupRef.current.setLngLat(e.lngLat).setHTML(html)
     }
+
+    const canvas = map.getCanvas()
+    const container = containerRef.current
 
     map.on('mousemove', onMouseMove)
     map.on('mouseout', hidePopup)
+    map.on('mouseleave', hidePopup)
+    canvas.addEventListener('mouseleave', hidePopup)
+    if (container) {
+      container.addEventListener('mouseleave', hidePopup)
+    }
+
     return () => {
       map.off('mousemove', onMouseMove)
       map.off('mouseout', hidePopup)
+      map.off('mouseleave', hidePopup)
+      canvas.removeEventListener('mouseleave', hidePopup)
+      if (container) {
+        container.removeEventListener('mouseleave', hidePopup)
+      }
       hidePopup()
     }
   }, [mapReady])
@@ -2490,14 +2614,22 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
             className="ctx-item"
             onClick={() => { onAddMarkerRef.current?.(ctxMenu.lng, ctxMenu.lat); setCtxMenu(null) }}
           >
-            📍 Add marker here
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6 }}>
+              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+              <circle cx="12" cy="10" r="3" />
+            </svg>
+            Add marker here
           </button>
           {streetViewDetail && (
             <button
               className="ctx-item"
               onClick={() => { onOpenStreetViewRef.current?.(ctxMenu.lng, ctxMenu.lat); setCtxMenu(null) }}
             >
-              🛣 Street View
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6 }}>
+                <circle cx="12" cy="12" r="10" />
+                <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
+              </svg>
+              Street View
             </button>
           )}
           {streetViewDetail && isRoadFeature(ctxMenu.feature) && (
@@ -2512,7 +2644,10 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
             className="ctx-item"
             onClick={() => { onAskChatRef.current?.(ctxMenu.lng, ctxMenu.lat); setCtxMenu(null) }}
           >
-            💬 Ask chat about this place
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6 }}>
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+            Ask chat about this place
           </button>
         </div>
         </>

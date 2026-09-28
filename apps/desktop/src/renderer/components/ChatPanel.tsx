@@ -103,7 +103,11 @@ function ResearchBubble({
           </>
         ) : (
           <>
-            <span className="research-icon done">✓</span>
+            <span className="research-icon done">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            </span>
             <span className="research-title">Deep Research Complete</span>
             <span className="research-count">
               {steps.length} {steps.length === 1 ? 'search' : 'searches'}
@@ -120,7 +124,15 @@ function ResearchBubble({
             const generic = /^web search #\d+$/.test(step)
             return (
               <div key={i} className={`research-step ${isDone ? 'done' : 'active'}`}>
-                <span className="step-icon">{isDone ? '✓' : '⟳'}</span>
+                <span className="step-icon">
+                  {isDone ? (
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  ) : (
+                    <span className="step-dot" />
+                  )}
+                </span>
                 <span className="step-text">
                   {generic ? 'Searching the web…' : `Searching: ${step}`}
                 </span>
@@ -206,7 +218,12 @@ function ResearchBubble({
           {citations.length > 0 && (
             <div className="research-citations">
               <div className="research-citations-header">
-                <span className="citations-icon">🔗</span>
+                <span className="citations-icon">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                  </svg>
+                </span>
                 <span className="citations-title">Sources consulted ({citations.length})</span>
               </div>
               <ul className="research-citations-list">
@@ -248,6 +265,10 @@ interface ChatPanelProps {
   onRemoveSelectedFeature?: (index: number) => void
   onClearSelectedFeatures?: () => void
   onNavigateArtifact?: (target: string | number) => void
+  onClose?: () => void
+  onStreamingChange?: (isStreaming: boolean) => void
+  onStatusChange?: (status: string | null) => void
+  onErrorChange?: (error: string | null) => void
 }
 
 function CodePre({ children, ...props }: React.HTMLAttributes<HTMLPreElement>) {
@@ -332,16 +353,13 @@ function parseArtifactTarget(str: string): { isArtifact: boolean; id?: number; l
   return { isArtifact: false, label: clean }
 }
 
-function getArtifactIcon(ext?: string, label?: string): string {
-  const target = (ext || label || '').toLowerCase()
-  if (/\.(png|jpe?g|webp|gif|svg)$/i.test(target) || ['png', 'jpg', 'jpeg', 'image'].includes(target)) return '🖼️'
-  if (/\.(docx|doc)$/i.test(target) || ['docx', 'doc'].includes(target)) return '📄'
-  if (/\.(pdf)$/i.test(target) || ['pdf'].includes(target)) return '📑'
-  if (/\.(geojson|kml|shp)$/i.test(target) || ['geojson'].includes(target)) return '🗺️'
-  if (/\.(xlsx|csv|xls)$/i.test(target) || ['xlsx', 'csv', 'table'].includes(target)) return '📊'
-  if (/\.(html|htm)$/i.test(target) || ['html'].includes(target)) return '🌐'
-  if (/\.(md|markdown|txt)$/i.test(target) || ['md', 'markdown'].includes(target)) return '📝'
-  return '📦'
+function getArtifactIcon(_ext?: string, _label?: string): React.ReactNode {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+    </svg>
+  )
 }
 
 function autoLinkArtifacts(text: string): string {
@@ -467,7 +485,18 @@ const ChatMessageItem = memo(function ChatMessageItem({
             {msg.attachments.map((att, idx) => (
               <div key={idx} className="chat-msg-attachment-item" title={att.filePath}>
                 <span className="attachment-icon">
-                  {att.mimeType?.startsWith('image/') ? '🖼️' : '📄'}
+                  {att.mimeType?.startsWith('image/') ? (
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <rect x="3" y="3" width="18" height="18" rx="2" />
+                      <circle cx="8.5" cy="8.5" r="1.5" />
+                      <polyline points="21 15 16 10 5 21" />
+                    </svg>
+                  ) : (
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                      <polyline points="14 2 14 8 20 8" />
+                    </svg>
+                  )}
                 </span>
                 <span className="attachment-name">{att.fileName}</span>
               </div>
@@ -479,9 +508,13 @@ const ChatMessageItem = memo(function ChatMessageItem({
             {msg.selected_features.map((feat, idx) => {
               const label = feat.properties.layer_name || feat.properties.stop_name || feat.properties.name || feat.layerName || 'Selected Map Element'
               return (
-                <div key={idx} className="chat-msg-attachment-item" style={{ borderColor: 'rgba(59,130,246,0.5)', background: 'rgba(59,130,246,0.15)' }} title={JSON.stringify(feat.properties, null, 2)}>
-                  <span className="attachment-icon">📍</span>
-                  <span className="attachment-name" style={{ color: '#60a5fa', fontWeight: 500 }}>{label}</span>
+                <div key={idx} className="chat-msg-attachment-item" style={{ borderColor: 'rgba(190, 227, 219, 0.4)', background: 'rgba(190, 227, 219, 0.12)' }} title={JSON.stringify(feat.properties, null, 2)}>
+                  <span className="attachment-icon">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <polygon points="12 2 19 21 12 17 5 21 12 2" />
+                    </svg>
+                  </span>
+                  <span className="attachment-name" style={{ color: 'var(--frozen-water, #bee3db)', fontWeight: 500 }}>{label}</span>
                 </div>
               )
             })}
@@ -519,6 +552,10 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
   onRemoveSelectedFeature,
   onClearSelectedFeatures,
   onNavigateArtifact,
+  onClose,
+  onStreamingChange,
+  onStatusChange,
+  onErrorChange,
 }, ref) => {
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
@@ -529,6 +566,18 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
   const [isSwitchingModel, setIsSwitchingModel] = useState(false)
   const [chatError, setChatError] = useState<ChatErrorMessage | null>(null)
   const [suggestions, setSuggestions] = useState<string[]>(() => pickSuggestions(3))
+
+  useEffect(() => {
+    onStreamingChange?.(isStreaming)
+  }, [isStreaming, onStreamingChange])
+
+  useEffect(() => {
+    onStatusChange?.(toolStatus)
+  }, [toolStatus, onStatusChange])
+
+  useEffect(() => {
+    onErrorChange?.(chatError?.message || null)
+  }, [chatError, onErrorChange])
 
   // Attachments State
   const [attachments, setAttachments] = useState<Array<{
@@ -685,6 +734,16 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
         setHasEnvGoogleKey(envGoogle)
         setIsKeyLoaded(true)
         setShowApiKeyInput(!(storedApiKey || envOpenAI))
+        if (storedApiKey || storedGoogleKey) {
+          fetch('http://localhost:8765/api/chat/sync-keys', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              openai_api_key: storedApiKey,
+              google_maps_api_key: storedGoogleKey,
+            }),
+          }).catch(() => {})
+        }
       }
 
       if (!cancelled && !storedApiKey && !envStatusLoaded && attempt < 20) {
@@ -1203,14 +1262,14 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
           obj?.error?.message ||
           obj?.message ||
           raw
-        if (msg.includes('Incorrect API key')) return '❌ Incorrect API key — double-check your key at platform.openai.com/account/api-keys'
-        if (msg.includes('exceeded') || msg.includes('quota')) return '⚠️ Quota exceeded — check your billing at platform.openai.com/account/billing'
-        if (msg.includes('deactivated') || msg.includes('disabled')) return '🚫 This key has been deactivated by OpenAI'
-        return `❌ ${msg.split('.')[0]}.`
+        if (msg.includes('Incorrect API key')) return 'Incorrect API key — double-check your key at platform.openai.com/account/api-keys'
+        if (msg.includes('exceeded') || msg.includes('quota')) return 'Quota exceeded — check your billing at platform.openai.com/account/billing'
+        if (msg.includes('deactivated') || msg.includes('disabled')) return 'This key has been deactivated by OpenAI'
+        return `${msg.split('.')[0]}.`
       }
     } catch { /* fall through */ }
-    if (raw.toLowerCase().includes('invalid')) return '❌ Invalid API key — please verify and try again'
-    if (raw.toLowerCase().includes('quota') || raw.toLowerCase().includes('exceeded')) return '⚠️ Quota exceeded — check your billing'
+    if (raw.toLowerCase().includes('invalid')) return 'Invalid API key — please verify and try again'
+    if (raw.toLowerCase().includes('quota') || raw.toLowerCase().includes('exceeded')) return 'Quota exceeded — check your billing'
     return raw
   }
 
@@ -1232,6 +1291,11 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
           setChatError(null)
           setIsSavingKey(false)
           setKeySuccess(true)
+          fetch('http://localhost:8765/api/chat/sync-keys', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ openai_api_key: keyToSave }),
+          }).catch(() => {})
           setTimeout(() => {
             setKeySuccess(false)
             setShowApiKeyInput(false)
@@ -1256,6 +1320,11 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
       setApiKey('')
       setShowApiKeyInput(!hasEnvApiKey)
       setChatError(null)
+      fetch('http://localhost:8765/api/chat/sync-keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ openai_api_key: '' }),
+      }).catch(() => {})
     }
   }
 
@@ -1268,6 +1337,11 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
         setGoogleKey(keyToSave)
         setIsSavingGoogleKey(false)
         setGoogleKeySuccess(true)
+        fetch('http://localhost:8765/api/chat/sync-keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ google_maps_api_key: keyToSave }),
+        }).catch(() => {})
         setTimeout(() => setGoogleKeySuccess(false), 2000)
         return true
       } else {
@@ -1514,6 +1588,25 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
   const sendMessageDirect = async (text: string): Promise<void> => {
     if ((!text.trim() && attachments.length === 0) || isStreaming || !activeConversation) return
 
+    let effectiveApiKey = apiKey.trim()
+    if (!effectiveApiKey && window.electronAPI) {
+      try {
+        effectiveApiKey = (await window.electronAPI.getAPIKey()) || ''
+        if (effectiveApiKey) {
+          setApiKey(effectiveApiKey)
+        }
+      } catch { /* ignore */ }
+    }
+
+    if (!effectiveApiKey && !hasEnvApiKey) {
+      setShowApiKeyInput(true)
+      setChatError({
+        code: 'auth',
+        message: 'An OpenAI API Key is required. Please configure your key in settings.',
+      })
+      return
+    }
+
     const activeSelection = mapContext.selected_features && mapContext.selected_features.length > 0
       ? mapContext.selected_features
       : undefined
@@ -1554,7 +1647,7 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
       const payload: Record<string, unknown> = {
         content: userMessage.content,
         map_context: mapContext,
-        api_key: apiKey,
+        api_key: effectiveApiKey || apiKey,
         google_maps_api_key: googleKey,
         image: documentImage
           ? {
@@ -1774,6 +1867,19 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
               <line x1="5" y1="12" x2="19" y2="12" />
             </svg>
           </button>
+
+          {onClose && (
+            <button
+              className="chat-header-action-btn chat-close-btn"
+              onClick={onClose}
+              title="Close Assistant Drawer"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          )}
         </div>
       </div>
 
@@ -1886,7 +1992,7 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
                     }}
                     disabled={isSavingKey}
                   >
-                    {isSavingKey ? 'Saving...' : keySuccess ? 'Saved! ✓' : 'Save'}
+                    {isSavingKey ? 'Saving...' : keySuccess ? 'Saved' : 'Save'}
                   </button>
                   {apiKey && (
                     <button
@@ -1900,7 +2006,13 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
                 </div>
                 {keyError && (
                   <div className="api-key-error-msg">
-                    <span className="api-key-error-icon">⚠</span>
+                    <span className="api-key-error-icon">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="12" cy="12" r="10" />
+                        <line x1="12" y1="8" x2="12" y2="12" />
+                        <line x1="12" y1="16" x2="12.01" y2="16" />
+                      </svg>
+                    </span>
                     <span>{keyError}</span>
                   </div>
                 )}
@@ -1933,7 +2045,7 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
                     }}
                     disabled={isSavingGoogleKey}
                   >
-                    {isSavingGoogleKey ? 'Saving...' : googleKeySuccess ? 'Saved! ✓' : 'Save'}
+                    {isSavingGoogleKey ? 'Saving...' : googleKeySuccess ? 'Saved' : 'Save'}
                   </button>
                   {googleKey && (
                     <button
@@ -1947,7 +2059,13 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
                 </div>
                 {googleKeyError && (
                   <div className="api-key-error-msg">
-                    <span className="api-key-error-icon">⚠</span>
+                    <span className="api-key-error-icon">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="12" cy="12" r="10" />
+                        <line x1="12" y1="8" x2="12" y2="12" />
+                        <line x1="12" y1="16" x2="12.01" y2="16" />
+                      </svg>
+                    </span>
                     <span>{googleKeyError}</span>
                   </div>
                 )}
@@ -2015,7 +2133,7 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
                       disabled={isSavingGeeKey}
                       style={{ flex: 1 }}
                     >
-                      {isSavingGeeKey ? 'Verifying & Saving...' : geeKeySuccess ? 'Saved! ✓' : 'Save GEE Credentials'}
+                      {isSavingGeeKey ? 'Verifying & Saving...' : geeKeySuccess ? 'Saved' : 'Save GEE Credentials'}
                     </button>
                     {geeKey && (
                       <button
@@ -2030,7 +2148,13 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
                 </div>
                 {geeKeyError && (
                   <div className="api-key-error-msg" style={{ marginTop: '6px' }}>
-                    <span className="api-key-error-icon">⚠</span>
+                    <span className="api-key-error-icon">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="12" cy="12" r="10" />
+                        <line x1="12" y1="8" x2="12" y2="12" />
+                        <line x1="12" y1="16" x2="12.01" y2="16" />
+                      </svg>
+                    </span>
                     <span>{geeKeyError}</span>
                   </div>
                 )}
@@ -2172,8 +2296,8 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
               <svg width="48" height="48" viewBox="0 0 24 24" fill="none">
                 <path
                   d="M5 3L19 12L12.5 13.5L9 20L5 3Z"
-                  fill="#4ecca3"
-                  stroke="#1a9e7e"
+                  fill="var(--frozen-water, #bee3db)"
+                  stroke="var(--muted-teal, #89b0ae)"
                   strokeWidth="1.5"
                   strokeLinejoin="round"
                 />
@@ -2274,7 +2398,13 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
       <div className="chat-input-area">
         {attachmentError && (
           <div className="chat-attachment-error">
-            <span className="error-icon">⚠</span>
+            <span className="error-icon">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+            </span>
             <span className="error-text">{attachmentError}</span>
             <button
               type="button"
@@ -2288,7 +2418,7 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
 
         {attachmentLoading && (
           <div className="chat-attachment-loading">
-            <span className="spinning-icon">⟳</span>
+            <span className="step-spinner" />
             <span>Processing attachment...</span>
           </div>
         )}
@@ -2304,7 +2434,12 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
                     alt={att.fileName}
                   />
                 ) : (
-                  <span className="chat-attachment-icon">📄</span>
+                  <span className="chat-attachment-icon">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                      <polyline points="14 2 14 8 20 8" />
+                    </svg>
+                  </span>
                 )}
                 <span className="chat-attachment-name">{att.fileName}</span>
                 <button
@@ -2327,12 +2462,15 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
               return (
                 <div
                   key={idx}
-                  className="chat-attachment-chip"
-                  style={{ borderColor: 'rgba(59,130,246,0.5)', background: 'rgba(59,130,246,0.12)' }}
+                  className="chat-attachment-chip chat-feature-chip"
                   title={JSON.stringify(feat.properties, null, 2)}
                 >
-                  <span className="chat-attachment-icon">📍</span>
-                  <span className="chat-attachment-name" style={{ color: '#60a5fa', fontWeight: 500 }}>
+                  <span className="chat-attachment-icon chat-feature-icon">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <polygon points="12 2 19 21 12 17 5 21 12 2" />
+                    </svg>
+                  </span>
+                  <span className="chat-attachment-name">
                     {label}
                   </span>
                   {onRemoveSelectedFeature ? (
@@ -2431,7 +2569,7 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
             >
               {availableModels.map((m) => (
                 <option key={m.id} value={m.id} disabled={m.locked}>
-                  {m.locked ? '🔒 ' : ''}{m.name}
+                  {m.locked ? '[Locked] ' : ''}{m.name}
                 </option>
               ))}
             </select>

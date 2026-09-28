@@ -1,17 +1,19 @@
 .map-legend {
   position: absolute;
-  right: 12px;
-  bottom: 44px;
+  right: 14px;
+  bottom: 48px;
   z-index: 5;
-  max-width: 220px;
+  max-width: 230px;
   max-height: 50%;
   overflow-y: auto;
-  background: var(--bg-surface, #1e1e2e);
-  color: var(--text-primary, #cdd6f4);
-  border: 1px solid var(--border, #313244);
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-  padding: 8px 12px;
+  background: rgba(22, 31, 48, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: #f8fafc;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+  padding: 10px 14px;
   font-size: 11px;
   pointer-events: auto;
 }
@@ -29,18 +31,19 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: #f8fafc;
 }
 
 .legend-prop {
   font-weight: 400;
-  opacity: 0.6;
+  color: #94a3b8;
 }
 
 .legend-row {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 1px 0;
+  padding: 2px 0;
 }
 
 .legend-swatch {
@@ -48,7 +51,7 @@
   height: 12px;
   border-radius: 3.5px;
   flex-shrink: 0;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.18);
   box-sizing: border-box;
 }
 
@@ -57,4 +60,5 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+  color: #cbd5e1;
 }

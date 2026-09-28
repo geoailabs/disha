@@ -1,0 +1,445 @@
+/* =========================================================
+   Apple macOS Top Menu Bar & Frosted Glass Menu System
+   Inspired by macOS Sequoia / iOS Liquid Glass Design
+   ========================================================= */
+
+/* ── Top Horizontal Menu Bar ── */
+.macos-menu-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 30px;
+  min-height: 30px;
+  width: 100%;
+  padding: 0 12px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.12) 0%,
+    rgba(255, 255, 255, 0.03) 100%
+  ), rgba(16, 20, 29, 0.68);
+  backdrop-filter: blur(28px) saturate(190%) contrast(105%);
+  -webkit-backdrop-filter: blur(28px) saturate(190%) contrast(105%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    0 2px 10px rgba(0, 0, 0, 0.25);
+  font-family: 'Canva Sans', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro', 'Inter', system-ui, sans-serif;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.92);
+  z-index: 1000;
+  user-select: none;
+  -webkit-app-region: drag;
+  flex-shrink: 0;
+  position: relative;
+}
+
+/* Make interactive elements non-draggable */
+.macos-menu-bar button,
+.macos-menu-bar .menubar-item,
+.macos-menu-bar .menubar-tray-btn,
+.macos-menu-bar .menubar-item-wrapper,
+.macos-menu-bar .macos-glass-menu {
+  -webkit-app-region: no-drag;
+}
+
+/* ── Left Menu Items Group ── */
+.menubar-left-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.menubar-item-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.menubar-item {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  padding: 0 9px;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 13px;
+  font-weight: 450;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  white-space: nowrap;
+}
+
+.menubar-item:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+}
+
+.menubar-item.is-active {
+  background: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+
+/* Apple Logo Item */
+.apple-logo-item {
+  padding: 0 8px;
+}
+
+.apple-logo-item svg {
+  opacity: 0.95;
+  transition: opacity 0.12s ease;
+}
+
+.apple-logo-item:hover svg,
+.apple-logo-item.is-active svg {
+  opacity: 1;
+}
+
+/* App Title: Bold Disha */
+.menubar-app-name {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  padding: 0 10px;
+}
+
+/* ── Right System Status Tray ── */
+.menubar-right-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.menubar-tray-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.menubar-tray-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+}
+
+.menubar-tray-btn.is-active {
+  background: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+
+.menubar-clock-text {
+  font-size: 12.5px;
+  font-weight: 450;
+  color: rgba(255, 255, 255, 0.9);
+  padding: 0 4px;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+/* =========================================================
+   Apple macOS Frosted Glass Dropdowns & All Context Menus
+   Matches SVG Specs: filter0_dddd (drop shadow) & filter1_iii (inner rim)
+   ========================================================= */
+.macos-glass-menu,
+.map-context-menu,
+.layer-context-menu,
+.artifact-context-menu {
+  position: fixed;
+  z-index: 100000;
+  min-width: 230px;
+  max-width: 320px;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.22) 0%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0.04) 100%
+  ), rgba(24, 28, 38, 0.76) !important;
+  backdrop-filter: blur(36px) saturate(200%) contrast(105%) !important;
+  -webkit-backdrop-filter: blur(36px) saturate(200%) contrast(105%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.25) !important;
+  border-radius: 14px !important;
+  padding: 6px !important;
+  box-shadow: 
+    0 24px 64px -8px rgba(0, 0, 0, 0.55),
+    0 8px 24px -2px rgba(0, 0, 0, 0.35),
+    inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.65),
+    inset 0 -1px 1px 0 rgba(0, 0, 0, 0.3) !important;
+  color: #faf9f9;
+  font-family: 'Canva Sans', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro', 'Inter', system-ui, sans-serif;
+  animation: macosMenuIn 0.14s cubic-bezier(0.16, 1, 0.3, 1);
+  user-select: none;
+}
+
+.menubar-dropdown {
+  position: absolute;
+  top: 26px;
+  left: 0;
+}
+
+@keyframes macosMenuIn {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* ── Menu Items ── */
+.macos-menu-item,
+.map-context-menu .ctx-item,
+.layer-context-menu button,
+.artifact-context-menu .context-menu-item {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  width: 100% !important;
+  height: 28px !important;
+  padding: 0 10px !important;
+  font-size: 13px !important;
+  font-weight: 450 !important;
+  color: rgba(255, 255, 255, 0.94) !important;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 7px !important;
+  cursor: pointer !important;
+  transition: all 0.1s ease !important;
+  text-decoration: none !important;
+  text-align: left !important;
+  gap: 12px !important;
+}
+
+.macos-menu-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Active Highlight Pill (macOS System Blue) */
+.macos-menu-item:hover,
+.map-context-menu .ctx-item:hover,
+.layer-context-menu button:hover,
+.artifact-context-menu .context-menu-item:hover {
+  background: linear-gradient(90deg, #007aff 0%, #0a84ff 100%) !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 8px rgba(0, 122, 255, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.4) !important;
+}
+
+/* Disabled State */
+.macos-menu-item.is-disabled,
+.macos-menu-item:disabled {
+  opacity: 0.4 !important;
+  cursor: not-allowed !important;
+  pointer-events: none !important;
+}
+
+/* Danger Items */
+.macos-menu-item.danger,
+.artifact-context-menu .context-menu-item.danger,
+.layer-context-menu button.danger {
+  color: #ff8fab !important;
+}
+
+.macos-menu-item.danger:hover,
+.artifact-context-menu .context-menu-item.danger:hover,
+.layer-context-menu button.danger:hover {
+  background: linear-gradient(90deg, #ef4444 0%, #dc2626 100%) !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.35) !important;
+}
+
+/* Keyboard Shortcut Pills */
+.macos-menu-shortcut,
+.artifact-context-menu .context-menu-shortcut {
+  font-size: 11.5px !important;
+  color: rgba(255, 255, 255, 0.48) !important;
+  font-family: 'Canva Sans', -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif !important;
+  letter-spacing: 0.02em !important;
+  margin-left: auto !important;
+  font-weight: 400 !important;
+}
+
+.macos-menu-item:hover .macos-menu-shortcut,
+.artifact-context-menu .context-menu-item:hover .context-menu-shortcut {
+  color: rgba(255, 255, 255, 0.95) !important;
+}
+
+/* Dividers */
+.macos-menu-divider,
+.layer-context-divider,
+.artifact-context-menu .context-menu-divider {
+  height: 1px !important;
+  background: rgba(255, 255, 255, 0.12) !important;
+  margin: 5px 6px !important;
+  border: none !important;
+}
+
+/* Layer Group Title in Context Menu */
+.layer-context-title {
+  padding: 5px 10px 3px !important;
+  color: rgba(255, 255, 255, 0.5) !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+}
+
+/* ── Wi-Fi Status Tray Popover ── */
+.menubar-tray-popover {
+  top: 28px;
+  right: 0;
+  min-width: 250px;
+}
+
+.popover-status-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  margin-bottom: 6px;
+}
+
+.popover-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #34d399;
+  box-shadow: 0 0 8px #34d399;
+}
+
+.popover-status-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.popover-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.badge-online {
+  font-size: 11px;
+  font-weight: 500;
+  color: #bee3db;
+  background: rgba(190, 227, 219, 0.15);
+  border: 1px solid rgba(190, 227, 219, 0.3);
+  padding: 1px 7px;
+  border-radius: 9999px;
+}
+
+.popover-ws-label {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── About Modal Card (macOS Style) ── */
+.macos-about-card {
+  width: 380px;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.22) 0%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0.04) 100%
+  ), rgba(24, 28, 38, 0.88);
+  backdrop-filter: blur(40px) saturate(200%);
+  -webkit-backdrop-filter: blur(40px) saturate(200%);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 18px;
+  padding: 24px;
+  box-shadow: 
+    0 28px 72px -8px rgba(0, 0, 0, 0.65),
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.65);
+  color: #ffffff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  animation: macosMenuIn 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.about-logo-wrapper {
+  margin-bottom: 12px;
+}
+
+.about-app-title {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 4px;
+  letter-spacing: -0.01em;
+}
+
+.about-app-version {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+  margin-bottom: 12px;
+}
+
+.about-app-desc {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.82);
+  margin-bottom: 18px;
+}
+
+.about-info-grid {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  padding: 8px 12px;
+  margin-bottom: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.about-info-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.about-info-row strong {
+  color: #ffffff;
+  font-weight: 500;
+}
+
+.about-close-btn {
+  padding: 6px 24px;
+  border-radius: 9999px;
+  background: linear-gradient(135deg, #007aff 0%, #0a84ff 100%);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 122, 255, 0.4);
+  transition: all 0.15s ease;
+}
+
+.about-close-btn:hover {
+  background: linear-gradient(135deg, #0a84ff 0%, #007aff 100%);
+  transform: scale(1.04);
+}

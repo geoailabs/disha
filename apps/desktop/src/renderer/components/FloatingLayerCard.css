@@ -1,0 +1,737 @@
+/* ── Ultra-Modern Floating Left Category Pane — Liquid Frosted Glassmorphism ── */
+.floating-layer-card {
+  position: absolute;
+  top: 14px;
+  bottom: 14px;
+  left: calc(var(--sidebar-width, 58px) + 26px);
+  width: 370px;
+  height: calc(100vh - 28px);
+  max-width: calc(100vw - var(--sidebar-width, 58px) - 36px);
+  background: rgba(14, 20, 32, 0.62);
+  backdrop-filter: blur(36px) saturate(200%) contrast(105%);
+  -webkit-backdrop-filter: blur(36px) saturate(200%) contrast(105%);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 20px;
+  box-shadow: 
+    inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.35),
+    inset 0 -1px 1px 0 rgba(255, 255, 255, 0.08),
+    0 24px 50px -12px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  z-index: 49;
+  color: #faf9f9;
+  font-family: 'Canva Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  overflow: hidden;
+  transition: left 0.22s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease, transform 0.2s ease;
+  animation: flcSlideIn 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes flcSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.floating-layer-card.is-minimized {
+  width: 290px;
+  max-height: 52px;
+}
+
+/* Header */
+.flc-header {
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(16px);
+  flex-shrink: 0;
+}
+
+.flc-category-title-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.flc-category-icon {
+  width: 20px;
+  height: 20px;
+  display: block;
+  background-color: #ffffff;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  flex-shrink: 0;
+}
+
+.flc-category-heading {
+  font-size: 15px;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 0;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.flc-header-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  padding: 1px 7px;
+  border-radius: 9999px;
+  line-height: 1.2;
+}
+
+.flc-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.flc-header-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 4px 9px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+
+.flc-header-action-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.35);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.flc-close-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.75);
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.16s ease;
+  padding: 0;
+}
+
+.flc-close-btn:hover {
+  background: rgba(255, 255, 255, 0.18) !important;
+  border-color: rgba(255, 255, 255, 0.3) !important;
+  color: #ffffff !important;
+}
+
+.flc-tabs {
+  display: none !important;
+}
+
+.flc-title-area {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Ultra-Glassmorphic Workspace Capsule Pill ── */
+.flc-workspace-pill {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  max-width: 260px;
+  padding: 0 12px;
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  box-shadow:
+    0 8px 15px rgba(0, 0, 0, 0.12),
+    0 0 0.5px rgba(166, 166, 166, 0.6),
+    inset 0 1px 1px rgba(255, 255, 255, 0.45),
+    inset 0 -1px 2px rgba(0, 0, 0, 0.35);
+  color: #f5f5f5;
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+  transition: all 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+}
+
+.flc-workspace-pill:hover {
+  background: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.42);
+  box-shadow:
+    0 10px 18px rgba(0, 0, 0, 0.2),
+    0 0 0.5px rgba(200, 200, 200, 0.8),
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.6),
+    inset 0 -1px 2px rgba(0, 0, 0, 0.35);
+  transform: translateY(-0.5px);
+}
+
+.flc-workspace-pill:active {
+  transform: scale(0.98) translateY(0);
+}
+
+.flc-workspace-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #f5f5f5;
+  line-height: 1;
+}
+
+/* ── Apple Frosted Glass Dropdown Menu ── */
+.flc-workspace-dropdown {
+  position: absolute;
+  top: calc(100% + 7px);
+  left: 0;
+  min-width: 220px;
+  max-width: 340px;
+  background: rgba(30, 32, 38, 0.92);
+  backdrop-filter: blur(28px) saturate(210%);
+  -webkit-backdrop-filter: blur(28px) saturate(210%);
+  border: 0.5px solid rgba(255, 255, 255, 0.18);
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow:
+    0 14px 34px rgba(0, 0, 0, 0.65),
+    0 4px 12px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: macosMenuIn 0.14s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.flc-workspace-dropdown-header {
+  padding: 6px 10px 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted-teal, #89b0ae);
+  word-break: break-all;
+  white-space: normal;
+  line-height: 1.35;
+}
+
+.flc-workspace-dropdown-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: #f5f5f5;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.12s ease;
+  width: 100%;
+}
+
+.flc-workspace-dropdown-item:hover {
+  background: #007aff;
+  color: #ffffff;
+}
+
+.flc-workspace-dropdown-item.danger {
+  color: #ff6b6b;
+}
+
+.flc-workspace-dropdown-item.danger:hover {
+  background: #ff453a;
+  color: #ffffff;
+}
+
+.flc-dropdown-shortcut {
+  font-size: 10.5px;
+  opacity: 0.55;
+  font-weight: 500;
+}
+
+.flc-workspace-dropdown-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 4px 2px;
+}
+
+.flc-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.flc-icon-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted-teal, #89b0ae);
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.flc-icon-btn:hover:not(:disabled) {
+  color: var(--bright-snow, #faf9f9);
+  background: rgba(190, 227, 219, 0.15);
+  border-color: rgba(190, 227, 219, 0.35);
+}
+
+.flc-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.flc-close-btn:hover {
+  background: rgba(239, 68, 68, 0.25) !important;
+  border-color: rgba(239, 68, 68, 0.45) !important;
+  color: #ff8fab !important;
+}
+
+/* Tabs */
+.flc-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(0, 0, 0, 0.14);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.flc-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.flc-tab-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 9px;
+  border-radius: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s ease;
+  letter-spacing: 0.01em;
+}
+
+.flc-tab-btn:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.flc-tab-btn.active {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.28);
+  box-shadow: 
+    inset 0 1px 1px rgba(255, 255, 255, 0.35),
+    0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.flc-tab-badge {
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--bright-snow, #faf9f9);
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 9999px;
+  line-height: 12px;
+}
+
+.flc-tab-btn.active .flc-tab-badge {
+  background: var(--frozen-water, #bee3db);
+  color: #0b0d11;
+}
+
+/* Content Area */
+.flc-content {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 6px 0 16px 0;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+}
+
+.flc-content::-webkit-scrollbar {
+  width: 5px;
+}
+
+.flc-content::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+/* Layer Items List */
+.flc-layers-list {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.flc-layer-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  font-size: 12.5px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  transition: background 0.15s ease;
+  position: relative;
+}
+
+.flc-layer-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.flc-layer-item.is-selected {
+  background: rgba(255, 255, 255, 0.14);
+  border-left: 3px solid rgba(255, 255, 255, 0.85);
+}
+
+.flc-drag-handle {
+  color: rgba(255, 255, 255, 0.35);
+  cursor: grab;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s ease;
+}
+
+.flc-layer-item:hover .flc-drag-handle {
+  color: var(--frozen-water, #bee3db);
+}
+
+/* Eye visibility toggle button */
+.flc-eye-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: var(--frozen-water, #bee3db);
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.flc-eye-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.35);
+  color: #ffffff;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.2);
+}
+
+.flc-eye-btn.is-off {
+  color: rgba(255, 255, 255, 0.3);
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.1);
+  opacity: 0.65;
+}
+
+.flc-layer-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid rgba(250, 249, 249, 0.4);
+  display: block;
+  flex-shrink: 0;
+}
+
+.flc-layer-name-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.flc-layer-name {
+  font-weight: 500;
+  color: var(--bright-snow, #faf9f9);
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flc-layer-name.is-hidden {
+  text-decoration: line-through;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.flc-layer-badge {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--frozen-water, #bee3db);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  padding: 1px 6px;
+  border-radius: 5px;
+  flex-shrink: 0;
+}
+
+.flc-layer-menu-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* Three dots button */
+.flc-dots-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: var(--bright-snow, #faf9f9);
+  cursor: pointer;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.flc-dots-btn:hover {
+  color: #0b0d11;
+  background: var(--frozen-water, #bee3db);
+  border-color: var(--frozen-water, #bee3db);
+  box-shadow: 0 0 10px rgba(190, 227, 219, 0.5);
+}
+
+/* Layer Item Dropdown Menu */
+.flc-dropdown-menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  margin-top: 4px;
+  background: rgba(25, 30, 40, 0.92);
+  backdrop-filter: blur(28px) saturate(190%);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 10px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  padding: 4px;
+  min-width: 175px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: macosMenuIn 0.14s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.flc-dropdown-item {
+  background: transparent;
+  border: none;
+  color: var(--bright-snow, #faf9f9);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 7px 10px;
+  border-radius: 6px;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.12s ease;
+}
+
+.flc-dropdown-item:hover {
+  background: #007aff;
+  color: #ffffff;
+}
+
+.flc-dropdown-item.item-danger {
+  color: #ff6b6b;
+}
+
+.flc-dropdown-item.item-danger:hover {
+  background: #ff453a;
+  color: #ffffff;
+}
+
+.flc-dropdown-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: 3px 0;
+}
+
+/* Empty State */
+.flc-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 36px 20px;
+  gap: 10px;
+  text-align: center;
+  background: transparent;
+}
+
+.flc-empty-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.flc-empty-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--bright-snow, #faf9f9);
+}
+
+.flc-empty-hint {
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.6);
+  max-width: 240px;
+  line-height: 1.4;
+}
+
+/* Tab Views Container */
+.flc-tab-view {
+  padding: 10px;
+  background: transparent;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.flc-scenarios-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  flex: 1;
+  padding: 10px;
+}
+
+.flc-scenario-section {
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(14, 20, 32, 0.4);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.flc-scenario-builder-section {
+  flex-shrink: 0;
+}
+
+.flc-scenario-list-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 240px;
+}
+
+.flc-tab-view .export-panel,
+.flc-tab-view .file-tree-wrap,
+.flc-tab-view .bookmark-panel,
+.flc-tab-view .zoning-panel,
+.flc-tab-view .scenario-panel,
+.flc-tab-view .scenario-builder-panel {
+  background: transparent !important;
+}
+
+/* ── Compact Floating Cursor Tooltip on Layer Hover ── */
+.flc-cursor-tooltip {
+  position: fixed;
+  z-index: 99999;
+  pointer-events: none;
+  background: rgba(14, 20, 32, 0.88);
+  backdrop-filter: blur(20px) saturate(190%);
+  -webkit-backdrop-filter: blur(20px) saturate(190%);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 8px;
+  padding: 4px 9px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.65), inset 0 1px 1px rgba(255, 255, 255, 0.35);
+  white-space: nowrap;
+  font-family: 'Canva Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  animation: flcTooltipFadeIn 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes flcTooltipFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.flc-tooltip-name {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #ffffff;
+  letter-spacing: -0.01em;
+}
+
+.flc-tooltip-area {
+  font-size: 10px;
+  font-weight: 600;
+  color: #00b4d8;
+  background: rgba(0, 180, 216, 0.14);
+  border: 1px solid rgba(0, 180, 216, 0.3);
+  padding: 1px 5px;
+  border-radius: 4px;
+  letter-spacing: 0.02em;
+}

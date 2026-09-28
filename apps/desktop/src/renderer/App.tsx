@@ -22,6 +22,9 @@ import ScenarioBuilderPanel from './components/ScenarioBuilderPanel'
 import DocumentView, { type DocumentImage, type OpenDocument } from './components/DocumentView'
 import ErrorBoundary from './components/ErrorBoundary'
 import DiagnosticsPanel from './components/DiagnosticsPanel'
+import AppSidebar, { type WorkspaceCategory } from './components/AppSidebar'
+import { FloatingLayerCard, type FloatingTab } from './components/FloatingLayerCard'
+import { FloatingPromptBar } from './components/FloatingPromptBar'
 import appIcon from './assets/icon.png'
 import {
   GeoJSONLayer,
@@ -202,13 +205,36 @@ function App() {
   const [fileTreeRevision, setFileTreeRevision] = useState(0)
   const [selectedLayerIds, setSelectedLayerIds] = useState<Set<string>>(new Set())
   const [selectedFeatures, setSelectedFeatures] = useState<SelectedFeatureEntry[]>([])
+  const [hoveredFeatureEntry, setHoveredFeatureEntry] = useState<SelectedFeatureEntry | null>(null)
+
+  const handleHoverFeature = useCallback((entry: SelectedFeatureEntry | null) => {
+    setHoveredFeatureEntry(entry)
+  }, [])
+
   const [showDiagnostics, setShowDiagnostics] = useState(false)
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true)
+  const [activeWorkspaceCategory, setActiveWorkspaceCategory] = useState<WorkspaceCategory>('layers')
+  const [isLayerCardOpen, setIsLayerCardOpen] = useState(true)
+
+  const handleCategoryClick = useCallback((cat: WorkspaceCategory) => {
+    setActiveWorkspaceCategory((prev) => {
+      if (prev === cat && isLayerCardOpen) {
+        setIsLayerCardOpen(false)
+        return prev
+      }
+      setIsLayerCardOpen(true)
+      return cat
+    })
+  }, [isLayerCardOpen])
+  const [chatStreaming, setChatStreaming] = useState(false)
+  const [chatStatus, setChatStatus] = useState<string | null>(null)
+  const [chatErrorMessage, setChatErrorMessage] = useState<string | null>(null)
 
   useEffect(() => {
     if (window.electronAPI && typeof window.electronAPI.getKeyStatus === 'function') {
       window.electronAPI.getKeyStatus()
         .then((status) => {
-          if (!status || !status.openai || !status.google_maps) {
+          if (!status || !status.openai) {
             setShowDiagnostics(true)
           }
         })
@@ -223,33 +249,50 @@ function App() {
         // null = clear all (plain click on empty map without shift or Escape)
         if (!shiftKey) {
           setSelectedFeatures([])
+          setSelectedLayerIds(new Set())
         }
         return
       }
       if (!shiftKey) {
         setSelectedFeatures([entry])
+        setSelectedLayerIds(new Set([entry.layerId]))
         return
       }
-      // Shift+click: toggle by layerId or feature geometry identity
+      // Shift+click: toggle by layerId
       setSelectedFeatures((prev) => {
-        const idx = prev.findIndex(
-          (e) =>
-            e.layerId === entry.layerId &&
-            (e.layerId === entry.layerId ||
-             JSON.stringify(e.feature.geometry) === JSON.stringify(entry.feature.geometry)),
-        )
+        const idx = prev.findIndex((e) => e.layerId === entry.layerId)
         return idx === -1 ? [...prev, entry] : prev.filter((_, i) => i !== idx)
+      })
+      setSelectedLayerIds((prev) => {
+        const next = new Set(prev)
+        if (next.has(entry.layerId)) {
+          next.delete(entry.layerId)
+        } else {
+          next.add(entry.layerId)
+        }
+        return next
       })
     },
     [],
   )
 
   const handleRemoveSelectedFeature = useCallback((index: number) => {
-    setSelectedFeatures((prev) => prev.filter((_, i) => i !== index))
+    setSelectedFeatures((prev) => {
+      const removed = prev[index]
+      if (removed) {
+        setSelectedLayerIds((layerIds) => {
+          const next = new Set(layerIds)
+          next.delete(removed.layerId)
+          return next
+        })
+      }
+      return prev.filter((_, i) => i !== index)
+    })
   }, [])
 
   const handleClearSelectedFeatures = useCallback(() => {
     setSelectedFeatures([])
+    setSelectedLayerIds(new Set())
   }, [])
 
 
@@ -3211,441 +3254,344 @@ function App() {
 
   return (
     <div className="app">
-      <header className="titlebar">
-        <div className="titlebar-left">
-          {/* Traffic-light drag spacer: collapses in fullscreen where buttons are hidden */}
-          <div className="titlebar-drag" style={{ width: isFullscreen ? 0 : undefined }} />
-          <div className="titlebar-brand">
-            <img src={appIcon} className="titlebar-logo" alt="Disha Logo" />
-            <span className="titlebar-text">Disha</span>
-          </div>
-          <div className="workspace-container">
-            <button
-              className="workspace-btn"
-              onClick={handleSelectWorkspace}
-              disabled={isTransitioning}
-            >
-              {isTransitioning ? (
-                <>
-                  <span className="titlebar-spinner" /> Saving...
-                </>
-              ) : (
-                workspaceLabel
-              )}
-            </button>
-            {workspacePath && !isTransitioning && (
-              <button
-                className="workspace-close-mini-btn"
-                onClick={handleCloseWorkspace}
-                title="Close workspace"
-              >
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <line x1="18" y1="6" x2="6" y2="18"></line>
-                  <line x1="6" y1="6" x2="18" y2="18"></line>
-                </svg>
-              </button>
-            )}
-          </div>
-        </div>
+      <div
+        className="mundi-app-body"
+        style={{
+          ['--sidebar-width' as any]: isSidebarCollapsed ? '58px' : '210px',
+          ['--category-pane-width' as any]: isLayerCardOpen ? '396px' : '0px',
+        }}
+      >
+        {/* Left Icon Rail / Sidebar (Mundi AppSidebar) */}
+        <AppSidebar
+          currentMode={
+            streetViewActive
+              ? 'streetview'
+              : appMode === 'document'
+                ? 'document'
+                : appMode === 'artifacts'
+                  ? 'artifacts'
+                  : 'map'
+          }
+          onModeChange={(mode) => {
+            if (mode === 'streetview') {
+              setAppMode('map')
+              setStreetViewActive(true)
+            } else if (mode === 'map') {
+              setAppMode('map')
+              setStreetViewActive(false)
+            } else if (mode === 'document') {
+              setStreetViewActive(false)
+              setAppMode('document')
+            } else if (mode === 'artifacts') {
+              setStreetViewActive(false)
+              setAppMode('artifacts')
+            }
+          }}
+          isCollapsed={isSidebarCollapsed}
+          onToggleCollapse={() => setIsSidebarCollapsed((v) => !v)}
+          workspacePath={workspacePath}
+          onOpenWorkspace={handleSelectWorkspace}
+          onCloseWorkspace={handleCloseWorkspace}
+          onOpenDiagnostics={() => setShowDiagnostics(true)}
+          isChatOpen={rightWidth > 0}
+          onToggleChat={toggleRight}
+          activeCategory={isLayerCardOpen ? activeWorkspaceCategory : null}
+          onCategoryClick={handleCategoryClick}
+          isCategoryPanelOpen={isLayerCardOpen}
+          layerCount={layers.length}
+          scenarioCount={scenarios.length}
+        />
 
-        <div className="titlebar-center">
-          <div className="mode-switcher">
-            <button
-              className={`mode-btn ${appMode === 'map' ? 'active' : ''}`}
-              onClick={() => setAppMode('map')}
-            >
-              Map
-            </button>
-            <button
-              className={`mode-btn ${appMode === 'document' ? 'active' : ''}`}
-              onClick={() => setAppMode('document')}
-            >
-              Document
-            </button>
-            <button
-              className={`mode-btn ${appMode === 'artifacts' ? 'active' : ''}`}
-              onClick={() => setAppMode('artifacts')}
-            >
-              Artifacts
-            </button>
-          </div>
-        </div>
-
-        <div className="titlebar-right">
-          <div className="sidebar-toggles">
-            {(appMode === 'map' || appMode === 'artifacts' || appMode === 'document') && (
-              <button
-                className={`sidebar-toggle-btn ${(appMode === 'map'
-                    ? leftWidth > 0
-                    : appMode === 'document'
-                      ? showDocumentSidebar
-                      : showArtifactsSidebar)
-                    ? 'active'
-                    : ''
-                  }`}
-                title={
-                  (appMode === 'map'
-                    ? leftWidth > 0
-                    : appMode === 'document'
-                      ? showDocumentSidebar
-                      : showArtifactsSidebar)
-                    ? "Hide Left Sidebar"
-                    : "Show Left Sidebar"
-                }
-                onClick={
-                  appMode === 'map'
-                    ? toggleLeft
-                    : appMode === 'document'
-                      ? () => setShowDocumentSidebar(!showDocumentSidebar)
-                      : () => setShowArtifactsSidebar(!showArtifactsSidebar)
-                }
-              >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <rect x="2" y="2" width="12" height="12" rx="1.5" />
-                  <line x1="6" y1="2" x2="6" y2="14" />
-                  <path
-                    d="M2 2h4v12H2z"
-                    fill="currentColor"
-                    fillOpacity={
-                      (appMode === 'map'
-                        ? leftWidth > 0
-                        : appMode === 'document'
-                          ? showDocumentSidebar
-                          : showArtifactsSidebar)
-                        ? 0.3
-                        : 0
-                    }
-                  />
-                </svg>
-              </button>
-            )}
-            <button
-              className={`sidebar-toggle-btn ${rightWidth > 0 ? 'active' : ''}`}
-              title={rightWidth > 0 ? "Hide Right Sidebar" : "Show Right Sidebar"}
-              onClick={toggleRight}
-            >
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <rect x="2" y="2" width="12" height="12" rx="1.5" />
-                <line x1="10" y1="2" x2="10" y2="14" />
-                <path d="M10 2h4v12h-4z" fill="currentColor" fillOpacity={rightWidth > 0 ? 0.3 : 0} />
-              </svg>
-            </button>
-            <button
-              className="sidebar-toggle-btn"
-              title="System Diagnostics & API Keys"
-              onClick={() => setShowDiagnostics(true)}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M12 16v-4" />
-                <path d="M12 8h.01" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <div className="layout">
-        {/* Left panel — map mode only */}
-        {appMode !== 'map' || leftWidth === 0 ? null : (
-          <aside ref={leftPanelRef} className="panel left-panel" style={{ width: leftWidth }}>
-            <div className="tab-bar tab-bar-scroll">
-              <button
-                className={`tab ${activeLeftTab === 'files' ? 'active' : ''}`}
-                onClick={() => setActiveLeftTab('files')}
-              >
-                Files
-              </button>
-              <button
-                className={`tab ${activeLeftTab === 'layers' ? 'active' : ''}`}
-                onClick={() => setActiveLeftTab('layers')}
-              >
-                Layers
-                {displayLayersCount > 0 && <span className="tab-badge">{displayLayersCount}</span>}
-              </button>
-
-              <button
-                className={`tab ${activeLeftTab === 'bookmarks' ? 'active' : ''}`}
-                onClick={() => setActiveLeftTab('bookmarks')}
-              >
-                Marks
-                {bookmarks.length > 0 && <span className="tab-badge">{bookmarks.length}</span>}
-              </button>
-              <button
-                className={`tab ${activeLeftTab === 'export' ? 'active' : ''}`}
-                onClick={() => setActiveLeftTab('export')}
-              >
-                Export
-              </button>
-              <button
-                className={`tab ${activeLeftTab === 'zoning' ? 'active' : ''}`}
-                onClick={() => setActiveLeftTab('zoning')}
-              >
-                Zones
-              </button>
-              <button
-                className={`tab ${activeLeftTab === 'scenarios' ? 'active' : ''}`}
-                onClick={() => setActiveLeftTab('scenarios')}
-              >
-                Scenarios
-                {scenarios.length > 0 && <span className="tab-badge">{scenarios.length}</span>}
-              </button>
-            </div>
-            {activeLeftTab === 'files' && (
-              <>
-                {convertingFile && (
-                  <div className="import-status">Importing {convertingFile}…</div>
-                )}
-                {convertError && (
-                  <div className="import-status import-error" onClick={() => setConvertError(null)}>
-                    {convertError}
-                  </div>
-                )}
-                <FileTree
-                  workspacePath={workspacePath}
-                  onFileClick={handleFileClick}
-                  onImportClick={handleImportSpatialFiles}
-                  revision={fileTreeRevision}
-                />
-              </>
-            )}
-            {activeLeftTab === 'layers' && (
-              <>
-                <LayerPanel
-                  layers={layers}
-                  selectedLayerIds={selectedLayerIds}
-                  onSelectedLayerIdsChange={setSelectedLayerIds}
-                  selectedFeatures={selectedFeatures}
-                  onSelectFeature={handleSelectFeature}
-                  onToggle={toggleLayer}
-                  onRemove={removeLayer}
-                  onZoomTo={zoomToLayer}
-                  onStyle={(id) => {
-                    // Raster layers (WMS/GEE) have no vector symbology — block the panel unless it's a raster overlay.
-                    const layer = layers.find((l) => l.id === id)
-                    if ((layer?.wmsSpec || layer?.geeSpec) && !layer?.rasterOverlaySpec) return
-                    setStylingLayerId((cur) => (cur === id ? null : id))
-                    setAttrLayerId(null)
-                  }}
-                  activeStyleId={stylingLayerId}
-                  onAttributes={(id) => { setAttrLayerId((cur) => (cur === id ? null : id)); setStylingLayerId(null) }}
-                  activeAttrId={attrLayerId}
-                  onRename={renameLayer}
-                  onGroupWith={groupLayers}
-                  onGroupMulti={groupLayersMulti}
-                  onUngroup={ungroupLayer}
-                  onUngroupGroup={ungroupGroup}
-                  onToggleGroup={toggleLayerGroup}
-                  onRenameGroup={renameGroup}
-                  onStyleChange={handleSymbologyChange}
-                  onUpdateLayer={(layerId, updates) => {
-                    setLayers((prev) => prev.map((l) => (l.id === layerId ? { ...l, ...updates } : l)))
-                  }}
-                  onAttributesChange={handleAttributesChange}
-                  onReorderLayers={setLayers}
-                  onMoveLayerOrGroup={moveLayerOrGroup}
-                />
-              </>
-            )}
-
-            {activeLeftTab === 'bookmarks' && (
-              <BookmarkPanel
-                bookmarks={bookmarks}
-                onGoTo={handleBookmarkGoTo}
-                onRemove={(id) => setBookmarks((prev) => prev.filter((b) => b.id !== id))}
-                onSaveCurrent={handleBookmarkSaveCurrent}
-              />
-            )}
-            {activeLeftTab === 'export' && (
-              <ExportPanel
-                layers={layers}
-                workspacePath={workspacePath}
-                onExportMapPng={handleExportMapPng}
-                onExportMapJpeg={handleExportMapJpeg}
-                onExportLayer={handleExportLayerFile}
-                onExportPdf={handleExportPdf}
-                onExportClippedRegion={(name) => void clipLayersToBboxAndSave(name)}
-                onPreviewBoundary={handlePreviewBoundary}
-                onSaveByRegion={handleSaveByRegion}
-                onSavePngToArtifact={handleSavePngToArtifact}
-                onSaveJpgToArtifact={handleSaveJpgToArtifact}
-                onSavePdfToArtifact={handleSavePdfToArtifact}
-                onSuggestExportTitle={suggestExportTitle}
-              />
-            )}
-            {activeLeftTab === 'zoning' && <ZoningPanel />}
-            {activeLeftTab === 'scenarios' && (
-              <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-                {/* AI Scenario Builder — top section */}
-                <div style={{ flex: '0 0 auto', maxHeight: '55%', overflowY: 'auto', borderBottom: '2px solid var(--border)' }}>
-                  <ScenarioBuilderPanel
-                    mapBounds={mapBounds}
-                    onOpenArtifacts={() => setAppMode('artifacts')}
-                    workspacePath={workspacePath}
-                  />
-                </div>
-                {/* Manual scenario manager — bottom section */}
-                <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
-                  <ScenarioPanel
-                    scenarios={scenarios}
-                    activeScenarioId={activeScenarioId}
-                    layers={layers}
-                    onCreateScenario={(name, description) => {
-                      const id = `scenario-${genId()}`
-                      setScenarios(prev => [...prev, {
-                        id, name, description,
-                        createdAt: Date.now(),
-                        layerIds: layers.map(l => l.id),
-                        layerVisibility: Object.fromEntries(layers.map(l => [l.id, l.visible]))
-                      }])
-                    }}
-                    onActivate={(id) => {
-                      setActiveScenarioId(id)
-                      if (!id) {
-                        setLayers(prev => prev.map(l => ({ ...l, visible: true })))
-                      } else {
-                        const scenario = scenarios.find(s => s.id === id)
-                        if (scenario) {
-                          setLayers(prev => prev.map(l => ({
-                            ...l,
-                            visible: scenario.layerIds.includes(l.id)
-                              ? (scenario.layerVisibility[l.id] ?? true)
-                              : false
-                          })))
-                        }
-                      }
-                    }}
-                    onDelete={(id) => {
-                      setScenarios(prev => prev.filter(s => s.id !== id))
-                      if (activeScenarioId === id) setActiveScenarioId(null)
-                    }}
-                    onRename={(id, name) => setScenarios(prev =>
-                      prev.map(s => s.id === id ? { ...s, name } : s)
-                    )}
-                    onAddLayer={(scenarioId, layerId) => setScenarios(prev =>
-                      prev.map(s => s.id === scenarioId
-                        ? { ...s, layerIds: s.layerIds.includes(layerId) ? s.layerIds : [...s.layerIds, layerId] }
-                        : s
-                      )
-                    )}
-                    onRemoveLayer={(scenarioId, layerId) => setScenarios(prev =>
-                      prev.map(s => s.id === scenarioId
-                        ? { ...s, layerIds: s.layerIds.filter(id => id !== layerId) }
-                        : s
-                      )
-                    )}
-                  />
-                </div>
-              </div>
-            )}
-          </aside>
-        )}
-
-        {/* Left resize handle — map mode only */}
-        {appMode === 'map' && leftWidth > 0 && <div className="resize-handle" onMouseDown={onResizeStart('left')} />}
-
-        {/* Center */}
-        <main className="center-panel">
+        {/* Main View Area */}
+        <main className="mundi-main-canvas">
+          {/* MAP MODE (Full-bleed edge-to-edge canvas) */}
           <div
-            className={`map-stack ${streetViewActive && streetViewLayout === 'full' ? 'is-full-sv' : ''}`}
-            style={{
-              display: appMode === 'map' ? 'flex' : 'none',
-              flexDirection: 'column',
-            }}
+            className="mundi-map-viewport"
+            style={{ display: appMode === 'map' ? 'flex' : 'none' }}
           >
-            {!workspacePath && (
-              <div className="workspace-hint-banner">
-                Open a workspace folder (title bar) to save the map and export. Layers from chat still
-                appear, but they will not persist until a folder is open.
-              </div>
-            )}
+            {/* Full-bleed Map View */}
+            <div className="mundi-full-map-container">
+              <MapView
+                ref={mapViewRef}
+                layers={layers}
+                selectedLayerIds={selectedLayerIds}
+                selectedFeatures={selectedFeatures}
+                onSelectFeature={handleSelectFeature}
+                onHoverFeature={handleHoverFeature}
+                basemap={basemap}
+                initialState={mapViewState}
+                mapActions={mapActions}
+                onMapMove={setMapViewState}
+                onBoundsChange={setMapBounds}
+                onBasemapChange={setBasemap}
+                onActionsProcessed={() => setMapActions([])}
+                onLayerStyleChange={handleLayerStyleChange}
+                onAddMarker={handleRightClickAddMarker}
+                onOpenStreetView={handleRightClickStreetView}
+                onInspectRoad={handleInspectRoad}
+                onAskChat={handleRightClickAskChat}
+                onContextualQuery={handleContextualQuery}
+                onDrawComplete={handleDrawComplete}
+                streetViewDetail={streetViewDetail}
+                onStreetViewDetailChange={handleStreetViewDetailChange}
+                streetViewActive={streetViewActive}
+                streetViewLocation={streetViewLocation}
+                streetViewBearing={streetViewBearing}
+                isMiniMap={streetViewActive && streetViewLayout === 'full'}
+                onStreetViewLayoutChange={setStreetViewLayout}
+                onUndo={handleGlobalUndo}
+                onRedo={handleGlobalRedo}
+                canUndo={pastHistory.length > 0}
+                canRedo={futureHistory.length > 0}
+              />
+            </div>
 
-            {streetViewActive && (
+            {/* Floating Top-Left Layer Card (Mundi LayerList style) */}
+            <FloatingLayerCard
+              isOpen={isLayerCardOpen}
+              activeTab={activeWorkspaceCategory as FloatingTab}
+              onTabChange={(tab) => {
+                if (tab === 'layers' || tab === 'files' || tab === 'zones' || tab === 'scenarios' || tab === 'export') {
+                  setActiveWorkspaceCategory(tab)
+                }
+              }}
+              onClose={() => setIsLayerCardOpen(false)}
+              layers={layers}
+              selectedLayerIds={Array.from(selectedLayerIds)}
+              onToggleLayer={toggleLayer}
+              onRemoveLayer={removeLayer}
+              onZoomToLayer={zoomToLayer}
+              onStyleLayer={(id) => {
+                const layer = layers.find((l) => l.id === id)
+                if ((layer?.wmsSpec || layer?.geeSpec) && !layer?.rasterOverlaySpec) return
+                setStylingLayerId((cur) => (cur === id ? null : id))
+                setAttrLayerId(null)
+              }}
+              onAttributesLayer={(id) => {
+                setAttrLayerId((cur) => (cur === id ? null : id))
+                setStylingLayerId(null)
+              }}
+              onRenameLayer={renameLayer}
+              onExportLayerFile={handleExportLayerFile}
+              bookmarks={bookmarks}
+              onGoToBookmark={handleBookmarkGoTo}
+              onRemoveBookmark={(id) => setBookmarks((prev) => prev.filter((b) => b.id !== id))}
+              onSaveCurrentBookmark={handleBookmarkSaveCurrent}
+              scenarios={scenarios}
+              activeScenarioId={activeScenarioId}
+              onActivateScenario={(id) => {
+                setActiveScenarioId(id)
+                if (!id) {
+                  setLayers((prev) => prev.map((l) => ({ ...l, visible: true })))
+                } else {
+                  const scenario = scenarios.find((s) => s.id === id)
+                  if (scenario) {
+                    setLayers((prev) =>
+                      prev.map((l) => ({
+                        ...l,
+                        visible: scenario.layerIds.includes(l.id)
+                          ? (scenario.layerVisibility[l.id] ?? true)
+                          : false,
+                      })),
+                    )
+                  }
+                }
+              }}
+              onCreateScenario={(name, description) => {
+                const id = `scenario-${genId()}`
+                setScenarios((prev) => [
+                  ...prev,
+                  {
+                    id,
+                    name,
+                    description,
+                    createdAt: Date.now(),
+                    layerIds: layers.map((l) => l.id),
+                    layerVisibility: Object.fromEntries(layers.map((l) => [l.id, l.visible])),
+                  },
+                ])
+              }}
+              onDeleteScenario={(id) => {
+                setScenarios((prev) => prev.filter((s) => s.id !== id))
+                if (activeScenarioId === id) setActiveScenarioId(null)
+              }}
+              onRenameScenario={(id, name) =>
+                setScenarios((prev) => prev.map((s) => (s.id === id ? { ...s, name } : s)))
+              }
+              onAddLayerToScenario={(scenarioId, layerId) =>
+                setScenarios((prev) =>
+                  prev.map((s) =>
+                    s.id === scenarioId
+                      ? { ...s, layerIds: s.layerIds.includes(layerId) ? s.layerIds : [...s.layerIds, layerId] }
+                      : s,
+                  ),
+                )
+              }
+              onRemoveLayerFromScenario={(scenarioId, layerId) =>
+                setScenarios((prev) =>
+                  prev.map((s) =>
+                    s.id === scenarioId
+                      ? { ...s, layerIds: s.layerIds.filter((id) => id !== layerId) }
+                      : s,
+                  ),
+                )
+              }
+              mapBounds={mapBounds}
+              onOpenArtifacts={() => setAppMode('artifacts')}
+              workspacePath={workspacePath}
+              onExportMapPng={handleExportMapPng}
+              onExportMapJpeg={handleExportMapJpeg}
+              onExportPdf={handleExportPdf}
+              onExportClippedRegion={(name) => void clipLayersToBboxAndSave(name)}
+              onPreviewBoundary={handlePreviewBoundary}
+              onSaveByRegion={handleSaveByRegion}
+              onSavePngToArtifact={handleSavePngToArtifact}
+              onSaveJpgToArtifact={handleSaveJpgToArtifact}
+              onSavePdfToArtifact={handleSavePdfToArtifact}
+              onSuggestExportTitle={suggestExportTitle}
+              onFileClick={handleFileClick}
+              onImportSpatialFiles={handleImportSpatialFiles}
+              fileTreeRevision={fileTreeRevision}
+              projectName={workspaceName || 'Disha Map'}
+              onRenameProject={() => {}}
+              isConnected={true}
+              canUndoZoom={pastHistory.length > 0}
+              canRedoZoom={futureHistory.length > 0}
+              onUndoZoom={handleGlobalUndo}
+              onRedoZoom={handleGlobalRedo}
+              onOpenWorkspace={handleSelectWorkspace}
+              onCloseWorkspace={handleCloseWorkspace}
+              onHoverFeature={handleHoverFeature}
+            />
+
+            {/* Floating Bottom-Center Prompt Bar */}
+            {(() => {
+              const lastAssistantMsg = [...(activeConversation?.messages || [])]
+                .reverse()
+                .find((m) => m.role === 'assistant')
+              return (
+                <FloatingPromptBar
+                  onSendMessage={(text) => setInjectedMessage({ text, nonce: Date.now() })}
+                  isStreaming={chatStreaming}
+                  streamingStatus={chatStatus || undefined}
+                  errorMessage={chatErrorMessage}
+                  onDismissError={() => setChatErrorMessage(null)}
+                  lastAssistantMessage={lastAssistantMsg?.content || null}
+                  lastAssistantTimestamp={lastAssistantMsg?.timestamp || null}
+                  lastUserMessage={
+                    [...(activeConversation?.messages || [])]
+                      .reverse()
+                      .find((m) => m.role === 'user')?.content || null
+                  }
+                  selectedFeatures={selectedFeatures}
+                  onClearSelectedFeatures={handleClearSelectedFeatures}
+                  isChatDrawerOpen={rightWidth > 0}
+                  onToggleChatDrawer={toggleRight}
+                />
+              )
+            })()}
+
+            {/* Compact Floating Cursor Tooltip on Map Feature Hover */}
+            {hoveredFeatureEntry && hoveredFeatureEntry.cursorPos && (
               <div
+                className="flc-cursor-tooltip"
                 style={{
-                  height: streetViewLayout === 'split' ? `${splitHeight}px` : '100%',
-                  width: '100%',
-                  display: 'flex',
-                  minHeight: 0,
+                  left: hoveredFeatureEntry.cursorPos.x,
+                  top: hoveredFeatureEntry.cursorPos.y,
                 }}
               >
-                <ErrorBoundary label="Street View Workspace">
-                  <StreetViewWorkspace
-                    target={streetViewTarget}
-                    roadTarget={roadInspectionTarget}
-                    onArtifactsChanged={() => setArtifactsRevision((n) => n + 1)}
-                    onClose={() => {
-                      setStreetViewTarget(null)
-                      setRoadInspectionTarget(null)
-                      setStreetViewActive(false)
-                      setStreetViewLocation(null)
-                    }}
-                    layout={streetViewLayout}
-                    onLayoutChange={setStreetViewLayout}
-                    onYawChange={setStreetViewBearing}
-                    onLocationChange={setStreetViewLocation}
-                    workspacePath={workspacePath}
-                  />
-                </ErrorBoundary>
+                <span className="flc-cursor-tooltip-name">
+                  {hoveredFeatureEntry.feature?.properties?.name ||
+                    hoveredFeatureEntry.feature?.properties?.title ||
+                    hoveredFeatureEntry.layerName ||
+                    'Feature'}
+                </span>
+                {hoveredFeatureEntry.calculatedArea && (
+                  <span className="flc-cursor-tooltip-area">
+                    {hoveredFeatureEntry.calculatedArea}
+                  </span>
+                )}
               </div>
             )}
 
-            {streetViewActive && streetViewLayout === 'split' && (
-              <div
-                className="split-resize-handle-horiz"
-                onMouseDown={handleSplitDragStart}
-              />
+            {/* Centered Modal Attribute Table */}
+            {attrLayerId && (
+              <div className="mundi-modal-backdrop" onClick={() => setAttrLayerId(null)}>
+                <div className="mundi-modal-container" onClick={(e) => e.stopPropagation()}>
+                  {(() => {
+                    const layer = layers.find((l) => l.id === attrLayerId)
+                    if (!layer) return null
+                    return (
+                      <AttributeTable
+                        layer={layer}
+                        onChange={handleAttributesChange}
+                        onClose={() => setAttrLayerId(null)}
+                        selectedFeatures={selectedFeatures}
+                        onSelectFeature={handleSelectFeature}
+                      />
+                    )
+                  })()}
+                </div>
+              </div>
             )}
 
-            <div
-              style={{
-                flex: 1,
-                display: 'flex',
-                flexDirection: 'column',
-                minHeight: 0,
-                position: streetViewActive && streetViewLayout === 'full' ? 'absolute' : 'relative',
-              }}
-              className={streetViewActive && streetViewLayout === 'full' ? 'mini-map-floating' : ''}
-            >
-              <ErrorBoundary label="Map">
-                <MapView
-                  ref={mapViewRef}
-                  layers={layers}
-                  selectedLayerIds={selectedLayerIds}
-                  selectedFeatures={selectedFeatures}
-                  onSelectFeature={handleSelectFeature}
-                  basemap={basemap}
-                  initialState={mapViewState}
-                  mapActions={mapActions}
-                  onMapMove={setMapViewState}
-                  onBoundsChange={setMapBounds}
-                  onBasemapChange={setBasemap}
-                  onActionsProcessed={() => setMapActions([])}
-                  onLayerStyleChange={handleLayerStyleChange}
-                  onAddMarker={handleRightClickAddMarker}
-                  onOpenStreetView={handleRightClickStreetView}
-                  onInspectRoad={handleInspectRoad}
-                  onAskChat={handleRightClickAskChat}
-                  onContextualQuery={handleContextualQuery}
-                  onDrawComplete={handleDrawComplete}
-                  streetViewDetail={streetViewDetail}
-                  onStreetViewDetailChange={handleStreetViewDetailChange}
-                  streetViewActive={streetViewActive}
-                  streetViewLocation={streetViewLocation}
-                  streetViewBearing={streetViewBearing}
-                  isMiniMap={streetViewActive && streetViewLayout === 'full'}
-                  onStreetViewLayoutChange={setStreetViewLayout}
-                  onUndo={handleGlobalUndo}
-                  onRedo={handleGlobalRedo}
-                  canUndo={pastHistory.length > 0}
-                  canRedo={futureHistory.length > 0}
-                />
-              </ErrorBoundary>
-            </div>
+            {/* Floating Symbology Modal */}
+            {stylingLayerId && (
+              <div className="mundi-modal-backdrop" onClick={() => setStylingLayerId(null)}>
+                <div className="mundi-symbology-container" onClick={(e) => e.stopPropagation()}>
+                  {(() => {
+                    const layer = layers.find((l) => l.id === stylingLayerId)
+                    if (!layer) return null
+                    return (
+                      <SymbologyPanel
+                        layer={layer}
+                        onChange={handleSymbologyChange}
+                        onClose={() => setStylingLayerId(null)}
+                        onUpdateLayer={(layerId, updates) => {
+                          setLayers((prev) =>
+                            prev.map((l) => (l.id === layerId ? { ...l, ...updates } : l)),
+                          )
+                        }}
+                      />
+                    )
+                  })()}
+                </div>
+              </div>
+            )}
+
+            {/* Legend */}
             <Legend layers={layers} />
           </div>
 
-          <div style={{ display: appMode === 'document' ? 'flex' : 'none', flex: 1, flexDirection: 'column', height: '100%', minHeight: 0 }}>
+          {/* STREET VIEW WORKSPACE */}
+          {streetViewActive && (
+            <div className="mundi-workspace-view">
+              <ErrorBoundary label="Street View Workspace">
+                <StreetViewWorkspace
+                  target={streetViewTarget}
+                  roadTarget={roadInspectionTarget}
+                  onArtifactsChanged={() => setArtifactsRevision((n) => n + 1)}
+                  onClose={() => {
+                    setStreetViewTarget(null)
+                    setRoadInspectionTarget(null)
+                    setStreetViewActive(false)
+                    setStreetViewLocation(null)
+                  }}
+                  layout={streetViewLayout}
+                  onLayoutChange={setStreetViewLayout}
+                  onYawChange={setStreetViewBearing}
+                  onLocationChange={setStreetViewLocation}
+                  workspacePath={workspacePath}
+                />
+              </ErrorBoundary>
+            </div>
+          )}
+
+          {/* DOCUMENT RAG WORKSPACE */}
+          <div
+            className="mundi-workspace-view"
+            style={{ display: appMode === 'document' ? 'flex' : 'none' }}
+          >
             <ErrorBoundary label="Document">
               <DocumentView
                 openDocs={openDocs}
@@ -3661,7 +3607,11 @@ function App() {
             </ErrorBoundary>
           </div>
 
-          <div style={{ display: appMode === 'artifacts' ? 'flex' : 'none', flex: 1, flexDirection: 'column', height: '100%', minHeight: 0 }}>
+          {/* ARTIFACTS & REPORTS WORKSPACE */}
+          <div
+            className="mundi-workspace-view"
+            style={{ display: appMode === 'artifacts' ? 'flex' : 'none' }}
+          >
             <ErrorBoundary label="Artifacts">
               <ArtifactsPanel
                 workspacePath={workspacePath ?? undefined}
@@ -3692,42 +3642,49 @@ function App() {
                     ...prev,
                     { type: 'add_geojson', payload: { geojson: geojson as FeatureCollection, name } },
                   ])
-                  setAppMode('map') // Auto-switch to map view
+                  setAppMode('map')
                 }}
               />
             </ErrorBoundary>
           </div>
         </main>
 
-        {/* Right resize handle */}
-        {rightWidth > 0 && <div className="resize-handle" onMouseDown={onResizeStart('right')} />}
-
-        {/* Right panel */}
-        {rightWidth > 0 && (
-          <aside className="panel right-panel" style={{ width: rightWidth }}>
-            <ErrorBoundary label="Chat">
-              <ChatPanel
-                ref={chatPanelRef}
-                conversations={conversations}
-                activeConversation={activeConversation}
-                onCreateConversation={handleCreateConversation}
-                onSelectConversation={handleSelectConversation}
-                onDeleteConversation={handleDeleteConversation}
-                onMessagesChange={handleConversationMessagesChange}
-                onRenameConversation={handleRenameConversation}
-                mapContext={mapContext}
-                onMapAction={handleMapAction}
-                documentImage={appMode === 'document' ? documentImage : null}
-                injectedMessage={injectedMessage}
-                onComposeMapFigure={composeMapFigure}
-                onRemoveSelectedFeature={handleRemoveSelectedFeature}
-                onClearSelectedFeatures={handleClearSelectedFeatures}
-                onNavigateArtifact={handleNavigateArtifact}
-              />
-            </ErrorBoundary>
-          </aside>
-        )}
+        {/* Right Chat Drawer (Mundi VersionVisualization style) */}
+        <aside
+          className="mundi-chat-drawer"
+          style={{
+            width: rightWidth,
+            display: rightWidth > 0 ? 'flex' : 'none',
+          }}
+          aria-hidden={rightWidth === 0}
+        >
+          <ErrorBoundary label="Chat">
+            <ChatPanel
+              ref={chatPanelRef}
+              conversations={conversations}
+              activeConversation={activeConversation}
+              onCreateConversation={handleCreateConversation}
+              onSelectConversation={handleSelectConversation}
+              onDeleteConversation={handleDeleteConversation}
+              onMessagesChange={handleConversationMessagesChange}
+              onRenameConversation={handleRenameConversation}
+              mapContext={mapContext}
+              onMapAction={handleMapAction}
+              documentImage={appMode === 'document' ? documentImage : null}
+              injectedMessage={injectedMessage}
+              onComposeMapFigure={composeMapFigure}
+              onRemoveSelectedFeature={handleRemoveSelectedFeature}
+              onClearSelectedFeatures={handleClearSelectedFeatures}
+              onNavigateArtifact={handleNavigateArtifact}
+              onClose={toggleRight}
+              onStreamingChange={setChatStreaming}
+              onStatusChange={setChatStatus}
+              onErrorChange={setChatErrorMessage}
+            />
+          </ErrorBoundary>
+        </aside>
       </div>
+
       {isTransitioning && (
         <div className="workspace-transition-overlay">
           <div className="workspace-transition-card">

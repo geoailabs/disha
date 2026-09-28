@@ -571,8 +571,8 @@ export default function DocumentView({
                   </button>
                 )}
                 {ragError && (
-                  <span style={{ color: '#ef4444', fontSize: '11px' }} title={ragError}>
-                    ⚠ Ingestion failed
+                  <span style={{ color: 'var(--peach-fuzz, #ffd6ba)', fontSize: '11px' }} title={ragError}>
+                    Ingestion failed
                   </span>
                 )}
               </span>

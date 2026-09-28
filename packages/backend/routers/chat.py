@@ -2104,9 +2104,28 @@ async def validate_key(req: ValidateKeyRequest):
         # Lightweight check to validate key
         temp_client = AsyncOpenAI(api_key=req.api_key.strip())
         await temp_client.models.list()
+        os.environ["OPENAI_API_KEY"] = req.api_key.strip()
         return {"valid": True}
     except Exception as e:
         return {"valid": False, "error": str(e)}
+
+
+class SyncKeysRequest(BaseModel):
+    openai_api_key: str | None = None
+    google_maps_api_key: str | None = None
+
+
+@router.post("/sync-keys")
+async def sync_keys(req: SyncKeysRequest):
+    if req.openai_api_key:
+        os.environ["OPENAI_API_KEY"] = req.openai_api_key.strip()
+    if req.google_maps_api_key:
+        os.environ["GOOGLE_MAPS_API_KEY"] = req.google_maps_api_key.strip()
+    return {
+        "status": "ok",
+        "openai": bool(_env_openai_api_key()),
+        "google_maps": bool(_env_google_maps_api_key()),
+    }
 
 
 @router.get("/key-status")
@@ -2313,10 +2332,14 @@ async def chat_websocket(websocket: WebSocket):
             api_key = (payload.get("api_key") or "").strip()
             if not api_key:
                 api_key = (os.environ.get("OPENAI_API_KEY") or "").strip()
+            if api_key and not os.environ.get("OPENAI_API_KEY"):
+                os.environ["OPENAI_API_KEY"] = api_key
 
             google_maps_api_key = (payload.get("google_maps_api_key") or "").strip()
             if not google_maps_api_key:
                 google_maps_api_key = (os.environ.get("GOOGLE_MAPS_API_KEY") or "").strip()
+            if google_maps_api_key and not os.environ.get("GOOGLE_MAPS_API_KEY"):
+                os.environ["GOOGLE_MAPS_API_KEY"] = google_maps_api_key
 
             # Set the context-local variable for this WebSocket iteration
             google_maps_key_var.set(google_maps_api_key)

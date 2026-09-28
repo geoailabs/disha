@@ -29,74 +29,95 @@
 .attr-title {
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: #f8fafc;
   letter-spacing: -0.01em;
+}
+
+.attr-count-badge {
+  font-size: 11px;
+  font-weight: 500;
+  color: #94a3b8;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 2px 8px;
+  border-radius: 9999px;
+  letter-spacing: 0.01em;
+}
+
+.attr-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .attr-close-btn {
   background: none;
-  border: none;
-  color: var(--text-muted);
+  border: 1px solid transparent;
+  color: #94a3b8;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 4px;
-  border-radius: 4px;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  font-size: 12px;
   transition: all 0.15s ease;
 }
 
 .attr-close-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.06);
+  color: #f8fafc;
+  border-color: rgba(255, 255, 255, 0.08);
 }
 
 .attr-header-addcol {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 1 1 auto;
-  min-width: 150px;
-  justify-content: flex-end;
 }
 
 .attr-header-input {
   height: 26px !important;
-  padding: 4px 8px !important;
+  padding: 4px 10px !important;
   font-size: 11px !important;
-  background: var(--bg-secondary) !important;
-  border: 1px solid var(--border) !important;
+  background: #0b0f19 !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
   border-radius: 6px !important;
-  color: var(--text-primary);
-  width: 100%;
+  color: #f8fafc !important;
+  width: 170px;
   transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.attr-header-input::placeholder {
+  color: #64748b;
 }
 
 .attr-header-input:focus {
   outline: none;
-  border-color: var(--accent) !important;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+  border-color: var(--frozen-water, #bee3db) !important;
+  box-shadow: 0 0 0 2px rgba(190, 227, 219, 0.25);
 }
 
 .attr-header-btn {
   height: 26px !important;
   padding: 0 10px !important;
   font-size: 11px !important;
-  font-weight: 600 !important;
+  font-weight: 700 !important;
   border-radius: 6px !important;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--accent);
-  color: var(--bg-surface, #11111b);
+  background: var(--frozen-water, #bee3db);
+  color: #0b0d11;
   border: none;
   cursor: pointer;
-  transition: opacity 0.15s, background 0.15s;
+  transition: opacity 0.15s, transform 0.15s;
 }
 
 .attr-header-btn:hover:not(:disabled) {
-  background: var(--accent-hover, var(--accent));
   opacity: 0.9;
+  transform: translateY(-0.5px);
 }
 
 .attr-header-btn:disabled {
@@ -105,30 +126,29 @@
 }
 
 .attr-empty {
-  color: var(--text-muted);
+  color: #94a3b8;
   font-size: 12px;
-  padding: 16px 8px;
+  padding: 20px 12px;
   text-align: center;
-  background: var(--bg-secondary);
-  border: 1px dashed var(--border);
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px dashed rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   margin: 0;
 }
 
 /* ── Modern Table Container ── */
 .attr-scroll {
-  max-height: 280px;
+  max-height: 320px;
   overflow: auto;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
-  background: var(--bg-surface);
-  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.15);
+  background: #0b0f19;
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.3);
 }
 
-/* Custom Scrollbar for attribute table container */
 .attr-scroll::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 .attr-scroll::-webkit-scrollbar-track {
@@ -136,12 +156,12 @@
 }
 
 .attr-scroll::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
 }
 
 .attr-scroll::-webkit-scrollbar-thumb:hover {
-  background: var(--text-muted);
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .attr-table table {
@@ -152,8 +172,8 @@
 
 .attr-table th,
 .attr-table td {
-  border-bottom: 1px solid var(--border);
-  border-right: 1px solid var(--border);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
   padding: 0;
 }
 
@@ -168,72 +188,87 @@
 
 /* Header Cells styling */
 .attr-table th {
-  background: var(--bg-secondary);
-  padding: 8px 10px;
+  background: #0f172a;
+  padding: 7px 10px;
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--text-muted);
+  color: #94a3b8;
   white-space: nowrap;
   position: sticky;
   top: 0;
   z-index: 10;
-  box-shadow: inset 0 -1px 0 var(--border);
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.08);
   text-align: left;
 }
 
+.attr-th-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
 .attr-colname {
-  margin-right: 6px;
   vertical-align: middle;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
 }
 
 /* Column Delete Button */
 .attr-coldel {
   background: none;
   border: none;
-  color: var(--text-muted);
+  color: #64748b;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 4px;
+  padding: 0 4px;
   border-radius: 4px;
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0;
   transition: all 0.15s ease;
-  vertical-align: middle;
+}
+
+.attr-table th:hover .attr-coldel {
+  opacity: 1;
 }
 
 .attr-coldel:hover {
-  background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
 }
 
 /* Row index styling */
 .attr-rownum {
-  color: var(--text-muted);
+  color: #64748b;
   text-align: center !important;
   font-weight: 500;
   font-size: 11px;
-  width: 32px;
-  min-width: 32px;
+  width: 36px;
+  min-width: 36px;
   font-variant-numeric: tabular-nums;
-  background: var(--bg-secondary);
+  background: #0f172a;
   user-select: none;
-  border-right: 1px solid var(--border) !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.06) !important;
 }
 
 /* Row Alternating Color & Hover */
 .attr-table tbody tr {
-  background: var(--bg-surface);
+  background: #0b0f19;
   transition: background-color 0.15s ease;
 }
 
 .attr-table tbody tr:nth-child(even) {
-  background: rgba(255, 255, 255, 0.015);
+  background: rgba(22, 31, 48, 0.35);
 }
 
 .attr-table tbody tr:hover {
-  background: var(--bg-hover) !important;
+  background: rgba(255, 255, 255, 0.04) !important;
 }
 
 /* Cell Input styling */
@@ -243,9 +278,10 @@
   min-width: 90px;
   background: transparent;
   border: none;
-  color: var(--text-primary);
-  padding: 7px 10px;
+  color: #f1f5f9;
+  padding: 6px 10px;
   font-size: 12px;
+  font-family: inherit;
   transition: all 0.15s ease;
 }
 
@@ -255,14 +291,14 @@
 
 .attr-cell:focus {
   outline: none;
-  background: var(--bg-input, #1a1a26);
-  box-shadow: inset 0 0 0 1px var(--accent);
+  background: #11141a;
+  box-shadow: inset 0 0 0 1px var(--frozen-water, #bee3db);
 }
 
 /* Row Delete Button */
 .attr-rowdel-h {
-  width: 36px;
-  min-width: 36px;
+  width: 34px;
+  min-width: 34px;
 }
 
 .attr-table td:last-child {
@@ -272,19 +308,19 @@
 .attr-rowdel {
   background: none;
   border: none;
-  color: var(--text-muted);
+  color: #64748b;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 6px;
-  border-radius: 6px;
+  padding: 5px;
+  border-radius: 5px;
   transition: all 0.15s ease;
 }
 
 .attr-rowdel:hover {
-  background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
+  background: rgba(255, 214, 186, 0.2);
+  color: var(--peach-fuzz, #ffd6ba);
 }
 
 /* ── Selection Row Styling ── */
@@ -293,15 +329,31 @@
 }
 
 .attr-row-tr.selected {
-  background-color: rgba(245, 158, 11, 0.15) !important;
+  background-color: rgba(190, 227, 219, 0.1) !important;
 }
 
 .attr-row-tr.selected td {
-  border-bottom: 1px solid rgba(245, 158, 11, 0.3) !important;
-  border-right: 1px solid rgba(245, 158, 11, 0.3) !important;
+  border-bottom: 1px solid rgba(190, 227, 219, 0.25) !important;
+  border-right: 1px solid rgba(190, 227, 219, 0.25) !important;
 }
 
 .attr-row-tr.selected .attr-rownum {
-  background-color: rgba(245, 158, 11, 0.25) !important;
-  color: #f59e0b !important;
+  background-color: rgba(190, 227, 219, 0.2) !important;
+  color: var(--frozen-water, #bee3db) !important;
+  font-weight: 700;
+}
+
+/* ── Footer Info ── */
+.attr-footer-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px;
+  font-size: 11px;
+  color: var(--muted-teal, #89b0ae);
+}
+
+.attr-footer-selected {
+  color: var(--frozen-water, #bee3db);
+  font-weight: 600;
 }

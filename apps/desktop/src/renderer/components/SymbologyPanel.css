@@ -17,12 +17,12 @@
 
 .sym-title {
   font-size: 13px;
-  font-weight: 700;
-  color: var(--text-primary);
+  font-weight: 600;
+  color: #f8fafc;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  letter-spacing: 0.01em;
+  letter-spacing: -0.01em;
 }
 
 .sym-header-right {
@@ -224,7 +224,7 @@
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--frozen-water, #bee3db);
   cursor: pointer;
   transition: transform 0.1s;
 }
@@ -237,7 +237,7 @@
   min-width: 32px;
   text-align: right;
   font-size: 11px;
-  color: var(--text-secondary);
+  color: #94a3b8;
 }
 
 /* Custom modern checkbox */
@@ -246,7 +246,7 @@
   align-items: center;
   gap: 8px;
   cursor: pointer;
-  color: var(--text-secondary);
+  color: #94a3b8;
   font-weight: 500;
   user-select: none;
   font-size: 12px;
@@ -259,20 +259,20 @@
 .custom-checkbox {
   width: 14px;
   height: 14px;
-  border: 1.5px solid var(--border);
+  border: 1.5px solid rgba(255, 255, 255, 0.15);
   border-radius: 4px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-surface);
+  background: #0b0f19;
   color: transparent;
   transition: all 0.15s ease-in-out;
 }
 
 .sym-checkbox-label input[type="checkbox"]:checked + .custom-checkbox {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--bg-surface, #11111b);
+  background: var(--frozen-water, #bee3db);
+  border-color: var(--frozen-water, #bee3db);
+  color: #0b0d11;
 }
 
 .custom-checkbox svg {
@@ -282,7 +282,7 @@
 
 .sym-checkbox-text {
   font-size: 12px;
-  color: var(--text-primary);
+  color: #f8fafc;
   font-weight: 600;
 }
 
@@ -295,10 +295,10 @@
 
 .sym-mode {
   flex: 1;
-  background: var(--bg-input, #1a1a26);
-  color: var(--text-muted);
-  border: 1px solid var(--border, #2a2a3a);
-  border-radius: 4px;
+  background: #0b0f19;
+  color: #94a3b8;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
   padding: 4px 6px;
   cursor: pointer;
   font-size: 11px;
@@ -306,14 +306,14 @@
   transition: all 0.15s ease;
 }
 .sym-mode:hover {
-  border-color: var(--text-muted);
-  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #f8fafc;
 }
 .sym-mode.active {
-  color: var(--bg-surface, #11111b);
-  background: var(--accent, #4363d8);
-  border-color: var(--accent, #4363d8);
-  font-weight: 600;
+  color: #0b0d11;
+  background: var(--frozen-water, #bee3db);
+  border-color: var(--frozen-water, #bee3db);
+  font-weight: 700;
 }
 
 .sym-categories {

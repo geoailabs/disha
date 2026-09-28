@@ -1,5 +1,5 @@
 .zoning-panel {
-  padding: 12px;
+  padding: 12px 14px;
   font-size: 12px;
   overflow: auto;
   flex: 1;
@@ -8,44 +8,62 @@
 .zoning-title {
   margin: 0 0 8px 0;
   font-size: 13px;
+  font-weight: 600;
+  color: #f8fafc;
 }
 
 .zoning-intro {
   margin: 0 0 12px 0;
   line-height: 1.45;
-  opacity: 0.9;
+  color: #94a3b8;
+  font-size: 12px;
 }
 
 .zoning-intro code {
-  font-size: 10px;
-  background: #2a2a30;
-  padding: 1px 4px;
-  border-radius: 3px;
+  font-size: 11px;
+  background: #0b0f19;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 2px 5px;
+  border-radius: 4px;
+  color: var(--frozen-water, #bee3db);
+  font-family: ui-monospace, SFMono-Regular, monospace;
 }
 
 .zoning-legend {
   list-style: none;
   margin: 0;
   padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .zoning-legend li {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 0;
-  border-bottom: 1px solid #2a2a2a;
+  padding: 8px 10px;
+  background: #161f30;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  transition: all 0.15s ease;
+}
+
+.zoning-legend li:hover {
+  background: #1e293b;
+  border-color: rgba(255, 255, 255, 0.15);
 }
 
 .zoning-swatch {
   width: 14px;
   height: 14px;
-  border-radius: 3px;
+  border-radius: 4px;
   border: 1px solid rgba(255, 255, 255, 0.2);
   flex-shrink: 0;
 }
 
 .zoning-desc {
-  opacity: 0.85;
+  color: #cbd5e1;
   flex: 1;
+  font-size: 12px;
 }

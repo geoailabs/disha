@@ -1,0 +1,471 @@
+/* Floating Prompt Bar Container & Glassmorphic Apple-Style Floating Bar */
+.floating-prompt-container {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 90%;
+  max-width: 620px;
+  z-index: 35;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+}
+
+/* =========================================================
+   Floating Assistant Bubble (Results Card Above Prompt Bar)
+   - Liquid / Frosted Glassmorphism
+   - Auto 10-second fade transition
+   - Interactive click opens full conversation drawer
+   ========================================================= */
+.floating-assistant-bubble {
+  pointer-events: auto;
+  width: 100%;
+  max-width: 600px;
+  margin-bottom: 12px;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.15) 0%,
+    rgba(255, 255, 255, 0.05) 50%,
+    rgba(255, 255, 255, 0.02) 100%
+  ), rgba(15, 21, 32, 0.65);
+  backdrop-filter: blur(32px) saturate(190%) contrast(105%);
+  -webkit-backdrop-filter: blur(32px) saturate(190%) contrast(105%);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 20px;
+  box-shadow: 
+    inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.45),
+    inset 0 -1px 1px 0 rgba(0, 0, 0, 0.25),
+    0 20px 48px -8px rgba(0, 0, 0, 0.65),
+    0 8px 20px -4px rgba(0, 0, 0, 0.35);
+  padding: 14px 18px;
+  color: #faf9f9;
+  font-size: 13.5px;
+  line-height: 1.55;
+  position: relative;
+  max-height: 155px;
+  overflow-y: auto;
+  cursor: pointer;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition: 
+    opacity 1.2s cubic-bezier(0.4, 0, 0.2, 1),
+    transform 1.2s cubic-bezier(0.4, 0, 0.2, 1),
+    max-height 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+    background 0.2s ease,
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.floating-assistant-bubble:hover {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.19) 0%,
+    rgba(255, 255, 255, 0.07) 50%,
+    rgba(255, 255, 255, 0.03) 100%
+  ), rgba(18, 25, 38, 0.72);
+  border-color: rgba(255, 255, 255, 0.35);
+  box-shadow: 
+    inset 0 1px 2px 0 rgba(255, 255, 255, 0.58),
+    inset 0 -1px 1px 0 rgba(0, 0, 0, 0.25),
+    0 24px 54px -6px rgba(0, 0, 0, 0.72),
+    0 10px 24px -2px rgba(0, 0, 0, 0.4);
+  transform: translateY(-1px);
+}
+
+/* 10-Second Fade Out State */
+.floating-assistant-bubble.is-fading {
+  opacity: 0;
+  transform: translateY(12px) scale(0.985);
+  pointer-events: none;
+}
+
+.floating-assistant-bubble.is-expanded {
+  max-height: 65vh;
+}
+
+.floating-assistant-bubble.has-error {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 120, 100, 0.18) 0%,
+    rgba(200, 60, 60, 0.08) 100%
+  ), rgba(32, 16, 20, 0.72);
+  border-color: rgba(255, 140, 120, 0.45);
+  box-shadow: 
+    inset 0 1px 1.5px rgba(255, 180, 160, 0.45),
+    0 18px 44px -6px rgba(0, 0, 0, 0.65);
+}
+
+/* Header Action Controls Inside Floating Bubble */
+.bubble-header-actions {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  z-index: 2;
+}
+
+
+.bubble-action-btn {
+  width: 24px;
+  height: 24px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.82);
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.18s ease;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.25);
+}
+
+.bubble-action-btn:hover {
+  background: rgba(255, 255, 255, 0.24);
+  border-color: rgba(255, 255, 255, 0.4);
+  color: #ffffff;
+  transform: scale(1.05);
+}
+
+/* Error Row */
+.bubble-error-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #ffb4a2;
+  font-size: 13px;
+}
+
+.bubble-dismiss-btn {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 180, 162, 0.4);
+  color: #ffffff;
+  padding: 3px 10px;
+  font-size: 11px;
+  border-radius: 9999px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.bubble-dismiss-btn:hover {
+  background: rgba(255, 180, 162, 0.28);
+}
+
+/* Action & Streaming Row */
+.bubble-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.bubble-spinner-indicator {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #bee3db;
+  font-size: 13px;
+  font-weight: 500;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+.bubble-spinner-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #bee3db;
+  box-shadow: 0 0 10px #bee3db, 0 0 2px #fff;
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.45; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+
+.bubble-cancel-btn {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 2px 6px;
+}
+
+.bubble-cancel-btn:hover {
+  color: #ffffff;
+}
+
+/* Markdown Content Inside Floating Bubble */
+.bubble-markdown-content {
+  padding-right: 84px;
+  color: rgba(255, 255, 255, 0.95);
+  font-size: 13.5px;
+  line-height: 1.55;
+  letter-spacing: -0.01em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.bubble-markdown-content p {
+  margin: 0 0 6px 0;
+}
+
+.bubble-markdown-content p:last-child {
+  margin-bottom: 0;
+}
+
+.bubble-markdown-content a {
+  color: #bee3db;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.bubble-markdown-content a:hover {
+  color: #ffffff;
+}
+
+.bubble-markdown-content code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.35);
+  padding: 2px 7px;
+  border-radius: 6px;
+  color: #bee3db;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+/* Scrollbar within bubble */
+.floating-assistant-bubble::-webkit-scrollbar {
+  width: 5px;
+}
+
+.floating-assistant-bubble::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.floating-assistant-bubble::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 9999px;
+}
+
+.floating-assistant-bubble::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.4);
+}
+
+/* =========================================================
+   Floating Prompt Bar (Frosted Glass Pill)
+   ========================================================= */
+.floating-prompt-bar {
+  pointer-events: auto;
+  width: 100%;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.16) 0%,
+    rgba(255, 255, 255, 0.05) 50%,
+    rgba(255, 255, 255, 0.02) 100%
+  ), rgba(16, 22, 33, 0.65);
+  backdrop-filter: blur(32px) saturate(200%) contrast(105%);
+  -webkit-backdrop-filter: blur(32px) saturate(200%) contrast(105%);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 9999px;
+  box-shadow: 
+    inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.5),
+    inset 0 -1px 1px 0 rgba(0, 0, 0, 0.3),
+    0 20px 48px -8px rgba(0, 0, 0, 0.65),
+    0 8px 20px -4px rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  padding: 6px 8px 6px 18px;
+  gap: 10px;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.floating-prompt-bar:hover {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.19) 0%,
+    rgba(255, 255, 255, 0.07) 50%,
+    rgba(255, 255, 255, 0.03) 100%
+  ), rgba(18, 25, 38, 0.7);
+  border-color: rgba(255, 255, 255, 0.32);
+  box-shadow: 
+    inset 0 1px 2px 0 rgba(255, 255, 255, 0.58),
+    inset 0 -1px 1px 0 rgba(0, 0, 0, 0.3),
+    0 24px 54px -8px rgba(0, 0, 0, 0.7),
+    0 10px 24px -4px rgba(0, 0, 0, 0.4);
+}
+
+.floating-prompt-bar:focus-within {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.22) 0%,
+    rgba(255, 255, 255, 0.09) 50%,
+    rgba(255, 255, 255, 0.04) 100%
+  ), rgba(20, 28, 42, 0.74);
+  border-color: rgba(255, 255, 255, 0.45);
+  box-shadow: 
+    inset 0 1px 2px 0 rgba(255, 255, 255, 0.65),
+    inset 0 -1px 1px 0 rgba(0, 0, 0, 0.3),
+    0 0 0 2.5px rgba(190, 227, 219, 0.35),
+    0 26px 60px -8px rgba(0, 0, 0, 0.78);
+}
+
+/* Feature Selection Pill Chip */
+.prompt-feature-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  color: #ffffff;
+  border-radius: 9999px;
+  padding: 3px 10px;
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 170px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.3);
+  transition: all 0.18s ease;
+  flex-shrink: 0;
+}
+
+.prompt-feature-chip:hover {
+  background: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.45);
+}
+
+.chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip-close {
+  opacity: 0.8;
+  transition: opacity 0.15s ease;
+}
+
+.chip-close:hover {
+  opacity: 1;
+}
+
+/* Input Field */
+.prompt-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 13.5px;
+  font-weight: 450;
+  color: #ffffff;
+  min-width: 0;
+  font-family: inherit;
+  padding: 7px 0;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.prompt-input::placeholder {
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 13.5px;
+  font-weight: 400;
+}
+
+/* Prompt Action Buttons: Send & Drawer Toggle */
+.prompt-send-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: rgba(255, 255, 255, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: not-allowed;
+  flex-shrink: 0;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.2);
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.prompt-send-btn.can-send {
+  background: linear-gradient(135deg, #bee3db 0%, #a2d2ff 100%);
+  color: #0b111a;
+  border-color: rgba(255, 255, 255, 0.75);
+  cursor: pointer;
+  box-shadow: 
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.9),
+    0 4px 14px rgba(190, 227, 219, 0.45);
+}
+
+.prompt-send-btn.can-send:hover {
+  background: linear-gradient(135deg, #ffffff 0%, #bee3db 100%);
+  transform: scale(1.06);
+  box-shadow: 
+    inset 0 1px 2px rgba(255, 255, 255, 1),
+    0 6px 18px rgba(190, 227, 219, 0.65);
+}
+
+.prompt-send-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.prompt-send-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #bee3db;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.prompt-drawer-toggle {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: rgba(255, 255, 255, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.2);
+  transition: all 0.18s ease;
+}
+
+.prompt-drawer-toggle:hover {
+  background: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.4);
+  color: #ffffff;
+  transform: scale(1.05);
+  box-shadow: inset 0 1px 1.5px rgba(255, 255, 255, 0.45), 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.prompt-drawer-toggle.is-active {
+  background: linear-gradient(135deg, #bee3db 0%, #a2d2ff 100%);
+  color: #0b111a;
+  border-color: rgba(255, 255, 255, 0.75);
+  box-shadow: inset 0 1px 1.5px rgba(255, 255, 255, 0.9), 0 4px 14px rgba(190, 227, 219, 0.45);
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

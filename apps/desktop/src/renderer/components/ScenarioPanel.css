@@ -1,9 +1,11 @@
 .scenario-panel {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex: 1;
+  min-height: 180px;
   overflow: hidden;
-  background: var(--bg-surface);
+  background: transparent;
+  font-family: 'Canva Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
 /* ── Toolbar ── */
@@ -11,33 +13,36 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .scenario-title {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
-  color: var(--text-primary);
-  letter-spacing: 0.03em;
+  color: #f8fafc;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
 .scenario-new-btn {
-  background: var(--accent);
-  color: var(--bg-surface);
+  background: var(--frozen-water, #bee3db);
+  color: #0b0d11;
   border: none;
-  padding: 4px 10px;
-  border-radius: 5px;
+  padding: 5px 12px;
+  border-radius: 6px;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: all 0.15s ease;
 }
 
 .scenario-new-btn:hover {
-  background: var(--accent-hover);
+  background: var(--bright-snow, #faf9f9);
+  box-shadow: 0 0 10px rgba(190, 227, 219, 0.5);
+  transform: translateY(-0.5px);
 }
 
 /* ── Create form ── */
@@ -75,22 +80,22 @@
 }
 
 .scenario-save-btn {
-  background: var(--accent);
-  color: var(--bg-surface);
+  background: var(--frozen-water, #bee3db);
+  color: #0b0d11;
   border: none;
   padding: 5px 12px;
-  border-radius: 5px;
+  border-radius: 6px;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
 }
 
 .scenario-cancel-btn {
-  background: var(--bg-hover);
-  border: 1px solid var(--border);
-  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #94a3b8;
   padding: 5px 10px;
-  border-radius: 5px;
+  border-radius: 6px;
   font-size: 11px;
   cursor: pointer;
 }
@@ -101,10 +106,10 @@
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  background: rgba(137, 180, 250, 0.08);
-  border-bottom: 1px solid rgba(137, 180, 250, 0.2);
+  background: rgba(190, 227, 219, 0.1);
+  border-bottom: 1px solid rgba(190, 227, 219, 0.25);
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--muted-teal, #89b0ae);
   flex-shrink: 0;
 }
 
@@ -112,7 +117,8 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--frozen-water, #bee3db);
+  box-shadow: 0 0 6px var(--frozen-water, #bee3db);
   flex-shrink: 0;
   animation: pulse-dot 2s infinite;
 }
@@ -145,15 +151,62 @@
 
 /* ── Empty state ── */
 .scenario-empty {
-  padding: 24px 16px;
+  padding: 36px 18px;
   text-align: center;
-  color: var(--text-muted);
-  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  gap: 8px;
 }
 
-.scenario-empty p {
-  margin: 0 0 6px;
+.scenario-empty-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.6);
+  margin-bottom: 4px;
+}
+
+.scenario-empty-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #faf9f9;
+  margin: 0;
+}
+
+.scenario-empty-sub {
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.55);
   line-height: 1.5;
+  max-width: 260px;
+  margin: 0 0 10px 0;
+}
+
+.scenario-empty-btn {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+
+.scenario-empty-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.35);
+  transform: translateY(-0.5px);
 }
 
 /* ── Scrollable list ── */
@@ -168,16 +221,21 @@
 
 /* ── Scenario card ── */
 .scenario-card {
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
+  background: #161f30;
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
-  padding: 8px 10px;
-  transition: border-color 0.15s, background 0.15s;
+  padding: 10px 12px;
+  transition: all 0.15s ease;
+}
+
+.scenario-card:hover {
+  background: #1e293b;
+  border-color: rgba(255, 255, 255, 0.16);
 }
 
 .scenario-card.active {
-  border-color: var(--accent);
-  background: rgba(137, 180, 250, 0.06);
+  border-color: var(--frozen-water, #bee3db);
+  background: rgba(190, 227, 219, 0.12);
 }
 
 .scenario-card-header {
