@@ -270,6 +270,7 @@ SYSTEM_PROMPT = (
     "detect_zone_overlaps (find geometry overlaps or conflicts between zone polygons — use for compliance auditing, not for general spatial overlap).\n"
     "- Artifacts & Documents: "
     "create_artifact (create a BRAND NEW document artifact — use for new documents; format options: pdf/docx/html/png/jpg/xlsx/txt/json/markdown/table/geojson; "
+    "PDF/HTML exports render fenced Mermaid diagrams (```mermaid ... ```); use Mermaid flowchart or sequenceDiagram syntax when the user explicitly requests a process diagram, workflow, decision tree, or system diagram. "
     "NEVER pass an existing artifact_id — always creates fresh), "
     "edit_artifact (add/update sections in an EXISTING artifact by title or ID — use when user says 'add to', 'edit', 'update', or 'insert into' a specific artifact; "
     "when inserting an already-exported map snapshot image, set image_artifact_id=<id> and DO NOT also set include_map_figure=true), "
@@ -371,6 +372,7 @@ SYSTEM_PROMPT = (
     "('suburb', 'neighbourhood', 'quarter'), or (c) osm_search(feature_type='place', feature_value='suburb') near the city center.\n"
     "8. When finished, stop calling tools and respond with a brief summary of what you did.\n"
     "8a. When the user asks to download/export map data as GeoJSON, call export_region_clip with a clear output_base_name. This triggers the file download automatically; do not only describe the file or create a report artifact.\n"
+    "8b. When a PDF/report request explicitly asks for a Mermaid diagram, include one or more fenced Mermaid blocks in the document content so the PDF renderer embeds the diagram visually; never leave the Mermaid source as an unexplained plain-text block.\n"
     "9. SINGLE POLYGON ACROSS MULTIPLE PLACES: when the user asks for ONE merged boundary or study area "
     "spanning multiple adjacent cities, districts, or boroughs (e.g. 'merge City A and City B into one polygon', "
     "'metropolitan study area'), call osm_boundary_union with all place names in a single call. Do NOT call "
@@ -866,7 +868,7 @@ async def _run_deep_research(
     workspace: str | None = None,
     client: AsyncOpenAI | None = None
 ) -> str:
-    """Run o4-mini-deep-research and stream progress back over the WebSocket.
+    """Run the configured research model and stream progress back over WebSocket.
 
     Sends these WS message types:
       research_start          — emitted once before the API call
@@ -903,8 +905,13 @@ async def _run_deep_research(
         stop_event = _get_stop_event()
 
         openai_client = client or _client
+        # The retired/entitlement-gated deep-research model must not be
+        # hardcoded here. Deployments can opt into a dedicated model with
+        # OPENAI_RESEARCH_MODEL; otherwise use the same configured model as
+        # the normal chat loop.
+        research_model = os.environ.get("OPENAI_RESEARCH_MODEL") or _get_model()
         stream = await openai_client.responses.create(
-            model="o4-mini-deep-research",
+            model=research_model,
             input=prompt,
             instructions=_RESEARCH_SYSTEM,
             tools=[{"type": "web_search_preview"}],

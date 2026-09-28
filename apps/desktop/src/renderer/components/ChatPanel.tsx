@@ -1086,6 +1086,43 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
 
   const downloadResearchPdf = useCallback(async (md: string) => {
     if (!md) return
+    // Use the backend export engine first. The old client-side jsPDF fallback
+    // strips Markdown into plain text, which would print Mermaid source rather
+    // than embedding the rendered diagram.
+    try {
+      let mapImageBase64 = ''
+      if (onComposeMapFigure) {
+        const figure = await onComposeMapFigure(activeConversation?.title || 'Project Map')
+        if (figure) mapImageBase64 = figure.toDataURL('image/png')
+      }
+      const formData = new FormData()
+      formData.append('title', activeConversation?.title || 'Urban Planning Report')
+      formData.append('content', md)
+      formData.append('map_image_base64', mapImageBase64)
+      const workspace = mapContext.workspace
+      const query = workspace ? `?workspace=${encodeURIComponent(workspace)}` : ''
+      const response = await fetch(`http://localhost:8765/api/artifacts/render-markdown-pdf${query}`, {
+        method: 'POST',
+        body: formData,
+      })
+      if (response.ok) {
+        const blob = await response.blob()
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `urban-planning-report-${Date.now()}.pdf`
+        document.body.appendChild(a)
+        a.click()
+        setTimeout(() => {
+          a.remove()
+          URL.revokeObjectURL(url)
+        }, 1500)
+        return
+      }
+    } catch (err) {
+      console.warn('Backend PDF rendering unavailable; using client fallback:', err)
+    }
+
     const { jsPDF } = await import('jspdf')
     const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' })
     const pageWidth = doc.internal.pageSize.getWidth()

@@ -401,6 +401,7 @@ def generate_html_export(
 ) -> bytes:
     """Generate a self-contained styled HTML file with embedded images."""
     import markdown as md_lib
+    from tools.mermaid_renderer import replace_mermaid_fences
 
     img_pattern = re.compile(r'!\[(.*?)\]\((.*?)\)')
     def _img_replacer(match):
@@ -413,7 +414,8 @@ def generate_html_export(
             return f'<div class="figure-container"><img src="{b64_uri}" alt="{alt}" class="map-img"/><p class="caption">Figure: {alt}</p></div>'
         return match.group(0)
 
-    processed_md = img_pattern.sub(_img_replacer, markdown_content)
+    processed_md = replace_mermaid_fences(markdown_content)
+    processed_md = img_pattern.sub(_img_replacer, processed_md)
     html_body = md_lib.markdown(processed_md, extensions=['tables', 'fenced_code', 'toc'])
 
     img_html = ""
@@ -452,6 +454,8 @@ def generate_html_export(
         .figure-container {{ text-align: center; margin: 24px 0; }}
         .map-img {{ max-width: 100%; height: auto; border-radius: 8px; border: 1px solid #cbd5e1; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }}
         .caption {{ font-size: 0.9rem; color: #64748b; font-style: italic; margin-top: 8px; }}
+        .mermaid-container {{ margin: 22px auto; text-align: center; page-break-inside: avoid; }}
+        .mermaid-diagram {{ width: 100%; max-width: 760px; height: auto; }}
     </style>
 </head>
 <body>
@@ -560,8 +564,37 @@ def generate_pdf_export(
                 print(f"[ReportLab PDF] Image embed notice: {e}")
 
         img_pattern = re.compile(r'!\[(.*?)\]\((.*?)\)')
-        lines = markdown_content.splitlines()
-        for line in lines:
+        # Mermaid is rendered by the HTML/WeasyPrint path. If ReportLab is the
+        # only available backend, render a PNG with the dependency-free
+        # Pillow fallback so the requested visual is still present.
+        from tools.mermaid_renderer import render_mermaid_png
+        mermaid_fence = re.compile(r"^\s*```mermaid\s*$", re.IGNORECASE)
+        parsed_lines: list[tuple[str, str]] = []
+        raw_lines = markdown_content.splitlines()
+        i = 0
+        while i < len(raw_lines):
+            if mermaid_fence.match(raw_lines[i]):
+                i += 1
+                diagram_lines: list[str] = []
+                while i < len(raw_lines) and not raw_lines[i].strip().startswith("```"):
+                    diagram_lines.append(raw_lines[i])
+                    i += 1
+                parsed_lines.append(("mermaid", "\n".join(diagram_lines)))
+            else:
+                parsed_lines.append(("text", raw_lines[i]))
+            i += 1
+
+        for kind, line in parsed_lines:
+            if kind == "mermaid":
+                try:
+                    diagram_bytes = render_mermaid_png(line)
+                    story.append(RLImage(io.BytesIO(diagram_bytes), width=500, height=233))
+                    story.append(Paragraph("Figure: Mermaid diagram", caption_style))
+                    story.append(Spacer(1, 6))
+                except Exception as e:
+                    print(f"[ReportLab PDF] Mermaid diagram notice: {e}")
+                continue
+
             s = line.strip()
             if not s:
                 continue

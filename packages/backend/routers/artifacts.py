@@ -10,6 +10,35 @@ from database import get_connection
 router = APIRouter()
 
 
+@router.post("/render-markdown-pdf")
+async def render_markdown_pdf(
+    title: str = Form("Urban Planning Report"),
+    content: str = Form(""),
+    map_image_base64: str | None = Form(None),
+    workspace: str | None = Query(None),
+):
+    """Render ad-hoc research Markdown as a real PDF, including Mermaid SVG/PNG diagrams."""
+    from tools.export_engine import export_artifact_multi_format
+
+    if not content.strip():
+        raise HTTPException(status_code=422, detail="PDF content is required")
+    try:
+        file_bytes, filename, mime_type = export_artifact_multi_format(
+            title=title,
+            content=content,
+            format_target="pdf",
+            map_image_base64=map_image_base64,
+            workspace=workspace,
+        )
+        return Response(
+            content=file_bytes,
+            media_type=mime_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to render PDF: {exc}") from exc
+
+
 @router.get("")
 async def list_artifacts(workspace: str | None = Query(None)):
     conn = get_connection(workspace)

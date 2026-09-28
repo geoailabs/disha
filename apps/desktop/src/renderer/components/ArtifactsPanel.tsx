@@ -881,16 +881,8 @@ export default function ArtifactsPanel({
   const [editContentValue, setEditContentValue] = useState('')
 
   const fetchArtifacts = useCallback(async () => {
-    // When no workspace is open, clear immediately without hitting the API.
-    // This prevents the race where getUrl() changes (workspace removed from URL)
-    // and a global fetch repopulates the list just after setArtifacts([]) cleared it.
-    if (!workspacePath) {
-      setArtifacts([])
-      setSelectedId(null)
-      setFullArtifact(null)
-      setEditingContent(false)
-      return
-    }
+    // With no workspace selected, load the global artifact store. Chat-created
+    // reports can exist there and must remain openable from their artifact chip.
     try {
       const res = await fetch(getUrl())
       if (res.ok) {

@@ -146,7 +146,8 @@ def _try_weasyprint(md_path: Path, out_path: Path) -> bool:
         return False
 
     content = md_path.read_text(encoding="utf-8")
-    html_body = md_lib.markdown(content, extensions=["tables", "fenced_code", "toc"])
+    from tools.mermaid_renderer import replace_mermaid_fences
+    html_body = md_lib.markdown(replace_mermaid_fences(content), extensions=["tables", "fenced_code", "toc"])
     title = _title_from_md(md_path)
 
     full_html = f"""<!DOCTYPE html>
@@ -163,6 +164,8 @@ def _try_weasyprint(md_path: Path, out_path: Path) -> bool:
   th, td {{ border: 1px solid #CBD5E1; padding: 6px 10px; text-align: left; }}
   th {{ background: #EFF6FF; font-weight: bold; color: #1E40AF; }}
   blockquote {{ border-left: 4px solid #1E40AF; margin: 0; padding: 8px 16px; background: #F8FAFC; color: #475569; }}
+  .mermaid-container {{ margin: 22px auto; text-align: center; page-break-inside: avoid; }}
+  .mermaid-diagram {{ width: 100%; max-width: 760px; height: auto; }}
   @page {{ margin: 2cm; }}
 </style>
 </head>
@@ -204,6 +207,28 @@ def convert(
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     errors: list[str] = []
+
+    # Mermaid is rendered as inline SVG by the HTML/WeasyPrint path. Prefer it
+    # whenever the document contains Mermaid so Pandoc/LaTeX cannot reduce the
+    # diagram to an unrendered fenced code block.
+    has_mermaid = "```mermaid" in in_path.read_text(encoding="utf-8").lower()
+    if has_mermaid and not tex_only:
+        try:
+            if _try_weasyprint(in_path, out_path):
+                return
+        except Exception as exc:
+            errors.append(f"weasyprint (Mermaid): {exc}")
+        try:
+            from tools.export_engine import generate_pdf_export
+            pdf_bytes = generate_pdf_export(
+                _title_from_md(in_path),
+                in_path.read_text(encoding="utf-8"),
+            )
+            if pdf_bytes.startswith(b"%PDF") and len(pdf_bytes) > 2000:
+                out_path.write_bytes(pdf_bytes)
+                return
+        except Exception as exc:
+            errors.append(f"ReportLab Mermaid fallback: {exc}")
 
     # ── Backend 1: pypandoc ────────────────────────────────────────────────────
     try:
