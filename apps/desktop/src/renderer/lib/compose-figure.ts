@@ -8,6 +8,14 @@
 
 import type { LegendEntry } from './legend-data'
 
+export interface FigureLabel {
+  text: string
+  /** Position in CSS pixels relative to the source map canvas. */
+  x: number
+  y: number
+  color?: string
+}
+
 export interface ComposeOptions {
   title: string
   /** Map center latitude — needed for the scale bar's ground resolution. */
@@ -22,6 +30,8 @@ export interface ComposeOptions {
   subtitle?: string
   /** Omit outer title/footer bands for full-bleed map snapshot. */
   noTitleBand?: boolean
+  /** Feature labels collected from the export camera, in source-canvas pixels. */
+  labels?: FigureLabel[]
 }
 
 const PAD = 16
@@ -90,6 +100,13 @@ export function composeFigure(
   // ── Map image ──
   ctx.drawImage(source, 0, tBand, mapW, mapH)
 
+  // ── Feature labels ──
+  // Draw these after the map image so labels remain available in exports even
+  // when MapLibre's glyph tiles were not ready at snapshot time.
+  if (opts.labels?.length) {
+    drawFeatureLabels(ctx, opts.labels, tBand, mapW, mapH)
+  }
+
   // Everything below is drawn over the map, within its rectangle.
   const mapTop = tBand
   const mapBottom = tBand + mapH
@@ -115,6 +132,31 @@ export function composeFigure(
   }
 
   return out
+}
+
+function drawFeatureLabels(
+  ctx: CanvasRenderingContext2D,
+  labels: FigureLabel[],
+  mapTop: number,
+  mapW: number,
+  mapH: number,
+): void {
+  ctx.save()
+  ctx.font = '600 11px system-ui, -apple-system, sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  for (const label of labels) {
+    if (label.x < 8 || label.y < 8 || label.x > mapW - 8 || label.y > mapH - 8) continue
+    const text = label.text.length > 64 ? `${label.text.slice(0, 61)}…` : label.text
+    const x = label.x
+    const y = mapTop + label.y
+    ctx.lineWidth = 4
+    ctx.strokeStyle = 'rgba(255,255,255,0.95)'
+    ctx.strokeText(text, x, y)
+    ctx.fillStyle = label.color || '#111827'
+    ctx.fillText(text, x, y)
+  }
+  ctx.restore()
 }
 
 function drawScaleBar(

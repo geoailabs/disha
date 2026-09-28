@@ -17,7 +17,19 @@ interface NominatimSearchResult {
 export type MapViewHandle = {
   getCanvas: () => HTMLCanvasElement | null
   resize: () => void
-  fitBboxAndSnapshot: (bboxTarget?: any, padding?: number, layersToShow?: string[]) => Promise<HTMLCanvasElement | null>
+  fitBboxAndSnapshot: (bboxTarget?: any, padding?: number, layersToShow?: string[]) => Promise<MapSnapshot | null>
+}
+
+export type MapExportLabel = {
+  text: string
+  x: number
+  y: number
+  color?: string
+}
+
+export type MapSnapshot = {
+  canvas: HTMLCanvasElement
+  labels: MapExportLabel[]
 }
 
 // Helper to check if a polygon/multipolygon geometry intersects the viewport bounds
@@ -340,6 +352,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
   const onHoverFeatureRef = useRef(onHoverFeature)
   onHoverFeatureRef.current = onHoverFeature
   const [zoomTooLow, setZoomTooLow] = useState(false)
+  const [compassBearing, setCompassBearing] = useState(initialState.bearing || 0)
   // Each off-screen indicator: position on edge + angle + the entry it refers to
   type IndicatorPos = { x: number; y: number; angle: number; entry: SelectedFeatureEntry }
   const [indicatorPositions, setIndicatorPositions] = useState<IndicatorPos[]>([])
@@ -435,6 +448,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
     map.addControl(new maplibregl.ScaleControl(), 'bottom-left')
 
     map.on('moveend', () => {
+      setCompassBearing(map.getBearing())
       onMapMove({
         center: [map.getCenter().lng, map.getCenter().lat],
         zoom: map.getZoom(),
@@ -449,6 +463,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
         north: b.getNorth(),
       })
     })
+    map.on('rotate', () => setCompassBearing(map.getBearing()))
 
     map.on('contextmenu', (e) => {
       e.preventDefault?.()
@@ -468,6 +483,13 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
     mapRef.current = map
 
     map.on('load', () => {
+      const initialBounds = map.getBounds()
+      onBoundsChangeRef.current?.({
+        west: initialBounds.getWest(),
+        south: initialBounds.getSouth(),
+        east: initialBounds.getEast(),
+        north: initialBounds.getNorth(),
+      })
       // Initialize drawing source and layers
       map.addSource('streetview-coverage', {
         type: 'geojson',
@@ -699,7 +721,50 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
         ctx.drawImage(canvas, 0, 0)
       }
 
-      // Restore camera view and layer visibility immediately
+      // MapLibre text layers can be omitted from a WebGL capture when glyphs
+      // have not finished loading, and many imported layers do not have a
+      // label style at all. Collect a small, deterministic set of feature
+      // labels while the export camera is active so the compositor can bake
+      // them into every image format without changing the live map.
+      const exportLabels: MapExportLabel[] = []
+      const labelLayers = layersRef.current.filter((layer) => {
+        if (!layer.visible || !layer.data?.features?.length) return false
+        if (!layersToShow || layersToShow.length === 0) return true
+        const name = layer.name.toLowerCase().trim()
+        const id = layer.id.toLowerCase().trim()
+        return layersToShow.some((raw) => {
+          const filter = raw.toLowerCase().trim()
+          return Boolean(filter) && (id === filter || name === filter || name.includes(filter) || filter.includes(name))
+        })
+      })
+      for (const layer of labelLayers) {
+        const labelSpec = layer.styleSpec?.label
+        // Labels already enabled in MapLibre are present in the canvas. Add a
+        // fallback only for layers without an enabled label style to avoid
+        // drawing duplicate text in exports.
+        if (labelSpec?.enabled && labelSpec.property) continue
+        const featureLimit = Math.min(layer.data.features.length, 40)
+        for (const feature of layer.data.features.slice(0, featureLimit)) {
+          const props = feature.properties || {}
+          const property = ['label', 'name', 'title', 'display_name', 'address']
+            .find((key) => props[key] != null && String(props[key]).trim())
+          if (!property || !feature.geometry) continue
+          try {
+            const point = turf.pointOnFeature(feature as any)
+            const projected = map.project(point.geometry.coordinates as [number, number])
+            if (projected.x < 4 || projected.y < 4 || projected.x > map.getCanvas().width / (window.devicePixelRatio || 1) - 4 || projected.y > map.getCanvas().height / (window.devicePixelRatio || 1) - 4) continue
+            const text = String(props[property]).trim().replace(/\s+/g, ' ')
+            if (text) exportLabels.push({ text: text.slice(0, 64), x: projected.x, y: projected.y, color: layer.lineColor || layer.color })
+          } catch {
+            // Ignore malformed feature geometry or coordinates.
+          }
+          if (exportLabels.length >= 120) break
+        }
+        if (exportLabels.length >= 120) break
+      }
+
+      // Restore camera view and layer visibility immediately after all export
+      // pixels and label coordinates have been collected.
       for (const item of savedVisibility) {
         if (map.getLayer(item.layerId)) {
           map.setLayoutProperty(item.layerId, 'visibility', item.visibility)
@@ -707,7 +772,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       }
       map.jumpTo({ center: origCenter, zoom: origZoom, bearing: origBearing, pitch: origPitch })
 
-      return clone
+      return { canvas: clone, labels: exportLabels }
     },
   }), [mapReady])
 
@@ -2308,6 +2373,18 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
   return (
     <div className={`map-view ${isMiniMap ? 'is-mini-map' : ''}`}>
       <div ref={containerRef} className="map-container" />
+
+      {!isMiniMap && (
+        <div className="map-compass" aria-label={`Map compass, bearing ${Math.round(compassBearing)} degrees`} title="Map compass">
+          <div className="map-compass-ring" style={{ transform: `rotate(${-compassBearing}deg)` }}>
+            <span className="map-compass-n">N</span>
+            <span className="map-compass-e">E</span>
+            <span className="map-compass-s">S</span>
+            <span className="map-compass-w">W</span>
+            <span className="map-compass-needle" />
+          </div>
+        </div>
+      )}
 
       {/* ── Off-screen Feature Indicators (one per off-screen selected feature) ── */}
       {!isMiniMap && indicatorPositions.map((ind, idx) => {

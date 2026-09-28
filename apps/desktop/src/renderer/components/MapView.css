@@ -9,6 +9,54 @@
   height: 100%;
 }
 
+.map-compass {
+  position: absolute;
+  top: 16px;
+  left: calc(var(--sidebar-width, 58px) + 16px);
+  width: 54px;
+  height: 54px;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.82);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+  color: rgba(255, 255, 255, 0.8);
+  pointer-events: none;
+}
+
+.map-compass-ring {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  transition: transform 120ms ease-out;
+}
+
+.map-compass-ring > span:not(.map-compass-needle) {
+  position: absolute;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.map-compass-n { top: 0; left: 50%; transform: translateX(-50%); color: #f87171; }
+.map-compass-e { top: 50%; right: 0; transform: translateY(-50%); }
+.map-compass-s { bottom: 0; left: 50%; transform: translateX(-50%); }
+.map-compass-w { top: 50%; left: 0; transform: translateY(-50%); }
+
+.map-compass-needle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 25px;
+  transform: translate(-50%, -50%);
+  background: linear-gradient(to bottom, #ef4444 0 50%, #e5e7eb 50% 100%);
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+}
+
 .maplibregl-ctrl-group {
   background: rgba(15, 23, 42, 0.88) !important;
   backdrop-filter: blur(16px) !important;
@@ -938,4 +986,3 @@ input:checked + .slider:before {
   border-radius: 0 0 6px 6px !important;
   line-height: 1.2 !important;
 }
-

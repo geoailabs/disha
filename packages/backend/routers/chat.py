@@ -260,7 +260,7 @@ SYSTEM_PROMPT = (
     "always use exact key matching case-insensitively; result auto-displayed on the map).\n"
     "- Bookmarks & Export: save_bookmark (save the current map view for later recall — use when user says 'save this view'), "
     "go_to_bookmark (navigate to a previously saved map view), "
-    "export_region_clip (clip and export canvas vector layers to a GeoJSON file), "
+    "export_region_clip (clip all loaded canvas vector layers to a GeoJSON file and automatically download it; use whenever the user asks to export/download the current map data as GeoJSON), "
     "export_map_png (export the current map canvas as a lossless PNG image artifact — use for detailed maps; DO NOT use both PNG and JPEG for the same image), "
     "export_map_jpeg (export the current map canvas as a JPEG image artifact — prefer this for document/report embedding; "
     "ALWAYS pass layers_to_show=['<Target Layer>', '<Boundary Layer>'] to isolate section visuals; "
@@ -370,6 +370,7 @@ SYSTEM_PROMPT = (
     "attempt: (a) alphanumeric name variations (e.g. 'Sector 30 A' vs 'Sector 30'), (b) alternate place_type tags "
     "('suburb', 'neighbourhood', 'quarter'), or (c) osm_search(feature_type='place', feature_value='suburb') near the city center.\n"
     "8. When finished, stop calling tools and respond with a brief summary of what you did.\n"
+    "8a. When the user asks to download/export map data as GeoJSON, call export_region_clip with a clear output_base_name. This triggers the file download automatically; do not only describe the file or create a report artifact.\n"
     "9. SINGLE POLYGON ACROSS MULTIPLE PLACES: when the user asks for ONE merged boundary or study area "
     "spanning multiple adjacent cities, districts, or boroughs (e.g. 'merge City A and City B into one polygon', "
     "'metropolitan study area'), call osm_boundary_union with all place names in a single call. Do NOT call "
@@ -1231,7 +1232,7 @@ def _build_tools() -> list[dict]:
             "properties": {"name": {"type": "string"}},
             "required": ["name"],
         }),
-        ("export_region_clip", "Clip all loaded layers to a bounding box and save as a GeoJSON file in workspace", {
+        ("export_region_clip", "Clip all loaded layers to the current or requested bounding box, save a metadata-rich GeoJSON file in the workspace, and automatically download it", {
             "type": "object",
             "properties": {
                 "output_base_name": {"type": "string"},

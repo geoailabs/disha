@@ -1433,9 +1433,10 @@ function App() {
       if (!mapView) return null
 
       const layersToShow = options?.layers_to_show || (options?.layer_name ? [options.layer_name] : undefined)
-      const canvas = mapView.fitBboxAndSnapshot
+      const snapshot = mapView.fitBboxAndSnapshot
         ? await mapView.fitBboxAndSnapshot(options?.bbox, 40, layersToShow)
         : mapView.getCanvas()
+      const canvas = snapshot && 'canvas' in snapshot ? snapshot.canvas : snapshot
       if (!canvas) return null
 
       // Filter legend entries to match active layers in the snapshot
@@ -1455,6 +1456,7 @@ function App() {
         legend: buildLegendEntries(activeLayers),
         attribution: BASEMAPS[basemap]?.attribution || '',
         noTitleBand: options?.noTitleBand,
+        labels: snapshot && 'canvas' in snapshot ? snapshot.labels : [],
       })
     },
     [mapViewState, layers, basemap],
@@ -1632,11 +1634,25 @@ function App() {
       outputBaseName: string,
       bboxExplicit?: { south: number; west: number; north: number; east: number },
     ) => {
-      const b =
-        bboxExplicit?.south != null
-          ? bboxExplicit
-          : mapBoundsRef.current
-      if (!workspacePath || !b || !layers.length) return
+      let b = bboxExplicit?.south != null ? bboxExplicit : mapBoundsRef.current
+      if (!b) {
+        let extent: [number, number, number, number] | null = null
+        for (const layer of layers) {
+          if (!layer.data?.features?.length) continue
+          try {
+            const next = turf.bbox(layer.data) as [number, number, number, number]
+            extent = extent
+              ? [Math.min(extent[0], next[0]), Math.min(extent[1], next[1]), Math.max(extent[2], next[2]), Math.max(extent[3], next[3])]
+              : next
+          } catch {
+            /* skip invalid layer geometry */
+          }
+        }
+        if (extent) {
+          b = { west: extent[0], south: extent[1], east: extent[2], north: extent[3] }
+        }
+      }
+      if (!b) return
       const bbox: [number, number, number, number] = [b.west, b.south, b.east, b.north]
       const allFeatures: Feature[] = []
       for (const layer of layers) {
@@ -1644,10 +1660,17 @@ function App() {
           try {
             const clipped = turf.bboxClip(f as Feature<Polygon | MultiPolygon>, bbox)
             if (!clipped?.geometry) continue
+            const featureLabel = ['label', 'name', 'title', 'display_name', 'address']
+              .find((key) => f.properties?.[key] != null && String(f.properties[key]).trim())
             allFeatures.push({
               type: 'Feature',
               geometry: clipped.geometry,
-              properties: { ...(f.properties || {}), source_layer: layer.name },
+              properties: {
+                ...(f.properties || {}),
+                source_layer: layer.name,
+                layer_name: layer.name,
+                ...(featureLabel ? { feature_label: String(f.properties?.[featureLabel]) } : {}),
+              },
             })
           } catch {
             /* skip */
@@ -1655,13 +1678,37 @@ function App() {
         }
       }
       const base = (outputBaseName || 'clipped').replace(/[^a-z0-9-_]/gi, '_') || 'clipped'
-      const path = `${workspacePath}/${base}.geojson`
-      await window.electronAPI.writeFile(
-        path,
-        JSON.stringify({ type: 'FeatureCollection', features: allFeatures }, null, 2),
-      )
-      addLayer(base, path)
-      setActiveLeftTab('layers')
+      const caption = `Map export — ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}`
+      const exportData = {
+        type: 'FeatureCollection',
+        features: allFeatures,
+        metadata: {
+          title: outputBaseName || 'Map export',
+          caption,
+          compass: { north: 'N', east: 'E', south: 'S', west: 'W' },
+          layers: layers.map((layer) => ({ id: layer.id, name: layer.name, visible: layer.visible })),
+          legend: buildLegendEntries(layers),
+          label_properties: ['label', 'name', 'title', 'display_name', 'address'],
+          bbox: { west: b.west, south: b.south, east: b.east, north: b.north },
+        },
+      }
+      const serialized = JSON.stringify(exportData, null, 2)
+      if (workspacePath) {
+        const path = `${workspacePath}/${base}.geojson`
+        await window.electronAPI.writeFile(path, serialized)
+        addLayer(base, path)
+        setActiveLeftTab('layers')
+      }
+      const download = new Blob([serialized], { type: 'application/geo+json' })
+      const anchor = document.createElement('a')
+      const downloadUrl = URL.createObjectURL(download)
+      anchor.href = downloadUrl
+      anchor.download = `${base}.geojson`
+      anchor.style.display = 'none'
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1500)
     },
     [layers, workspacePath, addLayer],
   )
