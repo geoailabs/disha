@@ -444,7 +444,6 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       canvasContextAttributes: { preserveDrawingBuffer: true },
     })
 
-    map.addControl(new maplibregl.NavigationControl(), 'top-right')
     map.addControl(new maplibregl.ScaleControl(), 'bottom-left')
 
     map.on('moveend', () => {
@@ -2375,14 +2374,62 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       <div ref={containerRef} className="map-container" />
 
       {!isMiniMap && (
-        <div className="map-compass" aria-label={`Map compass, bearing ${Math.round(compassBearing)} degrees`} title="Map compass">
-          <div className="map-compass-ring" style={{ transform: `rotate(${-compassBearing}deg)` }}>
-            <span className="map-compass-n">N</span>
-            <span className="map-compass-e">E</span>
-            <span className="map-compass-s">S</span>
-            <span className="map-compass-w">W</span>
-            <span className="map-compass-needle" />
-          </div>
+        <div className="map-nav-stack" aria-label="Map navigation controls">
+          <button
+            type="button"
+            className="map-compass-btn"
+            onClick={() => {
+              if (!mapInstance.current) return
+              mapInstance.current.easeTo({
+                bearing: 0,
+                pitch: 0,
+                duration: 800,
+              })
+            }}
+            aria-label={`Map compass, bearing ${Math.round(compassBearing)} degrees. Click to reset north and pitch`}
+            title="Reset North & Pitch"
+          >
+            <div className="map-compass-ring" style={{ transform: `rotate(${-compassBearing}deg)` }}>
+              <span className="map-compass-n">N</span>
+              <span className="map-compass-e">E</span>
+              <span className="map-compass-s">S</span>
+              <span className="map-compass-w">W</span>
+              <span className="map-compass-needle" />
+            </div>
+          </button>
+
+          <div className="map-nav-divider" />
+
+          <button
+            type="button"
+            className="map-nav-zoom-btn"
+            onClick={() => {
+              if (!mapInstance.current) return
+              mapInstance.current.zoomIn({ duration: 300 })
+            }}
+            aria-label="Zoom in"
+            title="Zoom in"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+
+          <button
+            type="button"
+            className="map-nav-zoom-btn"
+            onClick={() => {
+              if (!mapInstance.current) return
+              mapInstance.current.zoomOut({ duration: 300 })
+            }}
+            aria-label="Zoom out"
+            title="Zoom out"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
         </div>
       )}
 

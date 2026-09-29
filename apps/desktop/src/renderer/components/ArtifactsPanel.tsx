@@ -258,9 +258,8 @@ function inferSourcesFromText(title: string = '', content: string = ''): SourceE
   return inferred
 }
 
-function SourcesHeaderCard({ artifact }: { artifact: Artifact }) {
-  const [isExpanded, setIsExpanded] = useState(false)
-
+export function getResolvedSources(artifact: Artifact | null): SourceEntry[] {
+  if (!artifact) return []
   let sources: SourceEntry[] = []
   if (artifact.meta) {
     try {
@@ -284,159 +283,10 @@ function SourcesHeaderCard({ artifact }: { artifact: Artifact }) {
   }
 
   // Ensure all sources have their URLs resolved
-  sources = sources.map(s => ({
+  return sources.map((s) => ({
     ...s,
     url: resolveSourceUrl(s),
   }))
-
-  if (sources.length === 0) return null
-
-  return (
-    <div className="artifact-sources-card">
-      <div className="sources-card-header" onClick={() => setIsExpanded(prev => !prev)}>
-        <div className="sources-header-left">
-          <span className="sources-icon">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
-              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
-            </svg>
-          </span>
-          <span className="sources-title">Data Sources & Provenance</span>
-          <span className="sources-count-badge">{sources.length} {sources.length === 1 ? 'Source' : 'Sources'}</span>
-          <div className="sources-pill-preview">
-            {sources.slice(0, 4).map((s, idx) => {
-              const url = s.url || resolveSourceUrl(s)
-              return url ? (
-                <a
-                  key={idx}
-                  href={url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="sources-chip sources-chip-link"
-                  title={`Open ${s.name} (${url})`}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <span className="sources-chip-emoji">{getCategoryIcon(s.category)}</span>
-                  <span className="sources-chip-name">{s.name}</span>
-                  <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="sources-chip-ext">
-                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                    <polyline points="15 3 21 3 21 9"></polyline>
-                    <line x1="10" y1="14" x2="21" y2="3"></line>
-                  </svg>
-                </a>
-              ) : (
-                <span key={idx} className="sources-chip" title={`${s.name} (${s.provider || s.category})`}>
-                  <span className="sources-chip-emoji">{getCategoryIcon(s.category)}</span>
-                  <span className="sources-chip-name">{s.name}</span>
-                </span>
-              )
-            })}
-            {sources.length > 4 && (
-              <span className="sources-more-chip">+{sources.length - 4} more</span>
-            )}
-          </div>
-        </div>
-        <button
-          className="sources-toggle-btn"
-          aria-label={isExpanded ? 'Collapse sources' : 'Expand sources'}
-        >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            style={{ transform: isExpanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }}
-          >
-            <polyline points="6 9 12 15 18 9"></polyline>
-          </svg>
-        </button>
-      </div>
-
-      {isExpanded && (
-        <div className="sources-card-body">
-          <p className="sources-body-subtitle">
-            Verified data origins, query extents, calculation rules, and planning norms used in this document:
-          </p>
-          <div className="sources-table-wrapper">
-            <table className="sources-table">
-              <thead>
-                <tr>
-                  <th>Source & Category</th>
-                  <th>Provider / Endpoint</th>
-                  <th>Query Scope & Parameters</th>
-                  <th>Date / Time</th>
-                  <th>Analytical Basis & Assumptions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sources.map((s, idx) => (
-                  <tr key={idx}>
-                    <td>
-                      <div className="sources-table-name">
-                        <span className="sources-table-emoji">{getCategoryIcon(s.category)}</span>
-                        {s.url ? (
-                          <a
-                            href={s.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="sources-link"
-                            title={`Open official ${s.name} portal / documentation (${s.url})`}
-                          >
-                            <strong>{s.name}</strong>
-                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="sources-link-icon">
-                              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                              <polyline points="15 3 21 3 21 9"></polyline>
-                              <line x1="10" y1="14" x2="21" y2="3"></line>
-                            </svg>
-                          </a>
-                        ) : (
-                          <strong>{s.name}</strong>
-                        )}
-                      </div>
-                      <span className="sources-table-cat">{s.category || 'General'}</span>
-                    </td>
-                    <td>
-                      {s.url ? (
-                        <a
-                          href={s.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="sources-endpoint-link"
-                          title={`Open ${s.provider || s.name} (${s.url})`}
-                        >
-                          <code className="sources-table-code">{s.provider || 'Internal / Geodesic'}</code>
-                          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="sources-endpoint-icon">
-                            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                            <polyline points="15 3 21 3 21 9"></polyline>
-                            <line x1="10" y1="14" x2="21" y2="3"></line>
-                          </svg>
-                        </a>
-                      ) : (
-                        <code className="sources-table-code">{s.provider || 'Internal / Geodesic'}</code>
-                      )}
-                    </td>
-                    <td>
-                      <span className="sources-table-scope">{s.query_scope || 'Active Study Area'}</span>
-                    </td>
-                    <td>
-                      <span className="sources-table-time">{s.timestamp || 'Recorded'}</span>
-                    </td>
-                    <td>
-                      <p className="sources-table-basis">{s.basis_or_assumptions || 'Standard spatial calculations applied.'}</p>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-    </div>
-  )
 }
 
 export interface SupportedFormatOption {
@@ -444,6 +294,7 @@ export interface SupportedFormatOption {
   badge: string
   label: string
   description?: string
+  category?: 'Documents & Reports' | 'Data & Spreadsheets' | 'Media & Source'
 }
 
 export function getSupportedFormats(art: Artifact | null): SupportedFormatOption[] {
@@ -455,52 +306,64 @@ export function getSupportedFormats(art: Artifact | null): SupportedFormatOption
   const isImg = ['image', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(rawFmt) ||
                 Boolean(art.file_path && /\.(png|jpe?g|webp|gif|svg)$/i.test(art.file_path))
 
-  // 1. Image artifacts: only image formats
+  // 1. Image artifacts
   if (isImg) {
     const isJpg = rawFmt === 'jpg' || rawFmt === 'jpeg' || /\.(jpe?g|jpg)$/i.test(filePath)
     return [
-      { fmt: isJpg ? 'jpg' : 'png', badge: isJpg ? 'JPEG' : 'PNG', label: isJpg ? 'JPEG Image (.jpg)' : 'PNG Image (.png)', description: 'Raster image format' },
-      { fmt: isJpg ? 'png' : 'jpg', badge: isJpg ? 'PNG' : 'JPEG', label: isJpg ? 'PNG Image (.png)' : 'JPEG Image (.jpg)', description: isJpg ? 'Lossless raster graphic' : 'Compressed raster graphic' },
+      { fmt: isJpg ? 'jpg' : 'png', badge: isJpg ? 'JPEG' : 'PNG', label: isJpg ? 'JPEG Image (.jpg)' : 'PNG Image (.png)', description: isJpg ? 'Compressed raster graphic' : 'Lossless raster graphic', category: 'Media & Source' },
+      { fmt: isJpg ? 'png' : 'jpg', badge: isJpg ? 'PNG' : 'JPEG', label: isJpg ? 'PNG Image (.png)' : 'JPEG Image (.jpg)', description: isJpg ? 'Lossless raster graphic' : 'Compressed raster graphic', category: 'Media & Source' },
+      { fmt: 'original', badge: 'RAW', label: 'Original Image', description: 'Direct image file download', category: 'Media & Source' },
     ]
   }
 
-  // 2. Spatial GeoJSON artifacts: only spatial formats
+  // 2. Spatial GeoJSON artifacts
   if (rawFmt === 'geojson') {
     return [
-      { fmt: 'geojson', badge: 'GEOJSON', label: 'GeoJSON (.geojson)', description: 'Spatial vector features' },
-      { fmt: 'json', badge: 'JSON', label: 'JSON Data (.json)', description: 'Standard GeoJSON dataset' },
+      // Data & Spreadsheets
+      { fmt: 'geojson', badge: 'GEOJSON', label: 'GeoJSON Dataset (.geojson)', description: 'Spatial vector features with geometry', category: 'Data & Spreadsheets' },
+      { fmt: 'json', badge: 'JSON', label: 'JSON Data (.json)', description: 'Standard GeoJSON dataset object', category: 'Data & Spreadsheets' },
+      // Documents & Reports
+      { fmt: 'docx', badge: 'DOCX', label: 'Word Document (.docx)', description: 'Spatial summary report with map snapshot', category: 'Documents & Reports' },
+      { fmt: 'pdf', badge: 'PDF', label: 'PDF Document (.pdf)', description: 'Printable map report with feature table', category: 'Documents & Reports' },
+      { fmt: 'html', badge: 'HTML', label: 'HTML Web Page (.html)', description: 'Interactive standalone web export', category: 'Documents & Reports' },
+      // Media & Source
+      { fmt: 'png', badge: 'PNG', label: 'PNG Map Image (.png)', description: 'Lossless raster map snapshot', category: 'Media & Source' },
+      { fmt: 'jpg', badge: 'JPEG', label: 'JPEG Map Image (.jpg)', description: 'Compressed raster map snapshot', category: 'Media & Source' },
+      { fmt: 'txt', badge: 'TXT', label: 'Plain Text (.txt)', description: 'Raw geometry and feature attributes', category: 'Media & Source' },
     ]
   }
 
-  // 3. Tabular data artifacts: only spreadsheet formats
+  // 3. Tabular data artifacts
   if (rawFmt === 'table' || rawType === 'table') {
     return [
-      { fmt: 'csv', badge: 'CSV', label: 'CSV Spreadsheet (.csv)', description: 'Comma-separated tabular data' },
-      { fmt: 'xlsx', badge: 'EXCEL', label: 'Excel Workbook (.xlsx)', description: 'Microsoft Excel spreadsheet' },
+      // Data & Spreadsheets
+      { fmt: 'csv', badge: 'CSV', label: 'CSV Spreadsheet (.csv)', description: 'Comma-separated tabular dataset', category: 'Data & Spreadsheets' },
+      { fmt: 'xlsx', badge: 'XLSX', label: 'Excel Workbook (.xlsx)', description: 'Formatted Microsoft Excel workbook', category: 'Data & Spreadsheets' },
+      { fmt: 'json', badge: 'JSON', label: 'JSON Data (.json)', description: 'Structured JSON records array', category: 'Data & Spreadsheets' },
+      // Documents & Reports
+      { fmt: 'docx', badge: 'DOCX', label: 'Word Document (.docx)', description: 'Word report with formatted table', category: 'Documents & Reports' },
+      { fmt: 'pdf', badge: 'PDF', label: 'PDF Document (.pdf)', description: 'Printable document with styled table', category: 'Documents & Reports' },
+      { fmt: 'html', badge: 'HTML', label: 'HTML Web Page (.html)', description: 'Styled standalone web table', category: 'Documents & Reports' },
+      // Media & Source
+      { fmt: 'txt', badge: 'TXT', label: 'Plain Text (.txt)', description: 'ASCII aligned tabular text', category: 'Media & Source' },
+      { fmt: 'md', badge: 'MD', label: 'Markdown Table (.md)', description: 'Raw Markdown table syntax', category: 'Media & Source' },
     ]
   }
 
-  // 4. Word Document artifacts / reports: only DOCX and PDF!
-  if (rawFmt === 'docx' || filePath.endsWith('.docx') || rawType === 'report') {
-    return [
-      { fmt: 'docx', badge: 'DOCX', label: 'Word Document (.docx)', description: 'Formatted Microsoft Word file' },
-      { fmt: 'pdf', badge: 'PDF', label: 'PDF Document (.pdf)', description: 'Printable formatted report' },
-    ]
-  }
-
-  // 5. PDF artifacts: only PDF and DOCX
-  if (rawFmt === 'pdf' || filePath.endsWith('.pdf')) {
-    return [
-      { fmt: 'pdf', badge: 'PDF', label: 'PDF Document (.pdf)', description: 'Printable formatted report' },
-      { fmt: 'docx', badge: 'DOCX', label: 'Word Document (.docx)', description: 'Formatted Microsoft Word file' },
-    ]
-  }
-
-  // 6. Generic markdown reports / analyses / notes
+  // 4. Word Document artifacts / reports / PDFs / generic markdown
   return [
-    { fmt: 'docx', badge: 'DOCX', label: 'Word Document (.docx)', description: 'Formatted Microsoft Word file' },
-    { fmt: 'pdf', badge: 'PDF', label: 'PDF Document (.pdf)', description: 'Printable formatted report' },
-    { fmt: 'md', badge: 'MD', label: 'Markdown (.md)', description: 'Raw markdown document source' },
+    // Documents & Reports
+    { fmt: 'docx', badge: 'DOCX', label: 'Word Document (.docx)', description: 'Formatted Microsoft Word report', category: 'Documents & Reports' },
+    { fmt: 'pdf', badge: 'PDF', label: 'PDF Document (.pdf)', description: 'Printable high-resolution document', category: 'Documents & Reports' },
+    { fmt: 'html', badge: 'HTML', label: 'HTML Web Page (.html)', description: 'Styled standalone web document', category: 'Documents & Reports' },
+    // Data & Spreadsheets
+    { fmt: 'xlsx', badge: 'XLSX', label: 'Excel Workbook (.xlsx)', description: 'Extracted metrics & structured tables', category: 'Data & Spreadsheets' },
+    { fmt: 'json', badge: 'JSON', label: 'JSON Data (.json)', description: 'Structured document object & metadata', category: 'Data & Spreadsheets' },
+    // Media & Source
+    { fmt: 'png', badge: 'PNG', label: 'PNG Image (.png)', description: 'High-res visual report snapshot', category: 'Media & Source' },
+    { fmt: 'jpg', badge: 'JPEG', label: 'JPEG Image (.jpg)', description: 'Compressed visual snapshot', category: 'Media & Source' },
+    { fmt: 'txt', badge: 'TXT', label: 'Plain Text (.txt)', description: 'Clean unformatted plain text', category: 'Media & Source' },
+    { fmt: 'md', badge: 'MD', label: 'Markdown Source (.md)', description: 'Raw Markdown syntax file', category: 'Media & Source' },
   ]
 }
 
@@ -538,6 +401,7 @@ export default function ArtifactsPanel({
   const [selectedId, setSelectedId] = useState<number | null>(selectedArtifactId ?? null)
   const [fullArtifact, setFullArtifact] = useState<Artifact | null>(null)
   const [loadingFull, setLoadingFull] = useState(false)
+  const resolvedSources = fullArtifact ? getResolvedSources(fullArtifact) : []
 
   // Sync external selectedArtifactId changes into selectedId state
   useEffect(() => {
@@ -726,24 +590,31 @@ export default function ArtifactsPanel({
     }
   }
 
-  // Download menu dropdown state
+  // Download & Sources menu dropdown state
   const [isDownloadMenuOpen, setIsDownloadMenuOpen] = useState(false)
+  const [isSourcesMenuOpen, setIsSourcesMenuOpen] = useState(false)
   const [downloadingFmt, setDownloadingFmt] = useState<string | null>(null)
   const downloadDropdownRef = useRef<HTMLDivElement>(null)
+  const sourcesDropdownRef = useRef<HTMLDivElement>(null)
 
-  // Close download menu on outside click or Escape
+  // Close menus on outside click or Escape
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (downloadDropdownRef.current && !downloadDropdownRef.current.contains(e.target as Node)) {
+      const target = e.target as Node
+      if (downloadDropdownRef.current && !downloadDropdownRef.current.contains(target)) {
         setIsDownloadMenuOpen(false)
+      }
+      if (sourcesDropdownRef.current && !sourcesDropdownRef.current.contains(target)) {
+        setIsSourcesMenuOpen(false)
       }
     }
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setIsDownloadMenuOpen(false)
+        setIsSourcesMenuOpen(false)
       }
     }
-    if (isDownloadMenuOpen) {
+    if (isDownloadMenuOpen || isSourcesMenuOpen) {
       document.addEventListener('mousedown', handleClickOutside)
       window.addEventListener('keydown', handleKeyDown)
     }
@@ -751,11 +622,12 @@ export default function ArtifactsPanel({
       document.removeEventListener('mousedown', handleClickOutside)
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [isDownloadMenuOpen])
+  }, [isDownloadMenuOpen, isSourcesMenuOpen])
 
-  // Reset dropdown when selection changes
+  // Reset dropdowns when selection changes
   useEffect(() => {
     setIsDownloadMenuOpen(false)
+    setIsSourcesMenuOpen(false)
     setDownloadingFmt(null)
   }, [selectedId])
 
@@ -847,7 +719,25 @@ export default function ArtifactsPanel({
         return
       }
 
-      // 5. Multi-format export pipeline (PDF, DOCX generation, etc.)
+      // 5. Raw Markdown download
+      if (targetFmt === 'md' || targetFmt === 'markdown') {
+        const downloadUrl = getUrl(`/${artId}/download`)
+        const a = document.createElement('a')
+        a.href = downloadUrl
+        a.setAttribute('download', `${safeTitle}.md`)
+        document.body.appendChild(a)
+        a.click()
+        setTimeout(() => {
+          try {
+            document.body.removeChild(a)
+          } catch {}
+        }, 1500)
+        setCopiedNotification('Downloaded Markdown (.md)!')
+        setTimeout(() => setCopiedNotification(null), 2500)
+        return
+      }
+
+      // 6. Multi-format export pipeline (PDF, DOCX generation, etc.)
       await handleExportWithMap(artId, targetFmt)
       setCopiedNotification(`Downloaded ${targetFmt.toUpperCase()}!`)
       setTimeout(() => setCopiedNotification(null), 2500)
@@ -1000,7 +890,6 @@ export default function ArtifactsPanel({
     if (fmt === 'markdown') {
       return (
         <div className="artifact-detail">
-          {!editingContent && <SourcesHeaderCard artifact={artifact} />}
           {editingContent ? (
             <>
               <textarea
@@ -1014,162 +903,65 @@ export default function ArtifactsPanel({
               </div>
             </>
           ) : (
-            <>
-              <div className="artifact-detail-markdown">
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  rehypePlugins={[rehypeHighlight]}
-                  components={{
-                    ...headingComponents,
-                    img: ({ src, alt, ...props }) => {
-                      let resolvedSrc = src || ''
-                      if (
-                        resolvedSrc.startsWith('artifacts_store/') ||
-                        resolvedSrc.startsWith('artifacts_store\\') ||
-                        resolvedSrc.startsWith('artifacts_store')
-                      ) {
-                        const filename = resolvedSrc.replace(/\\/g, '/').split('/').pop() || ''
-                        const idMatch = filename.match(/^(\d+)\./)
-                        if (idMatch) {
-                          resolvedSrc = `${API_BASE}/${idMatch[1]}/download${workspacePath ? `?workspace=${encodeURIComponent(workspacePath)}` : ''}`
-                        }
-                      } else if (!resolvedSrc.startsWith('http://') && !resolvedSrc.startsWith('https://') && !resolvedSrc.startsWith('data:')) {
-                        const numMatch = resolvedSrc.match(/^(\d+)(\.\w+)?$/)
-                        if (numMatch) {
-                          resolvedSrc = `${API_BASE}/${numMatch[1]}/download${workspacePath ? `?workspace=${encodeURIComponent(workspacePath)}` : ''}`
-                        } else {
-                          const target = (resolvedSrc || alt || '').trim().toLowerCase()
-                          const found = artifacts.find((a) => {
-                            const atitle = (a.title || '').trim().toLowerCase()
-                            if (!atitle) return false
-                            return (
-                              atitle === target ||
-                              (alt && atitle === alt.trim().toLowerCase()) ||
-                              (target.length > 2 && atitle.includes(target)) ||
-                              (alt && alt.length > 2 && atitle.includes(alt.trim().toLowerCase())) ||
-                              (target.length > 2 && target.includes(atitle)) ||
-                              (alt && alt.length > 2 && alt.trim().toLowerCase().includes(atitle))
-                            )
-                          })
-                          if (found) {
-                            resolvedSrc = `${API_BASE}/${found.id}/download${workspacePath ? `?workspace=${encodeURIComponent(workspacePath)}` : ''}`
-                          }
+            <div className="artifact-detail-markdown">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeHighlight]}
+                components={{
+                  ...headingComponents,
+                  img: ({ src, alt, ...props }) => {
+                    let resolvedSrc = src || ''
+                    if (
+                      resolvedSrc.startsWith('artifacts_store/') ||
+                      resolvedSrc.startsWith('artifacts_store\\') ||
+                      resolvedSrc.startsWith('artifacts_store')
+                    ) {
+                      const filename = resolvedSrc.replace(/\\/g, '/').split('/').pop() || ''
+                      const idMatch = filename.match(/^(\d+)\./)
+                      if (idMatch) {
+                        resolvedSrc = `${API_BASE}/${idMatch[1]}/download${workspacePath ? `?workspace=${encodeURIComponent(workspacePath)}` : ''}`
+                      }
+                    } else if (!resolvedSrc.startsWith('http://') && !resolvedSrc.startsWith('https://') && !resolvedSrc.startsWith('data:')) {
+                      const numMatch = resolvedSrc.match(/^(\d+)(\.\w+)?$/)
+                      if (numMatch) {
+                        resolvedSrc = `${API_BASE}/${numMatch[1]}/download${workspacePath ? `?workspace=${encodeURIComponent(workspacePath)}` : ''}`
+                      } else {
+                        const target = (resolvedSrc || alt || '').trim().toLowerCase()
+                        const found = artifacts.find((a) => {
+                          const atitle = (a.title || '').trim().toLowerCase()
+                          if (!atitle) return false
+                          return (
+                            atitle === target ||
+                            (alt && atitle === alt.trim().toLowerCase()) ||
+                            (target.length > 2 && atitle.includes(target)) ||
+                            (alt && alt.length > 2 && atitle.includes(alt.trim().toLowerCase())) ||
+                            (target.length > 2 && target.includes(atitle)) ||
+                            (alt && alt.length > 2 && alt.trim().toLowerCase().includes(atitle))
+                          )
+                        })
+                        if (found) {
+                          resolvedSrc = `${API_BASE}/${found.id}/download${workspacePath ? `?workspace=${encodeURIComponent(workspacePath)}` : ''}`
                         }
                       }
-                      return (
-                        <div className="figure-container" style={{ textAlign: 'center', margin: '16px 0' }}>
-                          <img
-                            src={resolvedSrc}
-                            alt={alt || 'Figure'}
-                            className="map-img"
-                            style={{ maxWidth: '100%', height: 'auto', borderRadius: 8, border: '1px solid #334155' }}
-                            {...props}
-                          />
-                          {alt && <p className="caption" style={{ fontSize: '0.85rem', color: '#94a3b8', fontStyle: 'italic', marginTop: 6 }}>Figure: {alt}</p>}
-                        </div>
-                      )
-                    },
-                  }}
-                >
-                  {content}
-                </ReactMarkdown>
-              </div>
-              <div className="artifact-actions">
-                <button
-                  className="edit-btn"
-                  onClick={() => { setEditContentValue(content); setEditingContent(true) }}
-                  style={{ display: 'inline-flex', alignItems: 'center' }}
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: 4 }}>
-                    <path d="M12 20h9"></path>
-                    <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
-                  </svg>
-                  Edit
-                </button>
-                <button
-                  className="download-btn docx-btn"
-                  onClick={() => handleExportWithMap(id, 'docx')}
-                  style={{ display: 'inline-flex', alignItems: 'center' }}
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: 4 }}>
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                    <polyline points="14 2 14 8 20 8"></polyline>
-                  </svg>
-                  Word (.docx)
-                </button>
-                <button
-                  className="download-btn pdf-btn"
-                  onClick={() => handleExportWithMap(id, 'pdf')}
-                  style={{ display: 'inline-flex', alignItems: 'center' }}
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: 4 }}>
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                    <polyline points="14 2 14 8 20 8"></polyline>
-                  </svg>
-                  PDF
-                </button>
-                <button
-                  className="download-btn html-btn"
-                  onClick={() => handleExportWithMap(id, 'html')}
-                  style={{ display: 'inline-flex', alignItems: 'center' }}
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: 4 }}>
-                    <polyline points="16 18 22 12 16 6"></polyline>
-                    <polyline points="8 6 2 12 8 18"></polyline>
-                  </svg>
-                  HTML
-                </button>
-                <button
-                  className="download-btn xlsx-btn"
-                  onClick={() => handleExportWithMap(id, 'xlsx')}
-                  style={{ display: 'inline-flex', alignItems: 'center' }}
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: 4 }}>
-                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                    <line x1="3" y1="9" x2="21" y2="9"></line>
-                    <line x1="9" y1="21" x2="9" y2="9"></line>
-                  </svg>
-                  Excel (.xlsx)
-                </button>
-                <button
-                  className="download-btn txt-btn"
-                  onClick={() => handleExportWithMap(id, 'txt')}
-                  style={{ display: 'inline-flex', alignItems: 'center' }}
-                >
-                  TXT
-                </button>
-                <button
-                  className="download-btn png-btn"
-                  onClick={() => handleExportWithMap(id, 'png')}
-                  style={{ display: 'inline-flex', alignItems: 'center' }}
-                >
-                  PNG Image
-                </button>
-                <button
-                  className="download-btn jpg-btn"
-                  onClick={() => handleExportWithMap(id, 'jpg')}
-                  style={{ display: 'inline-flex', alignItems: 'center' }}
-                >
-                  JPEG Image
-                </button>
-                <button
-                  className="download-btn json-btn"
-                  onClick={() => handleExportWithMap(id, 'json')}
-                  style={{ display: 'inline-flex', alignItems: 'center' }}
-                >
-                  JSON
-                </button>
-                <a
-                  className="download-btn markdown-btn"
-                  href={getUrl(`/${id}/download`)}
-                  download
-                  style={{ display: 'inline-flex', alignItems: 'center' }}
-                >
-                  Markdown
-                </a>
-              </div>
-
-            </>
+                    }
+                    return (
+                      <div className="figure-container" style={{ textAlign: 'center', margin: '16px 0' }}>
+                        <img
+                          src={resolvedSrc}
+                          alt={alt || 'Figure'}
+                          className="map-img"
+                          style={{ maxWidth: '100%', height: 'auto', borderRadius: 8, border: '1px solid #334155' }}
+                          {...props}
+                        />
+                        {alt && <p className="caption" style={{ fontSize: '0.85rem', color: '#94a3b8', fontStyle: 'italic', marginTop: 6 }}>Figure: {alt}</p>}
+                      </div>
+                    )
+                  },
+                }}
+              >
+                {content}
+              </ReactMarkdown>
+            </div>
           )}
           <span className="artifact-date">{new Date(artifact.created_at).toLocaleDateString()}</span>
         </div>
@@ -1199,47 +991,30 @@ export default function ArtifactsPanel({
               </div>
             </>
           ) : (
-            <>
-              {tableData ? (
-                <div className="artifact-table-wrapper">
-                  <table className="artifact-table">
-                    <thead>
-                      <tr>
-                        {tableData.columns.map((col, i) => (
-                          <th key={i}>{col}</th>
+            tableData ? (
+              <div className="artifact-table-wrapper">
+                <table className="artifact-table">
+                  <thead>
+                    <tr>
+                      {tableData.columns.map((col, i) => (
+                        <th key={i}>{col}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tableData.rows.map((row, ri) => (
+                      <tr key={ri}>
+                        {row.map((cell, ci) => (
+                          <td key={ci}>{String(cell ?? '')}</td>
                         ))}
                       </tr>
-                    </thead>
-                    <tbody>
-                      {tableData.rows.map((row, ri) => (
-                        <tr key={ri}>
-                          {row.map((cell, ci) => (
-                            <td key={ci}>{String(cell ?? '')}</td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <p className="artifact-geojson-summary">Invalid table data</p>
-              )}
-              <div className="artifact-actions">
-                <button
-                  className="edit-btn"
-                  onClick={() => { setEditContentValue(content); setEditingContent(true) }}
-                >
-                  Edit
-                </button>
-                <a
-                  className="download-btn"
-                  href={getUrl(`/${id}/download`)}
-                  download
-                >
-                  Download
-                </a>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            </>
+            ) : (
+              <p className="artifact-geojson-summary">Invalid table data</p>
+            )
           )}
           <span className="artifact-date">{new Date(artifact.created_at).toLocaleDateString()}</span>
         </div>
@@ -1251,11 +1026,6 @@ export default function ArtifactsPanel({
 
     if (isImageFormat) {
       const downloadUrl = getUrl(`/${id}/download`)
-      const fileExt = artifact.file_path
-        ? artifact.file_path.split('.').pop()?.toLowerCase() || 'png'
-        : (fmt === 'jpg' || fmt === 'jpeg' ? 'jpg' : (fmt === 'image' ? 'png' : fmt.toLowerCase()))
-      const isJpg = fileExt === 'jpg' || fileExt === 'jpeg' || fmt.toLowerCase() === 'jpg' || fmt.toLowerCase() === 'jpeg'
-      const displayFmt = isJpg ? 'JPEG' : (fileExt || fmt || 'PNG').toUpperCase()
       return (
         <div className="artifact-detail">
           <img
@@ -1264,11 +1034,6 @@ export default function ArtifactsPanel({
              alt={aTitle}
              onClick={() => window.open(downloadUrl, '_blank')}
           />
-          <div className="artifact-actions">
-            <a className="download-btn" href={downloadUrl} download={`${aTitle.replace(/[^a-z0-9-_]/gi, '_')}.${isJpg ? 'jpg' : fileExt}`}>
-              Download {displayFmt}
-            </a>
-          </div>
           <span className="artifact-date">{new Date(artifact.created_at).toLocaleDateString()}</span>
         </div>
       )
@@ -1292,24 +1057,6 @@ export default function ArtifactsPanel({
             {featureCount !== null ? `${featureCount} feature(s)` : 'GeoJSON'}
             {bbox ? ` · bbox: ${bbox}` : ''}
           </p>
-          <div className="artifact-actions">
-            <button
-              className="add-to-map-btn"
-              onClick={() => {
-                try {
-                  const geojson = JSON.parse(fullArtifact!.content)
-                  onAddToMap(geojson, fullArtifact!.title)
-                } catch {
-                  console.error('Invalid GeoJSON content')
-                }
-              }}
-            >
-              Add to map
-            </button>
-            <a className="download-btn" href={getUrl(`/${id}/download`)} download>
-              Download
-            </a>
-          </div>
           <span className="artifact-date">{new Date(artifact.created_at).toLocaleDateString()}</span>
         </div>
       )
@@ -1317,7 +1064,6 @@ export default function ArtifactsPanel({
     // PDF, DOCX, HTML, XLSX, TXT, JSON and fallback formats
     return (
       <div className="artifact-detail">
-        <SourcesHeaderCard artifact={artifact} />
         <div className="artifact-detail-markdown">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
@@ -1376,48 +1122,6 @@ export default function ArtifactsPanel({
           >
             {content}
           </ReactMarkdown>
-        </div>
-        <div className="artifact-actions" style={{ marginTop: 16, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-          {artifact.file_path && (
-            <a
-              className="download-btn"
-              href={getUrl(`/${id}/download`)}
-              download
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', fontSize: '0.85rem', fontWeight: 600, borderRadius: 6, background: '#1e40af', color: '#ffffff', textDecoration: 'none' }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                <polyline points="7 10 12 15 17 10"></polyline>
-                <line x1="12" y1="15" x2="12" y2="3"></line>
-              </svg>
-              Download {fmt.toUpperCase()} File
-            </a>
-          )}
-          <button
-            className="download-btn pdf-btn"
-            onClick={() => handleExportWithMap(id, 'pdf')}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', fontSize: '0.85rem', fontWeight: 600, borderRadius: 6, background: '#3b82f6', color: '#ffffff', border: 'none', cursor: 'pointer' }}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-              <polyline points="7 10 12 15 17 10"></polyline>
-              <line x1="12" y1="15" x2="12" y2="3"></line>
-            </svg>
-            Export PDF
-          </button>
-          <button
-            className="download-btn docx-btn"
-            onClick={() => handleExportWithMap(id, 'docx')}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', fontSize: '0.85rem', fontWeight: 600, borderRadius: 6, background: '#2563eb', color: '#ffffff', border: 'none', cursor: 'pointer' }}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-              <polyline points="14 2 14 8 20 8"></polyline>
-              <line x1="16" y1="13" x2="8" y2="13"></line>
-              <line x1="16" y1="17" x2="8" y2="17"></line>
-            </svg>
-            Export Word (.docx)
-          </button>
         </div>
         <span className="artifact-date">{new Date(artifact.created_at).toLocaleDateString()}</span>
       </div>
@@ -1641,10 +1345,161 @@ export default function ArtifactsPanel({
                       : (fullArtifact.format ?? fullArtifact.artifact_type ?? 'PNG').toUpperCase()}
                   </span>
 
+                  {/* Edit button in header */}
+                  {!editingContent &&
+                    (fullArtifact.format === 'markdown' ||
+                      fullArtifact.format === 'table' ||
+                      !fullArtifact.format ||
+                      fullArtifact.artifact_type === 'note' ||
+                      fullArtifact.artifact_type === 'report') && (
+                      <button
+                        className="artifact-header-action-btn edit-header-btn"
+                        onClick={() => {
+                          setEditContentValue(fullArtifact.content)
+                          setEditingContent(true)
+                        }}
+                        title="Edit artifact content"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <path d="M12 20h9"></path>
+                          <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                        </svg>
+                        <span>Edit</span>
+                      </button>
+                    )}
+
+                  {/* Add to map button for GeoJSON */}
+                  {fullArtifact.format === 'geojson' && (
+                    <button
+                      className="artifact-header-action-btn add-to-map-header-btn"
+                      onClick={() => {
+                        try {
+                          const geojson = JSON.parse(fullArtifact.content)
+                          onAddToMap(geojson, fullArtifact.title)
+                        } catch {
+                          console.error('Invalid GeoJSON content')
+                        }
+                      }}
+                      title="Add GeoJSON layers to interactive map"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                        <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6" />
+                        <line x1="8" y1="2" x2="8" y2="18" />
+                        <line x1="16" y1="6" x2="16" y2="22" />
+                      </svg>
+                      <span>Add to map</span>
+                    </button>
+                  )}
+
+                  {/* Sources dropdown button */}
+                  {resolvedSources.length > 0 && (
+                    <div className="artifact-sources-dropdown-container" ref={sourcesDropdownRef}>
+                      <button
+                        className={`artifact-header-sources-btn ${isSourcesMenuOpen ? 'active' : ''}`}
+                        onClick={() => {
+                          setIsSourcesMenuOpen((prev) => !prev)
+                          setIsDownloadMenuOpen(false)
+                        }}
+                        title="View data sources and analytical provenance"
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                        </svg>
+                        <span>Sources</span>
+                        <span className="sources-header-badge">{resolvedSources.length}</span>
+                        <svg
+                          width="10"
+                          height="10"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2.5"
+                          style={{
+                            transform: isSourcesMenuOpen ? 'rotate(180deg)' : 'none',
+                            transition: 'transform 0.15s ease',
+                            opacity: 0.8,
+                          }}
+                        >
+                          <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                      </button>
+
+                      {isSourcesMenuOpen && (
+                        <div className="artifact-sources-menu">
+                          <div className="artifact-sources-menu-header">
+                            <div className="sources-menu-header-title">
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                              </svg>
+                              <span>Data Sources & Provenance</span>
+                            </div>
+                            <span className="sources-menu-count">{resolvedSources.length} {resolvedSources.length === 1 ? 'Source' : 'Sources'}</span>
+                          </div>
+                          <div className="artifact-sources-menu-list">
+                            {resolvedSources.map((s, idx) => (
+                              <div key={idx} className="artifact-source-card-item">
+                                <div className="source-card-top">
+                                  <span className="source-card-category">{s.category || 'Data Source'}</span>
+                                  <span className="source-card-name" title={s.name}>{s.name}</span>
+                                  {s.url && (
+                                    <a
+                                      href={s.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="source-card-link-btn"
+                                      title={`Open documentation for ${s.name}`}
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <span>View Docs</span>
+                                      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                                        <polyline points="15 3 21 3 21 9"></polyline>
+                                        <line x1="10" y1="14" x2="21" y2="3"></line>
+                                      </svg>
+                                    </a>
+                                  )}
+                                </div>
+                                {s.provider && (
+                                  <div className="source-card-field">
+                                    <span className="source-card-label">Provider:</span>
+                                    <span className="source-card-value">{s.provider}</span>
+                                  </div>
+                                )}
+                                {s.query_scope && (
+                                  <div className="source-card-field">
+                                    <span className="source-card-label">Scope:</span>
+                                    <span className="source-card-value">{s.query_scope}</span>
+                                  </div>
+                                )}
+                                {s.basis_or_assumptions && (
+                                  <div className="source-card-field">
+                                    <span className="source-card-label">Basis:</span>
+                                    <span className="source-card-value">{s.basis_or_assumptions}</span>
+                                  </div>
+                                )}
+                                {s.timestamp && (
+                                  <div className="source-card-field">
+                                    <span className="source-card-label">Date/Time:</span>
+                                    <span className="source-card-value">{s.timestamp}</span>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Download dropdown */}
                   <div className="artifact-download-dropdown-container" ref={downloadDropdownRef}>
                     <button
-                      className="artifact-header-download-btn"
-                      onClick={() => setIsDownloadMenuOpen((prev) => !prev)}
+                      className={`artifact-header-download-btn ${isDownloadMenuOpen ? 'active' : ''}`}
+                      onClick={() => {
+                        setIsDownloadMenuOpen((prev) => !prev)
+                        setIsSourcesMenuOpen(false)
+                      }}
                       disabled={Boolean(downloadingFmt)}
                       title="Download artifact in supported formats"
                     >
@@ -1686,25 +1541,35 @@ export default function ArtifactsPanel({
 
                     {isDownloadMenuOpen && (
                       <div className="artifact-download-menu">
-                        <div className="artifact-download-menu-header">Supported Formats</div>
-                        {getSupportedFormats(fullArtifact).map((opt) => (
-                          <button
-                            key={opt.fmt}
-                            className="artifact-download-menu-item"
-                            onClick={() => handleDownloadFormat(opt.fmt)}
-                          >
-                            <span className="format-badge-mini">{opt.badge}</span>
-                            <div className="format-info">
-                              <span className="format-label">{opt.label}</span>
-                              {opt.description && <span className="format-desc">{opt.description}</span>}
+                        {(() => {
+                          const supportedFormats = getSupportedFormats(fullArtifact)
+                          const categories = Array.from(new Set(supportedFormats.map((f) => f.category || 'Supported Formats')))
+                          return categories.map((category) => (
+                            <div key={category} className="artifact-download-menu-section">
+                              <div className="artifact-download-menu-header">{category}</div>
+                              {supportedFormats
+                                .filter((f) => (f.category || 'Supported Formats') === category)
+                                .map((opt) => (
+                                  <button
+                                    key={opt.fmt}
+                                    className="artifact-download-menu-item"
+                                    onClick={() => handleDownloadFormat(opt.fmt)}
+                                  >
+                                    <span className="format-badge-mini">{opt.badge}</span>
+                                    <div className="format-info">
+                                      <span className="format-label">{opt.label}</span>
+                                      {opt.description && <span className="format-desc">{opt.description}</span>}
+                                    </div>
+                                    <svg className="download-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                      <polyline points="7 10 12 15 17 10"></polyline>
+                                      <line x1="12" y1="15" x2="12" y2="3"></line>
+                                    </svg>
+                                  </button>
+                                ))}
                             </div>
-                            <svg className="download-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                              <polyline points="7 10 12 15 17 10"></polyline>
-                              <line x1="12" y1="15" x2="12" y2="3"></line>
-                            </svg>
-                          </button>
-                        ))}
+                          ))
+                        })()}
                       </div>
                     )}
                   </div>

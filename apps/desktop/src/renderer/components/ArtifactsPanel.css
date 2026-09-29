@@ -692,14 +692,249 @@
   flex-shrink: 0;
 }
 
-/* Header actions container (badge + download dropdown) */
+/* Header actions container (badge + edit + sources + download) */
 .artifacts-detail-header-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-shrink: 0;
 }
 
+/* Edit & Add to map buttons in header */
+.artifact-header-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #e2e8f0;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+  line-height: 1;
+}
+
+.artifact-header-action-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.25);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  transform: translateY(-0.5px);
+}
+
+.artifact-header-action-btn:active {
+  transform: translateY(1px);
+}
+
+.artifact-header-action-btn.add-to-map-header-btn {
+  background: rgba(16, 185, 129, 0.12);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.artifact-header-action-btn.add-to-map-header-btn:hover {
+  background: rgba(16, 185, 129, 0.22);
+  color: #6ee7b7;
+  border-color: rgba(16, 185, 129, 0.5);
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.3);
+}
+
+/* Sources dropdown container & button */
+.artifact-sources-dropdown-container {
+  position: relative;
+  display: inline-flex;
+}
+
+.artifact-header-sources-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(56, 189, 248, 0.12);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+  line-height: 1;
+}
+
+.artifact-header-sources-btn:hover,
+.artifact-header-sources-btn.active {
+  background: rgba(56, 189, 248, 0.2);
+  color: #7dd3fc;
+  border-color: rgba(56, 189, 248, 0.5);
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.3);
+  transform: translateY(-0.5px);
+}
+
+.artifact-header-sources-btn:active {
+  transform: translateY(1px);
+}
+
+.sources-header-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 9999px;
+  background: rgba(56, 189, 248, 0.22);
+  color: #bae6fd;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  line-height: 1.1;
+}
+
+/* Sources menu dropdown popover */
+.artifact-sources-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 1000;
+  background: #141c2c;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.7);
+  border-radius: 10px;
+  padding: 8px;
+  width: 380px;
+  max-width: calc(100vw - 32px);
+  max-height: 480px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: contextMenuFade 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.artifact-sources-menu-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px 6px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.sources-menu-header-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #94a3b8;
+}
+
+.sources-menu-count {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.12);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.25);
+}
+
+.artifact-sources-menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.artifact-source-card-item {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: all 0.15s ease;
+}
+
+.artifact-source-card-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(56, 189, 248, 0.3);
+}
+
+.source-card-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.source-card-category {
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.14);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  flex-shrink: 0;
+}
+
+.source-card-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #f8fafc;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.source-card-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  padding: 2px 7px;
+  border-radius: 4px;
+  text-decoration: none;
+  flex-shrink: 0;
+  transition: all 0.12s ease;
+}
+
+.source-card-link-btn:hover {
+  background: rgba(56, 189, 248, 0.25);
+  border-color: rgba(56, 189, 248, 0.5);
+  color: #ffffff;
+}
+
+.source-card-field {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.source-card-label {
+  color: #64748b;
+  font-weight: 500;
+  flex-shrink: 0;
+  font-size: 10.5px;
+}
+
+.source-card-value {
+  color: #cbd5e1;
+  word-break: break-word;
+}
+
+/* Download dropdown container & button */
 .artifact-download-dropdown-container {
   position: relative;
   display: inline-flex;
@@ -718,17 +953,12 @@
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.15s ease;
-}
-
-.artifact-header-download-btn:hover {
-  background: var(--bright-snow, #faf9f9);
-  box-shadow: 0 0 12px rgba(190, 227, 219, 0.5);
-}
   user-select: none;
   line-height: 1;
 }
 
-.artifact-header-download-btn:hover {
+.artifact-header-download-btn:hover,
+.artifact-header-download-btn.active {
   background: var(--bright-snow, #faf9f9);
   box-shadow: 0 2px 10px rgba(190, 227, 219, 0.4);
   transform: translateY(-0.5px);
@@ -744,21 +974,36 @@
   transform: none;
 }
 
+/* Download menu popup */
 .artifact-download-menu {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
   z-index: 1000;
   background: #161f30;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.7);
   border-radius: 8px;
   padding: 6px;
-  min-width: 250px;
+  min-width: 270px;
+  max-height: 480px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  animation: contextMenuFade 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.artifact-download-menu-section {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  animation: contextMenuFade 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.artifact-download-menu-section + .artifact-download-menu-section {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 5px;
+  margin-top: 3px;
 }
 
 .artifact-download-menu-header {
@@ -767,9 +1012,8 @@
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: #94a3b8;
-  padding: 6px 10px 4px 10px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  margin-bottom: 4px;
+  padding: 4px 8px 3px 8px;
+  margin-bottom: 2px;
 }
 
 .artifact-download-menu-item {
@@ -789,7 +1033,7 @@
 }
 
 .artifact-download-menu-item:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.08);
   color: #ffffff;
 }
 
@@ -803,7 +1047,7 @@
   border: 1px solid rgba(56, 189, 248, 0.25);
   letter-spacing: 0.04em;
   flex-shrink: 0;
-  min-width: 40px;
+  min-width: 44px;
   text-align: center;
 }
 

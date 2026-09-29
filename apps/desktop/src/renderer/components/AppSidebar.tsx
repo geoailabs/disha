@@ -5,7 +5,6 @@ import filesIcon from '../assets/icons/files_icon.png'
 import zonesIcon from '../assets/icons/zones_icon.png'
 import scenariosIcon from '../assets/icons/scenarios_icon.png'
 import exportIcon from '../assets/icons/export_icon.png'
-import streetViewIcon from '../assets/streetview.png'
 
 export type AppNavMode = 'map' | 'streetview' | 'artifacts' | 'document'
 export type WorkspaceCategory = 'layers' | 'files' | 'zones' | 'scenarios' | 'export'
@@ -208,25 +207,6 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
               </svg>
             </div>
             {!isCollapsed && <span className="sidebar-nav-label">Map Canvas</span>}
-          </button>
-
-          {/* Street View */}
-          <button
-            className={`sidebar-nav-item ${currentMode === 'streetview' ? 'active' : ''}`}
-            onClick={() => onModeChange('streetview')}
-            title="Street View & Inspection"
-          >
-            <div className="sidebar-nav-icon">
-              <span
-                className="sidebar-streetview-icon"
-                style={{
-                  WebkitMaskImage: `url("${streetViewIcon}")`,
-                  maskImage: `url("${streetViewIcon}")`,
-                }}
-                aria-hidden="true"
-              />
-            </div>
-            {!isCollapsed && <span className="sidebar-nav-label">Street View</span>}
           </button>
 
           {/* Artifacts & Reports */}
