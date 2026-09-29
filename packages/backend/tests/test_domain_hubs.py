@@ -77,6 +77,54 @@ class DomainHubsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(res.map_action)
         self.assertEqual(res.map_action["action"], "draw_distance_measurement")
 
+    async def test_scenario_report_orchestrates_and_returns_complete_report(self):
+        server = self.scenarios_hub.scenario_server
+
+        async def fake_analyze(args):
+            return {
+                "status": "success",
+                "baseline_metrics": {
+                    "area_km2": 2.5,
+                    "road_density_km_per_km2": 12.0,
+                    "transit_coverage_pct": 40.0,
+                    "green_space_pct": 8.0,
+                },
+            }
+
+        async def fake_generate(args):
+            return {
+                "status": "success",
+                "scenario_count": 2,
+                "scenarios_data": [
+                    {"name": "Baseline", "description": "Current trend."},
+                    {"name": "Compact Growth", "description": "Focused growth."},
+                ],
+            }
+
+        async def fake_compare(args):
+            return {
+                "status": "success",
+                "recommended_scenario": "Compact Growth",
+                "comparison_table_markdown": "| Scenario | Total |\n|---|---|\n| Compact Growth | 8 |",
+            }
+
+        server._analyze_area = fake_analyze
+        server._generate_planning_scenarios = fake_generate
+        server._compare_scenarios = fake_compare
+
+        result = await self.scenarios_hub.execute("create_scenario_report", {
+            "context": "Sector 17 rapid urbanisation",
+            "bbox": {"south": 30.7, "west": 76.7, "north": 30.8, "east": 76.8},
+        })
+
+        self.assertEqual(result.status, "success")
+        self.assertEqual(result.data["recommended_scenario"], "Compact Growth")
+        self.assertIn("## Table of Contents", result.data["report_markdown"])
+        self.assertIn("## 7. Implementation Roadmap", result.data["report_markdown"])
+        self.assertIn("Data Sources and Methodology", result.data["report_markdown"])
+        self.assertEqual(result.map_action["action"], "add_scenarios")
+        self.assertEqual(result.artifact["artifact_type"], "report")
+
     async def test_edit_artifact_without_image(self):
         # Create test artifact first
         create_res = await self.utility_hub.execute("create_artifact", {
@@ -458,4 +506,3 @@ class DomainHubsTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

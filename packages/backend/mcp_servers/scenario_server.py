@@ -14,10 +14,53 @@ class ScenarioServer:
         "generate_planning_scenarios",
         "compare_scenarios",
         "analyze_area_for_scenarios",
+        "create_scenario_report",
     }
 
     def get_declarations(self) -> list[ToolDeclaration]:
         return [
+            ToolDeclaration(
+                name="create_scenario_report",
+                description=(
+                    "Create a complete, data-anchored planning scenario report from a plain-language brief. "
+                    "This is the preferred tool when the user asks to create, develop, assess, or report a scenario "
+                    "such as rapid urbanisation in a sector, neighbourhood, district, or study area. It automatically "
+                    "runs baseline GIS metrics, generates alternatives, compares them, selects a recommendation, and "
+                    "returns a professional Markdown report suitable for saving as an artifact. Pass bbox from the "
+                    "resolved study-area boundary when available; otherwise the active map bounds are used."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "context": {
+                            "type": "string",
+                            "description": "The user's complete scenario brief, including place, challenge, and objectives.",
+                        },
+                        "bbox": {
+                            "type": "object",
+                            "description": "Optional study-area bounds {south, west, north, east} in WGS84.",
+                            "properties": {
+                                "south": {"type": "number"}, "west": {"type": "number"},
+                                "north": {"type": "number"}, "east": {"type": "number"},
+                            },
+                            "required": ["south", "west", "north", "east"],
+                        },
+                        "focus_area": {
+                            "type": "string",
+                            "enum": ["mobility", "land_use", "zoning", "environment", "mixed"],
+                        },
+                        "scenario_types": {
+                            "type": "array", "items": {"type": "string"},
+                            "description": "Optional alternatives; defaults to baseline, compact, TOD, and green-corridor options.",
+                        },
+                        "criteria": {
+                            "type": "array", "items": {"type": "string"},
+                            "description": "Optional comparison criteria.",
+                        },
+                    },
+                    "required": ["context"],
+                },
+            ),
             ToolDeclaration(
                 name="analyze_area_for_scenarios",
                 description=(
@@ -143,6 +186,8 @@ class ScenarioServer:
         ]
 
     async def execute(self, tool_name: str, args: dict) -> dict:
+        if tool_name == "create_scenario_report":
+            return await self._create_scenario_report(args)
         if tool_name == "analyze_area_for_scenarios":
             return await self._analyze_area(args)
         if tool_name == "generate_planning_scenarios":
@@ -150,6 +195,145 @@ class ScenarioServer:
         if tool_name == "compare_scenarios":
             return await self._compare_scenarios(args)
         return {"error": f"Unknown tool: {tool_name}"}
+
+    async def _create_scenario_report(self, args: dict) -> dict:
+        """Run the complete scenario workflow as one deterministic tool call."""
+        context = (args.get("context") or "").strip()
+        if not context:
+            return {"status": "error", "error": "context is required"}
+
+        bbox = args.get("bbox")
+        if not bbox:
+            # The chat hub supplies the active map context as a private argument.
+            map_context = args.get("_map_context") or {}
+            bounds = map_context.get("bounds") or {}
+            if all(bounds.get(k) is not None for k in ("south", "west", "north", "east")):
+                bbox = {k: bounds[k] for k in ("south", "west", "north", "east")}
+
+        baseline_result = {"status": "success", "baseline_metrics": {}}
+        if bbox:
+            baseline_result = await self._analyze_area({
+                "bbox": bbox,
+                "workspace": args.get("_workspace", ""),
+            })
+        baseline = baseline_result.get("baseline_metrics") or {}
+
+        generated = await self._generate_planning_scenarios({
+            "context": context,
+            "scenario_types": args.get("scenario_types"),
+            "focus_area": args.get("focus_area", "mixed"),
+            "baseline_metrics": baseline,
+        })
+        if generated.get("status") != "success":
+            return generated
+
+        scenario_inputs = [
+            {"name": s["name"], "description": s.get("description", "")}
+            for s in generated.get("scenarios_data", [])
+        ]
+        comparison = await self._compare_scenarios({
+            "scenarios": scenario_inputs,
+            "criteria": args.get("criteria"),
+            "baseline_metrics": baseline,
+        })
+        if comparison.get("status") != "success":
+            return comparison
+
+        report = self._build_complete_report(
+            context=context,
+            bbox=bbox,
+            baseline=baseline,
+            generated=generated,
+            comparison=comparison,
+        )
+        return {
+            "status": "success",
+            "report_markdown": report,
+            "report_title": f"Planning Scenario Report — {context}",
+            "baseline_metrics": baseline,
+            "scenarios_data": generated.get("scenarios_data", []),
+            "comparison": comparison,
+            "recommended_scenario": comparison.get("recommended_scenario"),
+            "scenario_count": generated.get("scenario_count", 0),
+            "data_anchored": bool(baseline),
+        }
+
+    @staticmethod
+    def _build_complete_report(*, context: str, bbox: dict | None, baseline: dict,
+                               generated: dict, comparison: dict) -> str:
+        """Render a professional report with no invented measurements."""
+        title = f"Planning Scenario Report: {context}"
+        lines = [
+            f"# {title}",
+            "",
+            "## Table of Contents",
+            "- [1. Executive Summary](#1-executive-summary)",
+            "- [2. Study Area and Brief](#2-study-area-and-brief)",
+            "- [3. Existing Conditions](#3-existing-conditions)",
+            "- [4. Scenario Alternatives](#4-scenario-alternatives)",
+            "- [5. Comparative Assessment](#5-comparative-assessment)",
+            "- [6. Recommended Direction](#6-recommended-direction)",
+            "- [7. Implementation Roadmap](#7-implementation-roadmap)",
+            "- [8. Risks, Assumptions, and Monitoring](#8-risks-assumptions-and-monitoring)",
+            "- [9. Data Sources and Methodology](#9-data-sources-and-methodology)",
+            "",
+            "## 1. Executive Summary",
+            f"This report evaluates alternative responses to **{context}**. "
+            f"The recommended direction is **{comparison.get('recommended_scenario', 'to be selected through stakeholder review')}**, "
+            "subject to statutory review, feasibility testing, and community engagement.",
+            "",
+            "## 2. Study Area and Brief",
+            f"**Scenario brief:** {context}",
+        ]
+        if bbox:
+            lines.append(f"**Study-area bounding box (WGS84):** south={bbox['south']}, west={bbox['west']}, north={bbox['north']}, east={bbox['east']}")
+        else:
+            lines.append("**Study-area extent:** No explicit geographic bounds were supplied; findings are indicative and should be validated against a confirmed boundary.")
+
+        lines += ["", "## 3. Existing Conditions"]
+        if baseline:
+            lines += [
+                "The following baseline indicators were retrieved before scenario scoring:",
+                "| Indicator | Observed value |",
+                "|---|---:|",
+            ]
+            labels = {
+                "area_km2": "Study area (km²)", "road_density_km_per_km2": "Road density (km/km²)",
+                "transit_coverage_pct": "Transit coverage (%)", "green_space_pct": "Green space (%)",
+                "walkability_km_per_km2": "Footway density (km/km²)", "population_count": "Population count",
+                "population_density_ha": "Population density (people/ha)",
+                "employment_density_jobs_per_km2": "Employment density (jobs/km²)",
+            }
+            for key, label in labels.items():
+                if baseline.get(key) is not None:
+                    lines.append(f"| {label} | {baseline[key]} |")
+        else:
+            lines.append("No live baseline bounds were available. The alternatives below are strategic benchmarks, not measured site conditions.")
+
+        lines += ["", "## 4. Scenario Alternatives"]
+        for item in generated.get("scenarios_data", []):
+            lines += [f"### {item['name']}", item.get("description", ""), ""]
+
+        lines += ["## 5. Comparative Assessment", comparison.get("comparison_table_markdown", "No comparison table was returned."),
+                  "", "## 6. Recommended Direction",
+                  f"**Recommended scenario:** {comparison.get('recommended_scenario', 'Stakeholder selection required')}",
+                  "The recommendation is based on the comparative scoring shown above. Confirm it through stakeholder weighting, infrastructure capacity checks, financial appraisal, and statutory compliance review.",
+                  "", "## 7. Implementation Roadmap",
+                  "| Phase | Priority actions | Decision gate |",
+                  "|---|---|---|",
+                  "| 0–2 years | Confirm boundary and baseline survey; protect critical corridors; initiate stakeholder engagement. | Validated evidence base |",
+                  "| 2–5 years | Adopt policy and zoning changes; deliver priority mobility, public-realm, and green-infrastructure projects. | Funding and approvals |",
+                  "| 5–10 years | Scale infrastructure, monitor outcomes, and recalibrate development controls. | Annual performance review |",
+                  "", "## 8. Risks, Assumptions, and Monitoring",
+                  "Key risks include land-value pressure, infrastructure gaps, delivery funding, displacement, and climate exposure. Monitor population and employment growth, transit access, road congestion, green-space provision, walkability, housing affordability, and project delivery annually. All projections require validation against detailed surveys, statutory plans, and service-capacity studies.",
+                  "", "## 9. Data Sources and Methodology",
+                  "| Data Source / Tool | Category | Provider / Endpoint | Query Scope & Parameters | Date / Timestamp | Analytical Basis & Assumptions |",
+                  "|---|---|---|---|---|---|",
+                  "| `analyze_area_for_scenarios` | Existing conditions | OpenStreetMap Overpass; WorldPop / geospatial proxy | Study-area bounding box; roads, transit, green space, walkability, population, employment | Run time | Area and densities computed from retrieved data; unavailable values are not fabricated |",
+                  "| `generate_planning_scenarios` | Alternative design | Disha scenario framework | User brief and selected focus area | Run time | Strategy archetypes are planning benchmarks and require local validation |",
+                  "| `compare_scenarios` | MCDA and emissions | Disha scoring model; Gifford–Hanna box model | Scenario descriptions, criteria, and baseline metrics | Run time | Scores use real baseline signals when available; otherwise qualitative benchmark scores |",
+        ]
+        return "\n".join(lines)
 
     # ── analyze_area_for_scenarios ────────────────────────────────────────────
 

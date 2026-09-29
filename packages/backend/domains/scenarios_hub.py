@@ -52,8 +52,18 @@ class ScenariosHub(BaseDomainHub):
         map_action = None
         artifact = None
 
-        if tool_name == "generate_planning_scenarios" and res.get("status") == "success":
+        if tool_name in ("generate_planning_scenarios", "create_scenario_report") and res.get("status") == "success":
             map_action = {"action": "add_scenarios", "payload": {"scenarios": res.get("scenarios_data", [])}}
+
+        if tool_name == "create_scenario_report" and res.get("status") == "success":
+            report = res.get("report_markdown", "")
+            if report:
+                artifact = {
+                    "title": res.get("report_title", "Planning Scenario Report"),
+                    "artifact_type": "report",
+                    "format": "markdown",
+                    "content": report,
+                }
 
         if tool_name == "compare_scenarios" and res.get("status") == "success":
             report_md = res.get("report") or res.get("summary", "")
