@@ -60,6 +60,7 @@ export default function DocumentView({
   const [indexedDocs, setIndexedDocs] = useState<Record<string, boolean>>({})
   const [indexingDocId, setIndexingDocId] = useState<string | null>(null)
   const [ragError, setRagError] = useState<string | null>(null)
+  const [isDragOver, setIsDragOver] = useState(false)
 
   const loadDocImage = async (doc: OpenDocument): Promise<DocumentImage | null> => {
     const ext = doc.filePath.split('.').pop()?.toLowerCase() || ''
@@ -217,16 +218,7 @@ export default function DocumentView({
     handleDocDragEnd()
   }
 
-  const openFile = async () => {
-    const chosen = await window.electronAPI.openFile({
-      filters: [
-        { name: 'Maps & Documents', extensions: [...IMAGE_EXTS, 'pdf'] },
-        { name: 'Images', extensions: IMAGE_EXTS },
-        { name: 'PDF', extensions: ['pdf'] },
-      ],
-    })
-    if (!chosen) return
-
+  const openFilePath = async (chosen: string) => {
     const name = chosen.split('/').pop() || chosen
     const ext = name.split('.').pop()?.toLowerCase() || ''
     const pdf = ext === 'pdf'
@@ -276,6 +268,28 @@ export default function DocumentView({
       setPdfRasterError(`Failed to load document: ${(e as Error).message}`)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const openFile = async () => {
+    const chosen = await window.electronAPI.openFile({
+      filters: [
+        { name: 'Maps & Documents', extensions: [...IMAGE_EXTS, 'pdf'] },
+        { name: 'Images', extensions: IMAGE_EXTS },
+        { name: 'PDF', extensions: ['pdf'] },
+      ],
+    })
+    if (!chosen) return
+    await openFilePath(chosen)
+  }
+
+  const handleDropFile = async (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragOver(false)
+    const file = e.dataTransfer.files?.[0]
+    const path = (file as any)?.path
+    if (path) {
+      await openFilePath(path)
     }
   }
 
@@ -489,39 +503,78 @@ export default function DocumentView({
       {/* ── Detail Pane ── */}
       <div className="doc-detail-pane">
         {activeDoc === null ? (
-          <div className="doc-empty-detail">
-            <div className="doc-empty-detail-icon">
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2">
-                <path d="M9 20H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8l4 4v4" />
-                <path d="M9 20h9a2 2 0 0 0 2-2v-7" />
-                <rect x="9" y="14" width="8" height="6" rx="1" />
-              </svg>
+          <div
+            className={`doc-empty-detail ${isDragOver ? 'drag-over' : ''}`}
+            onDragOver={(e) => {
+              e.preventDefault()
+              setIsDragOver(true)
+            }}
+            onDragLeave={() => setIsDragOver(false)}
+            onDrop={handleDropFile}
+          >
+            <div className="doc-empty-dropzone-card">
+              <div className="doc-empty-icon-ring">
+                <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                  <line x1="12" y1="18" x2="12" y2="12" />
+                  <polyline points="9 15 12 12 15 15" />
+                </svg>
+              </div>
+              <h3 className="doc-empty-title">Drag & drop map image or PDF</h3>
+              <p className="doc-empty-subtitle">
+                Analyse zoning master plans, architectural drawings, and raster surveys with the AI assistant
+              </p>
+              <div className="doc-empty-tags">
+                <span className="doc-format-tag">PDF</span>
+                <span className="doc-format-tag">TIFF</span>
+                <span className="doc-format-tag">PNG</span>
+                <span className="doc-format-tag">JPEG</span>
+                <span className="doc-format-tag">WEBP</span>
+              </div>
+              <button className="doc-empty-open-btn" onClick={openFile}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 6 }}>
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="17 8 12 3 7 8" />
+                  <line x1="12" y1="3" x2="12" y2="15" />
+                </svg>
+                Browse Files
+              </button>
             </div>
-            <p className="doc-empty-detail-title">No document open</p>
-            <p className="doc-empty-detail-hint">
-              Open a map image or PDF to analyse it with the AI assistant.
-            </p>
           </div>
         ) : (
           <>
             <div className="doc-toolbar">
-              <span className="doc-filename" title={activeDoc.filePath}>
-                {activeDoc.fileName}
-              </span>
-              {activeDoc.isPdf && (
-                <span className="doc-pdf-note">
-                  PDF — AI sees page {activeDoc.pdfPage} of {activeDoc.pdfTotalPages}
+              <div className="doc-toolbar-meta">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="doc-toolbar-icon">
+                  {activeDoc.isPdf ? (
+                    <>
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                      <polyline points="14 2 14 8 20 8" />
+                    </>
+                  ) : (
+                    <>
+                      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                      <circle cx="8.5" cy="8.5" r="1.5" />
+                      <polyline points="21 15 16 10 5 21" />
+                    </>
+                  )}
+                </svg>
+                <span className="doc-filename" title={activeDoc.filePath}>
+                  {activeDoc.fileName}
                 </span>
-              )}
+                <span className="doc-type-badge">{activeDoc.isPdf ? 'PDF' : 'IMAGE'}</span>
+              </div>
+
               {activeDoc.isPdf && activeDoc.pdfTotalPages > 1 && (
-                <span className="doc-pdf-pager">
+                <div className="doc-pdf-pager">
                   <button
                     className="doc-pdf-pager-btn"
                     onClick={() => switchPdfPage(-1)}
                     disabled={loading || activeDoc.pdfPage <= 1}
                     title="Previous page"
                   >
-                    ‹
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
                   </button>
                   <span className="doc-pdf-pager-label">
                     {activeDoc.pdfPage} / {activeDoc.pdfTotalPages}
@@ -532,50 +585,47 @@ export default function DocumentView({
                     disabled={loading || activeDoc.pdfPage >= activeDoc.pdfTotalPages}
                     title="Next page"
                   >
-                    ›
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6" /></svg>
                   </button>
-                </span>
+                </div>
               )}
+
               {loading && <span className="doc-loading-inline">Rendering…</span>}
               {pdfRasterError && <span className="doc-loading-inline doc-error">{pdfRasterError}</span>}
 
               {/* RAG Indexing Widget */}
-              <span className="doc-rag-widget" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px', marginRight: '8px' }}>
+              <div className="doc-rag-widget">
                 {indexedDocs[activeDoc.id] ? (
-                  <span style={{ color: '#10b981', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}>
-                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#10b981' }}></span>
+                  <span className="doc-rag-status indexed" title="Indexed into vector database for AI search">
+                    <span className="status-dot green" />
                     Indexed for AI Chat
                   </span>
                 ) : indexingDocId === activeDoc.id ? (
-                  <span style={{ color: '#eab308', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                    <svg className="rag-spinner" style={{ width: '12px', height: '12px' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                      <circle cx="12" cy="12" r="10" stroke="var(--border)" strokeDasharray="32"></circle>
+                  <span className="doc-rag-status indexing">
+                    <svg className="rag-spinner" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                      <circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.2)" strokeDasharray="32" />
                     </svg>
                     Indexing document...
                   </span>
                 ) : (
                   <button
+                    className="doc-rag-index-btn"
                     onClick={() => indexDocument(activeDoc)}
-                    style={{
-                      background: 'var(--accent, #3b82f6)',
-                      color: '#ffffff',
-                      border: 'none',
-                      borderRadius: '4px',
-                      padding: '3px 8px',
-                      fontSize: '11px',
-                      cursor: 'pointer',
-                      fontWeight: 600
-                    }}
+                    title="Index document text into vector store for AI search"
                   >
-                    Index Document for AI Chat
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 5 }}>
+                      <circle cx="11" cy="11" r="8" />
+                      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                    </svg>
+                    Index for AI Chat
                   </button>
                 )}
                 {ragError && (
-                  <span style={{ color: 'var(--peach-fuzz, #ffd6ba)', fontSize: '11px' }} title={ragError}>
+                  <span className="doc-rag-status error" title={ragError}>
                     Ingestion failed
                   </span>
                 )}
-              </span>
+              </div>
             </div>
 
             <div className="doc-content">

@@ -2379,15 +2379,15 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
             type="button"
             className="map-compass-btn"
             onClick={() => {
-              if (!mapInstance.current) return
-              mapInstance.current.easeTo({
+              if (!mapRef.current) return
+              mapRef.current.easeTo({
                 bearing: 0,
                 pitch: 0,
                 duration: 800,
               })
             }}
-            aria-label={`Map compass, bearing ${Math.round(compassBearing)} degrees. Click to reset north and pitch`}
-            title="Reset North & Pitch"
+            aria-label={`Map compass, bearing ${Math.round(compassBearing)} degrees. Click to reset north`}
+            title="Reset North"
           >
             <div className="map-compass-ring" style={{ transform: `rotate(${-compassBearing}deg)` }}>
               <span className="map-compass-n">N</span>
@@ -2404,8 +2404,8 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
             type="button"
             className="map-nav-zoom-btn"
             onClick={() => {
-              if (!mapInstance.current) return
-              mapInstance.current.zoomIn({ duration: 300 })
+              if (!mapRef.current) return
+              mapRef.current.zoomIn({ duration: 300 })
             }}
             aria-label="Zoom in"
             title="Zoom in"
@@ -2420,8 +2420,8 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
             type="button"
             className="map-nav-zoom-btn"
             onClick={() => {
-              if (!mapInstance.current) return
-              mapInstance.current.zoomOut({ duration: 300 })
+              if (!mapRef.current) return
+              mapRef.current.zoomOut({ duration: 300 })
             }}
             aria-label="Zoom out"
             title="Zoom out"

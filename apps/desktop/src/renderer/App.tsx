@@ -3306,6 +3306,7 @@ function App() {
         style={{
           ['--sidebar-width' as any]: isSidebarCollapsed ? '58px' : '210px',
           ['--category-pane-width' as any]: isLayerCardOpen ? '396px' : '0px',
+          ['--chat-drawer-offset' as any]: rightWidth > 0 ? `${rightWidth + 26}px` : '14px',
         }}
       >
         {/* Left Icon Rail / Sidebar (Mundi AppSidebar) */}

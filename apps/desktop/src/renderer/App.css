@@ -744,8 +744,14 @@ select option {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--bg-primary);
+  background: var(--bg-primary, #0c111d);
   z-index: 2;
+  box-sizing: border-box;
+  padding-top: 14px;
+  padding-bottom: 14px;
+  padding-left: calc(var(--sidebar-width, 58px) + 26px);
+  padding-right: var(--chat-drawer-offset, 14px);
+  transition: padding 0.22s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* Floating Slide-out Right Chat Drawer */
