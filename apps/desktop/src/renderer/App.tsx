@@ -3408,7 +3408,7 @@ function App() {
               isOpen={isLayerCardOpen}
               activeTab={activeWorkspaceCategory as FloatingTab}
               onTabChange={(tab) => {
-                if (tab === 'layers' || tab === 'files' || tab === 'zones' || tab === 'scenarios' || tab === 'export') {
+                if (tab === 'layers' || tab === 'files' || tab === 'scenarios' || tab === 'export') {
                   setActiveWorkspaceCategory(tab)
                 }
               }}
@@ -3590,50 +3590,158 @@ function App() {
               </div>
             )}
 
-            {/* Centered Modal Attribute Table */}
-            {attrLayerId && (
-              <div className="mundi-modal-backdrop" onClick={() => setAttrLayerId(null)}>
-                <div className="mundi-modal-container" onClick={(e) => e.stopPropagation()}>
-                  {(() => {
-                    const layer = layers.find((l) => l.id === attrLayerId)
-                    if (!layer) return null
-                    return (
-                      <AttributeTable
-                        layer={layer}
-                        onChange={handleAttributesChange}
-                        onClose={() => setAttrLayerId(null)}
-                        selectedFeatures={selectedFeatures}
-                        onSelectFeature={handleSelectFeature}
-                      />
-                    )
-                  })()}
-                </div>
-              </div>
-            )}
+            {/* Docked Attribute Table Inspector (Near Layer) */}
+            {attrLayerId && (() => {
+              const layer = layers.find((l) => l.id === attrLayerId)
+              if (!layer) return null
+              const isRaster = Boolean(layer.wmsSpec || layer.geeSpec || layer.rasterOverlaySpec)
+              return (
+                <div
+                  className="flc-inspector-card flc-attribute-inspector"
+                  style={{
+                    left: isLayerCardOpen
+                      ? 'calc(var(--sidebar-width, 58px) + 26px + 370px + 12px)'
+                      : 'calc(var(--sidebar-width, 58px) + 26px)',
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flc-inspector-header">
+                    <div className="flc-inspector-title-group">
+                      <div className="flc-inspector-icon">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                          <path d="M12 20h9" />
+                          <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                        </svg>
+                      </div>
+                      <div className="flc-inspector-heading-wrap">
+                        <span className="flc-inspector-type">Attribute Table</span>
+                        <h3 className="flc-inspector-heading" title={layer.name}>{layer.name}</h3>
+                      </div>
+                    </div>
 
-            {/* Floating Symbology Modal */}
-            {stylingLayerId && (
-              <div className="mundi-modal-backdrop" onClick={() => setStylingLayerId(null)}>
-                <div className="mundi-symbology-container" onClick={(e) => e.stopPropagation()}>
-                  {(() => {
-                    const layer = layers.find((l) => l.id === stylingLayerId)
-                    if (!layer) return null
-                    return (
-                      <SymbologyPanel
-                        layer={layer}
-                        onChange={handleSymbologyChange}
-                        onClose={() => setStylingLayerId(null)}
-                        onUpdateLayer={(layerId, updates) => {
-                          setLayers((prev) =>
-                            prev.map((l) => (l.id === layerId ? { ...l, ...updates } : l)),
-                          )
+                    <div className="flc-inspector-actions">
+                      <button
+                        className="flc-inspector-switch-btn"
+                        onClick={() => {
+                          setStylingLayerId(layer.id)
+                          setAttrLayerId(null)
                         }}
-                      />
-                    )
-                  })()}
+                        title="Switch to Symbology & Style"
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+                          <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+                          <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+                          <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+                          <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z" />
+                        </svg>
+                        <span>Symbology</span>
+                      </button>
+
+                      <button
+                        className="flc-inspector-close-btn"
+                        onClick={() => setAttrLayerId(null)}
+                        title="Close Inspector"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                          <line x1="18" y1="6" x2="6" y2="18" />
+                          <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flc-inspector-content">
+                    <AttributeTable
+                      layer={layer}
+                      onChange={handleAttributesChange}
+                      onClose={() => setAttrLayerId(null)}
+                      selectedFeatures={selectedFeatures}
+                      onSelectFeature={handleSelectFeature}
+                    />
+                  </div>
                 </div>
-              </div>
-            )}
+              )
+            })()}
+
+            {/* Docked Symbology Inspector (Near Layer) */}
+            {stylingLayerId && (() => {
+              const layer = layers.find((l) => l.id === stylingLayerId)
+              if (!layer) return null
+              const isRaster = Boolean(layer.wmsSpec || layer.geeSpec || layer.rasterOverlaySpec)
+              return (
+                <div
+                  className="flc-inspector-card flc-symbology-inspector"
+                  style={{
+                    left: isLayerCardOpen
+                      ? 'calc(var(--sidebar-width, 58px) + 26px + 370px + 12px)'
+                      : 'calc(var(--sidebar-width, 58px) + 26px)',
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flc-inspector-header">
+                    <div className="flc-inspector-title-group">
+                      <div className="flc-inspector-icon">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                          <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+                          <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+                          <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+                          <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+                          <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z" />
+                        </svg>
+                      </div>
+                      <div className="flc-inspector-heading-wrap">
+                        <span className="flc-inspector-type">Symbology & Styling</span>
+                        <h3 className="flc-inspector-heading" title={layer.name}>{layer.name}</h3>
+                      </div>
+                    </div>
+
+                    <div className="flc-inspector-actions">
+                      {!isRaster && (
+                        <button
+                          className="flc-inspector-switch-btn"
+                          onClick={() => {
+                            setAttrLayerId(layer.id)
+                            setStylingLayerId(null)
+                          }}
+                          title="Switch to Attribute Table"
+                        >
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M12 20h9" />
+                            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                          </svg>
+                          <span>Attributes</span>
+                        </button>
+                      )}
+
+                      <button
+                        className="flc-inspector-close-btn"
+                        onClick={() => setStylingLayerId(null)}
+                        title="Close Inspector"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                          <line x1="18" y1="6" x2="6" y2="18" />
+                          <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flc-inspector-content">
+                    <SymbologyPanel
+                      layer={layer}
+                      onChange={handleSymbologyChange}
+                      onClose={() => setStylingLayerId(null)}
+                      onUpdateLayer={(layerId, updates) => {
+                        setLayers((prev) =>
+                          prev.map((l) => (l.id === layerId ? { ...l, ...updates } : l)),
+                        )
+                      }}
+                    />
+                  </div>
+                </div>
+              )
+            })()}
 
             {/* Legend */}
             <Legend layers={layers} />

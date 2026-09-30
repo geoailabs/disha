@@ -2,12 +2,11 @@ import React from 'react'
 import './AppSidebar.css'
 import layersIcon from '../assets/icons/layers_icons.png'
 import filesIcon from '../assets/icons/files_icon.png'
-import zonesIcon from '../assets/icons/zones_icon.png'
 import scenariosIcon from '../assets/icons/scenarios_icon.png'
 import exportIcon from '../assets/icons/export_icon.png'
 
 export type AppNavMode = 'map' | 'streetview' | 'artifacts' | 'document'
-export type WorkspaceCategory = 'layers' | 'files' | 'zones' | 'scenarios' | 'export'
+export type WorkspaceCategory = 'layers' | 'files' | 'scenarios' | 'export'
 
 interface AppSidebarProps {
   currentMode: AppNavMode
@@ -126,24 +125,6 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
             {!isCollapsed && <span className="sidebar-nav-label">Files</span>}
           </button>
 
-          {/* Zones */}
-          <button
-            className={`sidebar-nav-item ${activeCategory === 'zones' && isCategoryPanelOpen ? 'active' : ''}`}
-            onClick={() => onCategoryClick?.('zones')}
-            title="Urban Zoning & Land Use"
-          >
-            <div className="sidebar-nav-icon">
-              <span
-                className="sidebar-mask-icon"
-                style={{
-                  WebkitMaskImage: `url("${zonesIcon}")`,
-                  maskImage: `url("${zonesIcon}")`,
-                }}
-                aria-hidden="true"
-              />
-            </div>
-            {!isCollapsed && <span className="sidebar-nav-label">Zones</span>}
-          </button>
 
           {/* Scenarios */}
           <button

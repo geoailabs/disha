@@ -8,7 +8,6 @@ import {
 } from '../types'
 import { Scenario } from './ScenarioPanel'
 import BookmarkPanel from './BookmarkPanel'
-import ZoningPanel from './ZoningPanel'
 import ScenarioPanel from './ScenarioPanel'
 import ScenarioBuilderPanel from './ScenarioBuilderPanel'
 import ExportPanel from './ExportPanel'
@@ -17,7 +16,6 @@ import './FloatingLayerCard.css'
 import * as turf from '@turf/turf'
 import layersIcon from '../assets/icons/layers_icons.png'
 import filesIcon from '../assets/icons/files_icon.png'
-import zonesIcon from '../assets/icons/zones_icon.png'
 import scenariosIcon from '../assets/icons/scenarios_icon.png'
 import exportIcon from '../assets/icons/export_icon.png'
 
@@ -49,7 +47,7 @@ const calculateLayerArea = (layer: GeoJSONLayer): string | null => {
   }
 }
 
-export type FloatingTab = 'layers' | 'files' | 'bookmarks' | 'zones' | 'scenarios' | 'export'
+export type FloatingTab = 'layers' | 'files' | 'bookmarks' | 'scenarios' | 'export'
 
 interface FloatingLayerCardProps {
   layers: GeoJSONLayer[]
@@ -182,7 +180,11 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
     setInternalTab(tab)
     onTabChangeProp?.(tab)
   }
-  const [openDropdownId, setOpenDropdownId] = useState<string | null>(null)
+  const [contextMenu, setContextMenu] = useState<{
+    layerId: string
+    x: number
+    y: number
+  } | null>(null)
   const [isWorkspaceMenuOpen, setIsWorkspaceMenuOpen] = useState(false)
   const [hoveredLayerTooltip, setHoveredLayerTooltip] = useState<{
     name: string
@@ -197,18 +199,39 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
       if (workspaceMenuRef.current && !workspaceMenuRef.current.contains(e.target as Node)) {
         setIsWorkspaceMenuOpen(false)
       }
-      setOpenDropdownId(null)
+      setContextMenu(null)
+    }
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setContextMenu(null)
+      }
     }
     document.addEventListener('click', handleClickOutside)
-    return () => document.removeEventListener('click', handleClickOutside)
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('click', handleClickOutside)
+      window.removeEventListener('keydown', handleKeyDown)
+    }
   }, [])
+
+  const handleContextMenu = (e: React.MouseEvent, layerId: string) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (onHoverFeature) {
+      onHoverFeature(layerId)
+    }
+    setContextMenu({
+      layerId,
+      x: e.clientX,
+      y: e.clientY,
+    })
+  }
 
   if (isOpen === false) return null
 
   const categoryMeta: Record<string, { label: string; icon: string; count?: number }> = {
     layers: { label: 'Layers', icon: layersIcon, count: layers.length },
     files: { label: 'Workspace Files', icon: filesIcon },
-    zones: { label: 'Zoning & Regulations', icon: zonesIcon },
     scenarios: { label: 'Scenarios', icon: scenariosIcon, count: scenarios.length },
     export: { label: 'Export Map', icon: exportIcon },
     bookmarks: { label: 'Bookmarks', icon: layersIcon, count: bookmarks.length },
@@ -293,6 +316,8 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
                       <div
                         key={layer.id}
                         className={`flc-layer-item ${selectedLayerIds.includes(layer.id) ? 'is-selected' : ''}`}
+                        onClick={() => onHoverFeature && onHoverFeature(layer.id)}
+                        onContextMenu={(e) => handleContextMenu(e, layer.id)}
                         onMouseEnter={(e) => {
                           const area = calculateLayerArea(layer)
                           setHoveredLayerTooltip({
@@ -361,105 +386,6 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
 
                         {/* Feature Count / Type */}
                         <span className="flc-layer-badge">{countBadge}</span>
-
-                        {/* Three-dots Menu Button */}
-                        <div className="flc-layer-menu-wrap">
-                          <button
-                            className="flc-dots-btn"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              setOpenDropdownId(openDropdownId === layer.id ? null : layer.id)
-                            }}
-                            title="Actions"
-                          >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                              <circle cx="5" cy="12" r="2" />
-                              <circle cx="12" cy="12" r="2" />
-                              <circle cx="19" cy="12" r="2" />
-                            </svg>
-                          </button>
-
-                          {openDropdownId === layer.id && (
-                            <div className="flc-dropdown-menu" onClick={(e) => e.stopPropagation()}>
-                              <button
-                                className="flc-dropdown-item"
-                                onClick={() => {
-                                  onZoomToLayer(layer.id)
-                                  setOpenDropdownId(null)
-                                }}
-                              >
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                  <circle cx="11" cy="11" r="8" />
-                                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                                  <line x1="11" y1="8" x2="11" y2="14" />
-                                  <line x1="8" y1="11" x2="14" y2="11" />
-                                </svg>
-                                <span>Zoom to Layer</span>
-                              </button>
-                              {!isRaster && (
-                                <button
-                                  className="flc-dropdown-item"
-                                  onClick={() => {
-                                    onAttributesLayer(layer.id)
-                                    setOpenDropdownId(null)
-                                  }}
-                                >
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                    <path d="M12 20h9" />
-                                    <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-                                  </svg>
-                                  <span>View Attributes</span>
-                                </button>
-                              )}
-                              <button
-                                className="flc-dropdown-item"
-                                onClick={() => {
-                                  onStyleLayer(layer.id)
-                                  setOpenDropdownId(null)
-                                }}
-                              >
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                  <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
-                                  <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
-                                  <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
-                                  <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
-                                  <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z" />
-                                </svg>
-                                <span>Symbology & Style</span>
-                              </button>
-                              {onExportLayerFile && !isRaster && (
-                                <button
-                                  className="flc-dropdown-item"
-                                  onClick={() => {
-                                    onExportLayerFile(layer.id, 'geojson')
-                                    setOpenDropdownId(null)
-                                  }}
-                                >
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                                    <polyline points="7 10 12 15 17 10" />
-                                    <line x1="12" y1="15" x2="12" y2="3" />
-                                  </svg>
-                                  <span>Export GeoJSON</span>
-                                </button>
-                              )}
-                              <div className="flc-dropdown-divider" />
-                              <button
-                                className="flc-dropdown-item item-danger"
-                                onClick={() => {
-                                  onRemoveLayer(layer.id)
-                                  setOpenDropdownId(null)
-                                }}
-                              >
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                  <polyline points="3 6 5 6 21 6" />
-                                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                                </svg>
-                                <span>Delete Layer</span>
-                              </button>
-                            </div>
-                          )}
-                        </div>
                       </div>
                     )
                   })
@@ -489,11 +415,6 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
               </div>
             )}
 
-            {activeTab === 'zones' && (
-              <div className="flc-tab-view">
-                <ZoningPanel />
-              </div>
-            )}
 
             {activeTab === 'scenarios' && (
               <div className="flc-tab-view flc-scenarios-tab">
@@ -558,6 +479,106 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
           )}
         </div>
       )}
+
+      {/* Floating Context Menu on Right Click */}
+      {contextMenu && (() => {
+        const menuLayer = layers.find((l) => l.id === contextMenu.layerId)
+        if (!menuLayer) return null
+        const isRaster = Boolean(menuLayer.type === 'raster' || (menuLayer as any).isRaster || menuLayer.wmsSpec || menuLayer.geeSpec || menuLayer.rasterOverlaySpec)
+
+        const menuWidth = 190
+        const menuHeight = 220
+        const posX = Math.max(10, Math.min(contextMenu.x, window.innerWidth - menuWidth - 10))
+        const posY = Math.max(10, Math.min(contextMenu.y, window.innerHeight - menuHeight - 10))
+
+        return (
+          <div
+            className="flc-floating-context-menu"
+            style={{ top: posY, left: posX }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flc-context-header">
+              <span className="flc-context-layer-name" title={menuLayer.name}>{menuLayer.name}</span>
+            </div>
+            <button
+              className="flc-dropdown-item"
+              onClick={() => {
+                onZoomToLayer(menuLayer.id)
+                setContextMenu(null)
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                <line x1="11" y1="8" x2="11" y2="14" />
+                <line x1="8" y1="11" x2="14" y2="11" />
+              </svg>
+              <span>Zoom to Layer</span>
+            </button>
+            {!isRaster && (
+              <button
+                className="flc-dropdown-item"
+                onClick={() => {
+                  onAttributesLayer(menuLayer.id)
+                  setContextMenu(null)
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                </svg>
+                <span>View Attributes</span>
+              </button>
+            )}
+            <button
+              className="flc-dropdown-item"
+              onClick={() => {
+                onStyleLayer(menuLayer.id)
+                setContextMenu(null)
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+                <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+                <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+                <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+                <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z" />
+              </svg>
+              <span>Symbology & Style</span>
+            </button>
+            {onExportLayerFile && !isRaster && (
+              <button
+                className="flc-dropdown-item"
+                onClick={() => {
+                  onExportLayerFile(menuLayer.id, 'geojson')
+                  setContextMenu(null)
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                <span>Export GeoJSON</span>
+              </button>
+            )}
+            <div className="flc-dropdown-divider" />
+            <button
+              className="flc-dropdown-item item-danger"
+              onClick={() => {
+                onRemoveLayer(menuLayer.id)
+                setContextMenu(null)
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+              </svg>
+              <span>Delete Layer</span>
+            </button>
+          </div>
+        )
+      })()}
     </div>
   )
 }

@@ -324,6 +324,42 @@
   margin: 0 0 8px;
 }
 
+/* ── High-Contrast, Accessible Hyperlinks in Artifacts ── */
+.artifact-detail-markdown a,
+.artifact-markdown-link,
+.artifacts-panel a {
+  color: #38bdf8 !important; /* Bright Electric Cyan (WCAG AAA contrast on dark) */
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1.5px;
+  text-decoration-color: rgba(56, 189, 248, 0.5);
+  transition: all 0.15s ease;
+  cursor: pointer;
+  display: inline;
+}
+
+.artifact-detail-markdown a:hover,
+.artifact-markdown-link:hover,
+.artifacts-panel a:hover {
+  color: #7dd3fc !important; /* Lighter glowing cyan on hover */
+  text-decoration-color: #38bdf8;
+  text-shadow: 0 0 10px rgba(56, 189, 248, 0.45);
+}
+
+.artifact-detail-markdown a:visited,
+.artifact-markdown-link:visited {
+  color: #818cf8 !important; /* Soft violet-blue visited link with high contrast */
+  text-decoration-color: rgba(129, 140, 248, 0.5);
+}
+
+.artifact-detail-markdown a:focus-visible,
+.artifact-markdown-link:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
 /* Heading hierarchy with accent colours */
 .artifact-detail-markdown h1 {
   font-size: 16px;

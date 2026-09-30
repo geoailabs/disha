@@ -957,6 +957,23 @@ export default function ArtifactsPanel({
                       </div>
                     )
                   },
+                  a: ({ href, children, ...props }) => (
+                    <a
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="artifact-markdown-link"
+                      onClick={(e) => {
+                        if (href && (window as any).electronAPI?.openExternal) {
+                          e.preventDefault()
+                          ;(window as any).electronAPI.openExternal(href)
+                        }
+                      }}
+                      {...props}
+                    >
+                      {children}
+                    </a>
+                  ),
                 }}
               >
                 {content}
@@ -1118,6 +1135,23 @@ export default function ArtifactsPanel({
                   </div>
                 )
               },
+              a: ({ href, children, ...props }) => (
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="artifact-markdown-link"
+                  onClick={(e) => {
+                    if (href && (window as any).electronAPI?.openExternal) {
+                      e.preventDefault()
+                      ;(window as any).electronAPI.openExternal(href)
+                    }
+                  }}
+                  {...props}
+                >
+                  {children}
+                </a>
+              ),
             }}
           >
             {content}

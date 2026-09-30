@@ -564,6 +564,56 @@
   animation: macosMenuIn 0.14s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* Native-Style Floating Context Menu (Right Click) */
+.flc-floating-context-menu {
+  position: fixed;
+  z-index: 9999;
+  min-width: 190px;
+  background: rgba(14, 20, 32, 0.94);
+  backdrop-filter: blur(36px) saturate(200%) contrast(105%);
+  -webkit-backdrop-filter: blur(36px) saturate(200%) contrast(105%);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  box-shadow: 
+    0 20px 48px rgba(0, 0, 0, 0.75),
+    inset 0 1px 1px rgba(255, 255, 255, 0.25);
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: flcContextMenuIn 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+  font-family: 'Canva Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  user-select: none;
+}
+
+@keyframes flcContextMenuIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.flc-context-header {
+  padding: 5px 8px 6px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  margin-bottom: 3px;
+}
+
+.flc-context-layer-name {
+  font-size: 11px;
+  font-weight: 700;
+  color: #38bdf8;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: -0.01em;
+}
+
 .flc-dropdown-item {
   background: transparent;
   border: none;
