@@ -11,6 +11,7 @@ from mcp_servers.emissions_server import EmissionsServer
 class ScenarioServer:
     description = "Planning Scenario Generator & Comparator with real geospatial data"
     tool_names = {
+        "prepare_scenario_plan",
         "generate_planning_scenarios",
         "compare_scenarios",
         "analyze_area_for_scenarios",
@@ -19,6 +20,32 @@ class ScenarioServer:
 
     def get_declarations(self) -> list[ToolDeclaration]:
         return [
+            ToolDeclaration(
+                name="prepare_scenario_plan",
+                description=(
+                    "Prepare an interactive planning-scenario draft from a plain-language brief. "
+                    "Use this when the user asks to create/develop a scenario but has not yet approved the plan. "
+                    "It collects baseline metrics, suggests alternatives, criteria, and a decision plan, then opens "
+                    "the Scenario panel for review. It must not create or save the final report."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "context": {"type": "string", "description": "Complete user scenario brief."},
+                        "bbox": {
+                            "type": "object", "description": "Optional WGS84 bounds.",
+                            "properties": {
+                                "south": {"type": "number"}, "west": {"type": "number"},
+                                "north": {"type": "number"}, "east": {"type": "number"},
+                            },
+                            "required": ["south", "west", "north", "east"],
+                        },
+                        "focus_area": {"type": "string", "enum": ["mobility", "land_use", "zoning", "environment", "mixed"]},
+                        "scenario_types": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["context"],
+                },
+            ),
             ToolDeclaration(
                 name="create_scenario_report",
                 description=(
@@ -185,7 +212,70 @@ class ScenarioServer:
             ),
         ]
 
+    @staticmethod
+    def _collect_map_evidence(map_context: dict[str, Any] | None) -> dict[str, Any]:
+        """Summarise active GIS layers as auditable scenario evidence.
+
+        Map context intentionally contains compact layer summaries rather than raw
+        geometries. Counts here describe mapped features, not observed traffic or
+        people; the report labels them as GIS evidence/proxies accordingly.
+        """
+        layers = (map_context or {}).get("layers") or []
+        evidence: list[dict[str, Any]] = []
+        totals = {
+            "mapped_road_features": 0,
+            "mapped_parking_features": 0,
+            "mapped_transit_features": 0,
+            "mapped_green_features": 0,
+            "mapped_pedestrian_features": 0,
+        }
+        for layer in layers:
+            if not isinstance(layer, dict):
+                continue
+            name = str(layer.get("name") or "Unnamed layer")
+            props = " ".join(str(p) for p in (layer.get("properties") or []))
+            text = f"{name} {props}".lower()
+            count = int(layer.get("featureCount") or 0)
+            categories: list[str] = []
+            is_pedestrian = any(k in text for k in ("pedestrian", "footway", "walk", "cycle", "bike", "path"))
+            if any(k in text for k in ("road", "street", "highway", "highways", "route")) and not is_pedestrian:
+                categories.append("roads")
+                totals["mapped_road_features"] += count
+            if any(k in text for k in ("parking", "car park", "parking_lot")):
+                categories.append("parking")
+                totals["mapped_parking_features"] += count
+            if any(k in text for k in ("transit", "bus", "metro", "station", "rail", "stop")):
+                categories.append("transit")
+                totals["mapped_transit_features"] += count
+            if any(k in text for k in ("park", "green", "tree", "forest", "garden", "shade", "water")):
+                categories.append("green")
+                totals["mapped_green_features"] += count
+            if is_pedestrian:
+                categories.append("pedestrian")
+                totals["mapped_pedestrian_features"] += count
+            if categories:
+                evidence.append({"layer": name, "feature_count": count, "categories": categories})
+
+        return {
+            "active_layer_count": len(layers),
+            "categorised_layer_count": len(evidence),
+            "layer_evidence": evidence,
+            **totals,
+            "basis": "Compact summaries of active Disha GIS layers; feature counts are mapped-feature proxies, not field observations.",
+        }
+
+    @staticmethod
+    def _merge_map_evidence(baseline: dict[str, Any], map_context: dict[str, Any] | None) -> dict[str, Any]:
+        evidence = ScenarioServer._collect_map_evidence(map_context)
+        if not evidence.get("layer_evidence"):
+            return baseline
+        merged = dict(baseline)
+        merged["gis_layer_evidence"] = evidence
+        return merged
+
     async def execute(self, tool_name: str, args: dict) -> dict:
+        if tool_name == "prepare_scenario_plan":
+            return await self._prepare_scenario_plan(args)
         if tool_name == "create_scenario_report":
             return await self._create_scenario_report(args)
         if tool_name == "analyze_area_for_scenarios":
@@ -196,27 +286,32 @@ class ScenarioServer:
             return await self._compare_scenarios(args)
         return {"error": f"Unknown tool: {tool_name}"}
 
-    async def _create_scenario_report(self, args: dict) -> dict:
-        """Run the complete scenario workflow as one deterministic tool call."""
+    async def _prepare_scenario_plan(self, args: dict) -> dict:
+        """Prepare the user-reviewable draft without writing a report artifact."""
         context = (args.get("context") or "").strip()
         if not context:
             return {"status": "error", "error": "context is required"}
 
         bbox = args.get("bbox")
+        map_context = args.get("_map_context") or {}
         if not bbox:
-            # The chat hub supplies the active map context as a private argument.
-            map_context = args.get("_map_context") or {}
             bounds = map_context.get("bounds") or {}
             if all(bounds.get(k) is not None for k in ("south", "west", "north", "east")):
                 bbox = {k: bounds[k] for k in ("south", "west", "north", "east")}
 
-        baseline_result = {"status": "success", "baseline_metrics": {}}
+        baseline = {}
         if bbox:
-            baseline_result = await self._analyze_area({
-                "bbox": bbox,
-                "workspace": args.get("_workspace", ""),
-            })
-        baseline = baseline_result.get("baseline_metrics") or {}
+            try:
+                baseline_result = await self._analyze_area({
+                    "bbox": bbox,
+                    "workspace": args.get("_workspace", ""),
+                })
+                baseline = baseline_result.get("baseline_metrics") or {}
+            except Exception as exc:
+                # Preparation must remain reviewable even if an upstream data
+                # provider is unavailable; surface the limitation in the panel.
+                baseline = {"fetch_errors": [f"Baseline analysis unavailable: {exc}"]}
+        baseline = self._merge_map_evidence(baseline, map_context)
 
         generated = await self._generate_planning_scenarios({
             "context": context,
@@ -226,6 +321,83 @@ class ScenarioServer:
         })
         if generated.get("status") != "success":
             return generated
+
+        scenarios = generated.get("scenarios_data", [])
+        preview_comparison: dict[str, Any] = {}
+        if len(scenarios) >= 2:
+            try:
+                preview_comparison = await self._compare_scenarios({
+                    "scenarios": scenarios,
+                    "baseline_metrics": baseline,
+                })
+            except Exception as exc:
+                preview_comparison = {"preview_error": f"Preliminary scoring unavailable: {exc}"}
+        return {
+            "status": "success",
+            "scenario_draft": {
+                "context": context,
+                "bbox": bbox,
+                "focus_area": args.get("focus_area", "mixed"),
+                "baseline_metrics": baseline,
+                "scenarios": scenarios,
+                "criteria": ["Sustainability", "Infrastructure Cost", "Mobility", "Equity", "Economic Growth", "Resilience"],
+                "preview_recommendation": preview_comparison.get("recommended_scenario"),
+                "preview_ranking": preview_comparison.get("ranking", []),
+                "preview_error": preview_comparison.get("preview_error"),
+                "plan": [
+                    "Validate the study-area boundary and baseline conditions",
+                    "Compare the proposed alternatives against planning, equity, cost, and emissions criteria",
+                    "Select or refine a preferred direction with implementation safeguards",
+                    "Compile the approved scenario into a professional report with a decision diagram",
+                ],
+            },
+            "message": "Scenario draft prepared for review in the Scenario panel. No final report has been created.",
+        }
+
+    async def _create_scenario_report(self, args: dict) -> dict:
+        """Run the complete scenario workflow as one deterministic tool call."""
+        context = (args.get("context") or "").strip()
+        if not context:
+            return {"status": "error", "error": "context is required"}
+
+        bbox = args.get("bbox")
+        map_context = args.get("_map_context") or {}
+        if not bbox:
+            # The chat hub supplies the active map context as a private argument.
+            bounds = map_context.get("bounds") or {}
+            if all(bounds.get(k) is not None for k in ("south", "west", "north", "east")):
+                bbox = {k: bounds[k] for k in ("south", "west", "north", "east")}
+
+        baseline_result = {"status": "success", "baseline_metrics": args.get("baseline_metrics") or {}}
+        if bbox and not baseline_result["baseline_metrics"]:
+            baseline_result = await self._analyze_area({
+                "bbox": bbox,
+                "workspace": args.get("_workspace", ""),
+            })
+        baseline = baseline_result.get("baseline_metrics") or {}
+        baseline = self._merge_map_evidence(baseline, map_context)
+
+        generated = await self._generate_planning_scenarios({
+            "context": context,
+            "scenario_types": args.get("scenario_types"),
+            "focus_area": args.get("focus_area", "mixed"),
+            "baseline_metrics": baseline,
+        })
+        if generated.get("status") != "success":
+            return generated
+
+        # Preserve names and descriptions edited in the Scenario panel.
+        overrides = args.get("scenario_overrides")
+        if isinstance(overrides, list) and overrides:
+            generated["scenarios_data"] = [
+                {
+                    "name": str(item.get("name") or "Scenario"),
+                    "description": str(item.get("description") or ""),
+                }
+                for item in overrides
+                if isinstance(item, dict) and str(item.get("name") or "").strip()
+            ]
+            generated["scenario_count"] = len(generated["scenarios_data"])
 
         scenario_inputs = [
             {"name": s["name"], "description": s.get("description", "")}
@@ -273,9 +445,10 @@ class ScenarioServer:
             "- [4. Scenario Alternatives](#4-scenario-alternatives)",
             "- [5. Comparative Assessment](#5-comparative-assessment)",
             "- [6. Recommended Direction](#6-recommended-direction)",
-            "- [7. Implementation Roadmap](#7-implementation-roadmap)",
-            "- [8. Risks, Assumptions, and Monitoring](#8-risks-assumptions-and-monitoring)",
-            "- [9. Data Sources and Methodology](#9-data-sources-and-methodology)",
+            "- [7. Scenario Decision Path](#7-scenario-decision-path)",
+            "- [8. Implementation Roadmap](#8-implementation-roadmap)",
+            "- [9. Risks, Assumptions, and Monitoring](#9-risks-assumptions-and-monitoring)",
+            "- [10. Data Sources and Methodology](#10-data-sources-and-methodology)",
             "",
             "## 1. Executive Summary",
             f"This report evaluates alternative responses to **{context}**. "
@@ -307,6 +480,13 @@ class ScenarioServer:
             for key, label in labels.items():
                 if baseline.get(key) is not None:
                     lines.append(f"| {label} | {baseline[key]} |")
+            gis_evidence = baseline.get("gis_layer_evidence") or {}
+            if gis_evidence.get("layer_evidence"):
+                lines += ["", "**Active GIS evidence used:**"]
+                lines += ["| Layer | Mapped features | Scenario relevance |", "|---|---:|---|"]
+                for item in gis_evidence["layer_evidence"]:
+                    lines.append(f"| {item['layer']} | {item['feature_count']} | {', '.join(item['categories'])} |")
+                lines.append(f"\n> *GIS layer counts are mapped-feature proxies, not field observations. Basis: {gis_evidence.get('basis', '')}*\n")
         else:
             lines.append("No live baseline bounds were available. The alternatives below are strategic benchmarks, not measured site conditions.")
 
@@ -318,21 +498,36 @@ class ScenarioServer:
                   "", "## 6. Recommended Direction",
                   f"**Recommended scenario:** {comparison.get('recommended_scenario', 'Stakeholder selection required')}",
                   "The recommendation is based on the comparative scoring shown above. Confirm it through stakeholder weighting, infrastructure capacity checks, financial appraisal, and statutory compliance review.",
-                  "", "## 7. Implementation Roadmap",
+                  "", "## 7. Scenario Decision Path",
+                  "```mermaid",
+                  "flowchart LR",
+                  "A[Scenario brief] --> B[Validate baseline]",
+                  "B --> C{Compare alternatives}",
+                  "C --> D[Planning and equity criteria]",
+                  "C --> E[Cost and delivery criteria]",
+                  "C --> F[CO2 and emissions profile]",
+                  f"D --> G[{comparison.get('recommended_scenario', 'Preferred direction')}]",
+                  "E --> G",
+                  "F --> G",
+                  "G --> H[Implementation roadmap]",
+                  "```",
+                  "", "## 8. Implementation Roadmap",
                   "| Phase | Priority actions | Decision gate |",
                   "|---|---|---|",
                   "| 0–2 years | Confirm boundary and baseline survey; protect critical corridors; initiate stakeholder engagement. | Validated evidence base |",
                   "| 2–5 years | Adopt policy and zoning changes; deliver priority mobility, public-realm, and green-infrastructure projects. | Funding and approvals |",
                   "| 5–10 years | Scale infrastructure, monitor outcomes, and recalibrate development controls. | Annual performance review |",
-                  "", "## 8. Risks, Assumptions, and Monitoring",
+                  "", "## 9. Risks, Assumptions, and Monitoring",
                   "Key risks include land-value pressure, infrastructure gaps, delivery funding, displacement, and climate exposure. Monitor population and employment growth, transit access, road congestion, green-space provision, walkability, housing affordability, and project delivery annually. All projections require validation against detailed surveys, statutory plans, and service-capacity studies.",
-                  "", "## 9. Data Sources and Methodology",
+                  "", "## 10. Data Sources and Methodology",
                   "| Data Source / Tool | Category | Provider / Endpoint | Query Scope & Parameters | Date / Timestamp | Analytical Basis & Assumptions |",
                   "|---|---|---|---|---|---|",
                   "| `analyze_area_for_scenarios` | Existing conditions | OpenStreetMap Overpass; WorldPop / geospatial proxy | Study-area bounding box; roads, transit, green space, walkability, population, employment | Run time | Area and densities computed from retrieved data; unavailable values are not fabricated |",
-                  "| `generate_planning_scenarios` | Alternative design | Disha scenario framework | User brief and selected focus area | Run time | Strategy archetypes are planning benchmarks and require local validation |",
-                  "| `compare_scenarios` | MCDA and emissions | Disha scoring model; Gifford–Hanna box model | Scenario descriptions, criteria, and baseline metrics | Run time | Scores use real baseline signals when available; otherwise qualitative benchmark scores |",
+            "| `generate_planning_scenarios` | Alternative design | Disha scenario framework | User brief and selected focus area | Run time | Strategy archetypes are planning benchmarks and require local validation |",
+            "| `compare_scenarios` | MCDA and emissions | Disha scoring model; Gifford–Hanna box model | Scenario descriptions, criteria, and baseline metrics | Run time | Scores use real baseline signals when available; otherwise qualitative benchmark scores |",
         ]
+        if (baseline.get("gis_layer_evidence") or {}).get("layer_evidence"):
+            lines.insert(-1, "| Active Disha GIS layers | Spatial evidence | Loaded/fetched map layers | Compact layer names, properties, and feature counts | Run time | Feature counts are proxies for mapped assets; they are not field observations |")
         return "\n".join(lines)
 
     # ── analyze_area_for_scenarios ────────────────────────────────────────────
@@ -689,6 +884,37 @@ out geom;
 
     # ── compare_scenarios ─────────────────────────────────────────────────────
 
+    @staticmethod
+    def _infer_scenario_profile(name: str, description: str = "") -> dict[str, Any]:
+        """Infer transport, emissions, and planning impacts from a scenario brief."""
+        text = f"{name} {description}".lower()
+        profiles: dict[str, dict[str, Any]] = {
+            "baseline": {"mode_share": {"car": .40, "two_wheeler": .35, "auto_rickshaw": .10, "bus": .10, "walk_cycle": .05}, "fuel_mix": {"petrol": .60, "diesel": .30, "cng": .09, "electric": .01}, "daily_trips": 100000.0, "avg_trip_length_km": 7.5},
+            "compact": {"mode_share": {"car": .30, "two_wheeler": .30, "auto_rickshaw": .10, "bus": .20, "walk_cycle": .10}, "fuel_mix": {"petrol": .50, "diesel": .25, "cng": .15, "electric": .10}, "daily_trips": 90000.0, "avg_trip_length_km": 5.5},
+            "transit": {"mode_share": {"car": .15, "two_wheeler": .15, "auto_rickshaw": .10, "bus": .40, "walk_cycle": .20}, "fuel_mix": {"petrol": .40, "diesel": .15, "cng": .25, "electric": .20}, "daily_trips": 95000.0, "avg_trip_length_km": 6.0},
+            "green": {"mode_share": {"car": .20, "two_wheeler": .20, "auto_rickshaw": .10, "bus": .20, "walk_cycle": .30}, "fuel_mix": {"petrol": .30, "diesel": .10, "cng": .20, "electric": .40}, "daily_trips": 85000.0, "avg_trip_length_km": 5.0},
+            "pedestrian": {"mode_share": {"car": .20, "two_wheeler": .20, "auto_rickshaw": .10, "bus": .25, "walk_cycle": .25}, "fuel_mix": {"petrol": .42, "diesel": .18, "cng": .22, "electric": .18}, "daily_trips": 96000.0, "avg_trip_length_km": 5.2},
+            "parking": {"mode_share": {"car": .30, "two_wheeler": .30, "auto_rickshaw": .12, "bus": .18, "walk_cycle": .10}, "fuel_mix": {"petrol": .48, "diesel": .22, "cng": .18, "electric": .12}, "daily_trips": 93000.0, "avg_trip_length_km": 6.0},
+            "cool": {"mode_share": {"car": .32, "two_wheeler": .30, "auto_rickshaw": .10, "bus": .18, "walk_cycle": .10}, "fuel_mix": {"petrol": .48, "diesel": .22, "cng": .18, "electric": .12}, "daily_trips": 98000.0, "avg_trip_length_km": 6.8},
+            "integrated": {"mode_share": {"car": .22, "two_wheeler": .23, "auto_rickshaw": .10, "bus": .28, "walk_cycle": .17}, "fuel_mix": {"petrol": .38, "diesel": .15, "cng": .25, "electric": .22}, "daily_trips": 90000.0, "avg_trip_length_km": 5.4},
+        }
+        key = "baseline"
+        if any(k in text for k in ("integrated", "combined", "holistic", "transformation")):
+            key = "integrated"
+        elif any(k in text for k in ("shade", "cool", "heat", "tree", "green", "climate", "thermal")):
+            key = "cool"
+        elif any(k in text for k in ("parking", "mobility management", "demand management", "priced parking", "parking rebalance")):
+            key = "parking"
+        elif any(k in text for k in ("pedestrian", "walkability", "walkable", "car-free", "active travel", "public realm")):
+            key = "pedestrian"
+        elif any(k in text for k in ("transit", "brt", "bus", "metro", "station", "first/last mile")):
+            key = "transit"
+        elif any(k in text for k in ("compact", "mixed-use", "mixed use", "infill", "density")):
+            key = "compact"
+        elif any(k in text for k in ("green corridor", "greenway", "ecological", "nature")):
+            key = "green"
+        return {"key": key, **profiles[key]}
+
     async def _compare_scenarios(self, args: dict) -> dict:
         scenarios = args.get("scenarios", [])
         criteria = args.get("criteria") or [
@@ -737,12 +963,48 @@ out geom;
             },
         }
 
+        MULTIPLIERS.update({
+            "pedestrian": {
+                "Sustainability": {"road_density": .4, "green_space": .8, "transit": .8, "walk": 1.2, "population": .6},
+                "Infrastructure Cost": {"road_density": .6, "transit": .4, "green_space": .3, "walk": .5},
+                "Mobility": {"road_density": .6, "transit": .8, "walk": 1.3, "employment": .6},
+                "Equity": {"transit": .7, "green_space": .8, "population": .7},
+                "Economic Growth": {"road_density": .4, "transit": .6, "employment": .7},
+                "Resilience": {"green_space": .8, "walk": .9},
+            },
+            "parking": {
+                "Sustainability": {"road_density": .6, "green_space": .8, "transit": .6, "walk": .6, "population": .5},
+                "Infrastructure Cost": {"road_density": .8, "transit": .4, "green_space": .3, "walk": .2},
+                "Mobility": {"road_density": .8, "transit": .6, "walk": .6, "employment": .7},
+                "Equity": {"transit": .5, "green_space": .5, "population": .6},
+                "Economic Growth": {"road_density": .8, "transit": .5, "employment": .8},
+                "Resilience": {"green_space": .6, "walk": .5},
+            },
+            "cool": {
+                "Sustainability": {"road_density": .7, "green_space": 1.4, "transit": .5, "walk": .8, "population": .5},
+                "Infrastructure Cost": {"road_density": .5, "transit": .3, "green_space": .6, "walk": .3},
+                "Mobility": {"road_density": .5, "transit": .5, "walk": .8, "employment": .6},
+                "Equity": {"transit": .4, "green_space": 1.0, "population": .6},
+                "Economic Growth": {"road_density": .5, "transit": .4, "employment": .7},
+                "Resilience": {"green_space": 1.5, "walk": 1.0},
+            },
+            "integrated": {
+                "Sustainability": {"road_density": .5, "green_space": 1.1, "transit": .9, "walk": 1.0, "population": .7},
+                "Infrastructure Cost": {"road_density": .5, "transit": .6, "green_space": .5, "walk": .4},
+                "Mobility": {"road_density": .5, "transit": .9, "walk": 1.0, "employment": .8},
+                "Equity": {"transit": .8, "green_space": .8, "population": .8},
+                "Economic Growth": {"road_density": .5, "transit": .8, "employment": .9},
+                "Resilience": {"green_space": 1.0, "walk": .9},
+            },
+        })
+
         # Normalise real baseline signals to 0–10 scale
         def normalise(val, lo, hi):
             if val is None:
                 return None
             return max(0.0, min(10.0, (val - lo) / (hi - lo) * 10))
 
+        gis = baseline.get("gis_layer_evidence") or {}
         real = {
             "road_density": normalise(baseline.get("road_density_km_per_km2"), 0, 30),
             "transit":      normalise(baseline.get("transit_coverage_pct"), 0, 100),
@@ -751,21 +1013,36 @@ out geom;
             "population":   normalise(baseline.get("population_density_ha"), 0, 300),
             "employment":   normalise(baseline.get("employment_density_jobs_per_km2"), 0, 5000),
         }
+        # When a live metric is unavailable, use the active GIS layer summary as
+        # a bounded proxy. This is deliberately lower-confidence than measured
+        # density/coverage and is disclosed in the report.
+        if real["road_density"] is None and gis.get("mapped_road_features"):
+            real["road_density"] = normalise(gis["mapped_road_features"], 0, 500)
+        if real["transit"] is None and gis.get("mapped_transit_features"):
+            real["transit"] = normalise(gis["mapped_transit_features"], 0, 200)
+        if real["green_space"] is None and gis.get("mapped_green_features"):
+            real["green_space"] = normalise(gis["mapped_green_features"], 0, 100)
+        if real["walk"] is None and gis.get("mapped_pedestrian_features"):
+            real["walk"] = normalise(gis["mapped_pedestrian_features"], 0, 300)
         has_real_data = any(v is not None for v in real.values())
+        has_gis_proxy = bool(gis.get("layer_evidence")) and any(
+            gis.get(k) for k in ("mapped_road_features", "mapped_transit_features", "mapped_green_features", "mapped_pedestrian_features")
+        )
 
-        scoring_method = "real_data" if has_real_data else "llm_estimated"
+        scoring_method = "real_data+gis_proxy" if has_real_data and has_gis_proxy else ("real_data" if has_real_data else "planning_benchmark")
 
         # Estimate tailpipe emissions for each scenario and incorporate into scoring
         em_server = EmissionsServer()
         emissions_scenarios = []
         for sc in scenarios:
             name_sc = sc.get("name", "Unknown")
+            profile = self._infer_scenario_profile(name_sc, sc.get("description", ""))
             emissions_scenarios.append({
                 "name": name_sc,
-                "daily_trips": sc.get("daily_trips"),
-                "avg_trip_length_km": sc.get("avg_trip_length_km"),
-                "mode_share": sc.get("mode_share"),
-                "fuel_mix": sc.get("fuel_mix")
+                "daily_trips": sc.get("daily_trips") or profile["daily_trips"],
+                "avg_trip_length_km": sc.get("avg_trip_length_km") or profile["avg_trip_length_km"],
+                "mode_share": sc.get("mode_share") or profile["mode_share"],
+                "fuel_mix": sc.get("fuel_mix") or profile["fuel_mix"],
             })
             
         u = float(args.get("wind_speed_m_s", 3.0))
@@ -787,14 +1064,9 @@ out geom;
         results = []
         for sc in scenarios:
             name = sc.get("name", "Unknown")
+            profile = self._infer_scenario_profile(name, sc.get("description", ""))
             provided_metrics = sc.get("metrics") or {}
-
-            # Identify archetype
-            key = "baseline"
-            for k in ("compact", "transit", "green"):
-                if k in name.lower():
-                    key = k
-                    break
+            key = profile["key"]
 
             scores: dict[str, float] = {}
 
@@ -818,12 +1090,16 @@ out geom;
                     else:
                         scores[criterion] = 5.0  # neutral
                 else:
-                    # LLM-estimated: use archetype qualitative bands (not hardcoded per-name)
+                    # Planning benchmark derived from the scenario brief.
                     qualitative_bands = {
                         "baseline": {"Sustainability": 3, "Infrastructure Cost": 8, "Mobility": 3, "Equity": 5, "Economic Growth": 4, "Resilience": 3},
                         "compact":  {"Sustainability": 7, "Infrastructure Cost": 6, "Mobility": 7, "Equity": 5, "Economic Growth": 8, "Resilience": 7},
                         "transit":  {"Sustainability": 8, "Infrastructure Cost": 4, "Mobility": 9, "Equity": 6, "Economic Growth": 8, "Resilience": 7},
                         "green":    {"Sustainability": 9, "Infrastructure Cost": 6, "Mobility": 5, "Equity": 8, "Economic Growth": 5, "Resilience": 9},
+                        "pedestrian": {"Sustainability": 8, "Infrastructure Cost": 6, "Mobility": 8, "Equity": 8, "Economic Growth": 7, "Resilience": 7},
+                        "parking": {"Sustainability": 6, "Infrastructure Cost": 8, "Mobility": 7, "Equity": 6, "Economic Growth": 7, "Resilience": 5},
+                        "cool": {"Sustainability": 8, "Infrastructure Cost": 6, "Mobility": 5, "Equity": 8, "Economic Growth": 7, "Resilience": 10},
+                        "integrated": {"Sustainability": 9, "Infrastructure Cost": 5, "Mobility": 9, "Equity": 9, "Economic Growth": 9, "Resilience": 9},
                     }
                     band = qualitative_bands.get(key, {c: 5 for c in criteria})
                     scores[criterion] = band.get(criterion, 5)
@@ -844,7 +1120,7 @@ out geom;
                 scores["Sustainability"] = round(0.5 * spatial_sus + 0.5 * emissions_score, 1)
 
             total = round(sum(scores.values()), 1)
-            results.append({"name": name, "description": sc.get("description", ""), "scores": scores, "total_score": total})
+            results.append({"name": name, "description": sc.get("description", ""), "profile": key, "scores": scores, "total_score": total})
 
         results.sort(key=lambda x: x["total_score"], reverse=True)
         winner = results[0]["name"]
@@ -857,9 +1133,11 @@ out geom;
             rows.append(f"| {r['name']} | {score_cells} | **{r['total_score']}** |")
 
         disclaimer = (
-            "⚠ Scores computed from real OSM data (road density, transit coverage, green space, walkability) using archetype multipliers."
+            "⚠ Scores combine live baseline metrics with scenario-specific planning impact profiles inferred from the names and descriptions."
             if scoring_method == "real_data"
-            else "⚠ Scores are LLM-estimated qualitative benchmarks — no real geospatial data was provided. Call analyze_area_for_scenarios first for data-anchored results."
+            else "⚠ Scores combine live metrics and active GIS-layer proxies; mapped feature counts are not field observations."
+            if scoring_method == "real_data+gis_proxy"
+            else "⚠ Scores are planning benchmarks inferred from each scenario description; run baseline analysis for site-calibrated results."
         )
 
         table = "\n".join([header, separator] + rows)
@@ -875,12 +1153,19 @@ out geom;
                     item = em_map[sc_name]
                     table += f"| {sc_name} | {item['co2_kg']:,.1f} | {item['pm25_kg']:.4f} | {item['nox_kg']:.3f} | **{item['delta_pm25_ug_m3']:.3f} μg/m³** |\n"
             table += f"\n> *Note: Ambient PM₂.₅ increments calculated using the Gifford-Hanna Box Model with wind speed {u} m/s and mixing height {H} m.*"
+            table += "\n\n### Scenario Assumptions Used\n"
+            table += "| Scenario | Profile | Daily trips | Avg trip (km) | Walk/cycle share | Bus share |\n|---|---|---:|---:|---:|---:|\n"
+            for item in emissions_scenarios:
+                profile = self._infer_scenario_profile(item["name"], next((s.get("description", "") for s in scenarios if s.get("name") == item["name"]), ""))["key"]
+                table += f"| {item['name']} | {profile} | {item['daily_trips']:,.0f} | {item['avg_trip_length_km']:.1f} | {item['mode_share'].get('walk_cycle', 0) * 100:.0f}% | {item['mode_share'].get('bus', 0) * 100:.0f}% |\n"
+            table += "> *These are scenario assumptions inferred from the scenario name and description, not observed counts. Replace them with survey or traffic-count data when available.*"
 
         return {
             "status": "success",
             "recommended_scenario": winner,
             "ranking": [r["name"] for r in results],
             "comparison_table_markdown": table,
+            "emissions_assumptions": emissions_scenarios,
             "scoring_method": scoring_method,
             "disclaimer": disclaimer,
             "note": f"Based on scoring across {len(criteria)} criteria ({scoring_method}). '{winner}' scored highest overall.",

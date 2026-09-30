@@ -88,6 +88,19 @@ export interface MapBookmark {
   zoom: number
 }
 
+export interface ScenarioDraft {
+  context: string
+  bbox?: { south: number; west: number; north: number; east: number } | null
+  focus_area?: string
+  baseline_metrics?: Record<string, any>
+  scenarios: Array<{ name: string; description?: string }>
+  criteria?: string[]
+  preview_recommendation?: string
+  preview_ranking?: string[]
+  preview_error?: string
+  plan?: string[]
+}
+
 export interface ZonePreset {
   code: string
   label: string
@@ -139,6 +152,20 @@ export interface Conversation {
 // App.tsx:handleMapAction, (3) add a case in MapView.tsx's action switch.
 
 export type MapAction =
+  | {
+      type: 'open_scenario_builder'
+      payload: {
+        draft: {
+          context: string
+          bbox?: { south: number; west: number; north: number; east: number } | null
+          focus_area?: string
+          baseline_metrics?: Record<string, any>
+          scenarios: Array<{ name: string; description?: string }>
+          criteria?: string[]
+          plan?: string[]
+        }
+      }
+    }
   | { type: 'fly_to'; payload: { lat: number; lng: number; zoom?: number } }
   | { type: 'fit_bounds'; payload: { south: number; west: number; north: number; east: number } }
   | { type: 'set_view'; payload: MapViewState }

@@ -32,6 +32,16 @@ class CompareRequest(BaseModel):
     baseline_metrics: dict[str, Any] | None = None
 
 
+class BuildReportRequest(BaseModel):
+    context: str
+    bbox: dict[str, float] | None = None
+    focus_area: str = "mixed"
+    scenarios: list[dict[str, Any]]
+    criteria: list[str] | None = None
+    baseline_metrics: dict[str, Any] | None = None
+    workspace: str | None = None
+
+
 @router.post("/analyze")
 async def analyze_area(body: AnalyzeRequest):
     """Fetch real OSM geospatial metrics for a bounding box."""
@@ -73,6 +83,41 @@ async def compare_scenarios(body: CompareRequest):
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return result
+
+
+@router.post("/build-report")
+async def build_scenario_report(body: BuildReportRequest):
+    """Build and persist the approved scenario draft as the final report."""
+    if len([s for s in body.scenarios if str(s.get("name") or "").strip()]) < 2:
+        raise HTTPException(status_code=400, detail="At least two scenarios are required.")
+
+    args: dict[str, Any] = {
+        "context": body.context,
+        "focus_area": body.focus_area,
+        "scenario_overrides": body.scenarios,
+    }
+    if body.bbox:
+        args["bbox"] = body.bbox
+    if body.criteria:
+        args["criteria"] = body.criteria
+    if body.baseline_metrics:
+        args["baseline_metrics"] = body.baseline_metrics
+
+    # The server reuses the approved scenario descriptions and reruns the
+    # comparison so edited inputs are reflected in the scores and recommendation.
+    result = await _server.execute("create_scenario_report", args)
+    if result.get("status") != "success":
+        raise HTTPException(status_code=400, detail=result.get("error", "Report generation failed"))
+
+    from tools.artifact_store import save_artifact
+    artifact = save_artifact(
+        title=result.get("report_title", f"Planning Scenario Report — {body.context}"),
+        artifact_type="report",
+        format="markdown",
+        content=result.get("report_markdown", ""),
+        workspace=body.workspace,
+    )
+    return {**result, "artifact": artifact}
 
 
 from fastapi import Query

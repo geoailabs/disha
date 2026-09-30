@@ -52,6 +52,12 @@ class ScenariosHub(BaseDomainHub):
         map_action = None
         artifact = None
 
+        if tool_name == "prepare_scenario_plan" and res.get("status") == "success":
+            map_action = {
+                "action": "open_scenario_builder",
+                "payload": {"draft": res.get("scenario_draft", {})},
+            }
+
         if tool_name in ("generate_planning_scenarios", "create_scenario_report") and res.get("status") == "success":
             map_action = {"action": "add_scenarios", "payload": {"scenarios": res.get("scenarios_data", [])}}
 

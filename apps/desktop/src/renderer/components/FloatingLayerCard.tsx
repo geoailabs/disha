@@ -4,6 +4,7 @@ import {
   MapBookmark,
   BoundaryGeometry,
   SelectedFeatureEntry,
+  ScenarioDraft,
 } from '../types'
 import { Scenario } from './ScenarioPanel'
 import BookmarkPanel from './BookmarkPanel'
@@ -83,8 +84,11 @@ interface FloatingLayerCardProps {
   onRenameScenario: (id: string, name: string) => void
   onAddLayerToScenario: (scenarioId: string, layerId: string) => void
   onRemoveLayerFromScenario: (scenarioId: string, layerId: string) => void
-  mapBounds?: [number, number, number, number] | null
+  mapBounds?: { south: number; west: number; north: number; east: number } | null
   onOpenArtifacts?: () => void
+  scenarioDraft?: ScenarioDraft | null
+  onScenarioDraftClear?: () => void
+  onScenariosCreated?: (scenarios: Array<{ name: string; description?: string }>) => void
 
   // Export
   workspacePath?: string | null
@@ -145,6 +149,9 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
   onRemoveLayerFromScenario,
   mapBounds,
   onOpenArtifacts,
+  scenarioDraft,
+  onScenarioDraftClear,
+  onScenariosCreated,
   workspacePath,
   onOpenWorkspace,
   onCloseWorkspace,
@@ -495,6 +502,9 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
                     mapBounds={mapBounds}
                     onOpenArtifacts={onOpenArtifacts}
                     workspacePath={workspacePath}
+                    scenarioDraft={scenarioDraft}
+                    onScenarioDraftClear={onScenarioDraftClear}
+                    onScenariosCreated={onScenariosCreated}
                   />
                 </div>
                 <div className="flc-scenario-section flc-scenario-list-section">

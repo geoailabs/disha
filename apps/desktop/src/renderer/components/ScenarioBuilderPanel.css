@@ -529,3 +529,31 @@
   color: var(--text-primary);
   font-weight: 600;
 }
+
+/* Interactive review step opened from chat */
+.sb-review-card {
+  margin: 0 0 14px;
+  padding: 14px;
+  border: 1px solid rgba(91, 145, 132, 0.45);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(27, 64, 61, 0.55), rgba(16, 35, 39, 0.72));
+}
+.sb-review-kicker { color: #a7e0d1; font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.sb-review-title { margin: 5px 0 4px; color: #f3faf8; font-size: 16px; }
+.sb-review-context { margin: 0 0 12px; color: #c4d9d4; font-size: 12px; line-height: 1.45; }
+.sb-review-subtitle { margin: 12px 0 7px; color: #d8eee9; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.sb-review-plan { margin: 0; padding-left: 21px; color: #c4d9d4; font-size: 12px; line-height: 1.55; }
+.sb-preview-recommendation { display: flex; flex-direction: column; gap: 2px; margin: 8px 0 9px; padding: 9px 10px; border-left: 3px solid #9be2cf; border-radius: 6px; background: rgba(155, 226, 207, .1); color: #c4d9d4; font-size: 11px; }
+.sb-preview-recommendation strong { color: #b9f0e1; font-size: 13px; }
+.sb-preview-recommendation small { color: #9dbbb5; font-size: 10px; }
+.sb-review-scenario { margin-top: 8px; padding: 9px; border-radius: 8px; background: rgba(3, 18, 22, .42); }
+.sb-review-scenario-head { display: flex; gap: 6px; align-items: center; }
+.sb-review-scenario-head .sb-input { flex: 1; font-weight: 600; }
+.sb-review-description { width: 100%; min-height: 48px; margin-top: 7px; box-sizing: border-box; }
+.sb-review-data-note { margin-top: 10px; color: #a7e0d1; font-size: 11px; line-height: 1.4; }
+.sb-approve-btn { width: 100%; margin-top: 13px; padding: 10px 12px; border: 0; border-radius: 8px; color: #062b27; background: #9be2cf; font-weight: 700; cursor: pointer; }
+.sb-approve-btn:hover { background: #b9f0e1; }
+.sb-approve-btn:disabled { opacity: .55; cursor: wait; }
+.sb-secondary-btn { width: 100%; margin-top: 7px; padding: 7px; border: 1px solid rgba(167, 224, 209, .25); border-radius: 7px; color: #b6d1cc; background: transparent; cursor: pointer; }
+.sb-secondary-btn:hover { background: rgba(167, 224, 209, .08); }
+.sb-success { margin-top: 9px; color: #9be2cf; font-size: 12px; }

@@ -120,10 +120,38 @@ class DomainHubsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, "success")
         self.assertEqual(result.data["recommended_scenario"], "Compact Growth")
         self.assertIn("## Table of Contents", result.data["report_markdown"])
-        self.assertIn("## 7. Implementation Roadmap", result.data["report_markdown"])
+        self.assertIn("## 8. Implementation Roadmap", result.data["report_markdown"])
+        self.assertIn("```mermaid", result.data["report_markdown"])
         self.assertIn("Data Sources and Methodology", result.data["report_markdown"])
         self.assertEqual(result.map_action["action"], "add_scenarios")
         self.assertEqual(result.artifact["artifact_type"], "report")
+
+    async def test_custom_scenario_profiles_change_scores_and_emissions(self):
+        result = await self.scenarios_hub.scenario_server.execute("compare_scenarios", {
+            "scenarios": [
+                {"name": "Baseline", "description": "Current conditions continue."},
+                {"name": "Pedestrian-First Retail Core", "description": "Car-free public realm, walking, cycling, and better bus access."},
+                {"name": "Cool Public Realm + Shade Network", "description": "Tree canopy, shade, cool roofs, and heat mitigation."},
+                {"name": "Integrated Transformation", "description": "Combined pedestrian, transit, parking, green and public-realm improvements."},
+            ]
+        })
+        self.assertEqual(result["status"], "success")
+        self.assertNotEqual(result["ranking"][0], "Baseline")
+        self.assertIn("Scenario Assumptions Used", result["comparison_table_markdown"])
+        self.assertEqual(len({round(x["daily_trips"], 0) for x in result["emissions_assumptions"]}), 4)
+
+    async def test_active_gis_layers_are_carried_into_scenario_evidence(self):
+        evidence = self.scenarios_hub.scenario_server._collect_map_evidence({
+            "layers": [
+                {"name": "Sector roads", "featureCount": 18, "properties": ["highway"]},
+                {"name": "Sector parking", "featureCount": 9, "properties": ["amenity"]},
+                {"name": "Sector pedestrian network", "featureCount": 24, "properties": ["highway"]},
+            ]
+        })
+        self.assertEqual(evidence["mapped_road_features"], 18)
+        self.assertEqual(evidence["mapped_parking_features"], 9)
+        self.assertEqual(evidence["mapped_pedestrian_features"], 24)
+        self.assertEqual(len(evidence["layer_evidence"]), 3)
 
     async def test_edit_artifact_without_image(self):
         # Create test artifact first

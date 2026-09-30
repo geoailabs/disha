@@ -1,4 +1,5 @@
-import { useState, useRef } from 'react'
+import { useState, useEffect } from 'react'
+import type { ScenarioDraft } from '../types'
 import './ScenarioBuilderPanel.css'
 
 const API = 'http://localhost:8765/api/scenarios'
@@ -19,6 +20,9 @@ interface BaselineMetrics {
   walkability_km_per_km2?: number | null
   fetch_errors?: string[]
   data_source?: string
+  gis_layer_evidence?: {
+    layer_evidence?: Array<{ layer: string; feature_count: number; categories: string[] }>
+  }
 }
 
 interface GenerationResult {
@@ -35,6 +39,11 @@ interface CompareResult {
   scoring_method: string
   disclaimer: string
   note: string
+}
+
+interface ApprovedScenario {
+  name: string
+  description: string
 }
 
 const DEFAULT_SCENARIO_TYPES = [
@@ -63,9 +72,12 @@ interface ScenarioBuilderPanelProps {
   /** Called when a report is saved to Artifacts so the panel can navigate there */
   onOpenArtifacts?: () => void
   workspacePath?: string | null
+  scenarioDraft?: ScenarioDraft | null
+  onScenarioDraftClear?: () => void
+  onScenariosCreated?: (scenarios: Array<{ name: string; description?: string }>) => void
 }
 
-export default function ScenarioBuilderPanel({ mapBounds, onOpenArtifacts, workspacePath }: ScenarioBuilderPanelProps) {
+export default function ScenarioBuilderPanel({ mapBounds, onOpenArtifacts, workspacePath, scenarioDraft, onScenarioDraftClear, onScenariosCreated }: ScenarioBuilderPanelProps) {
   // ── Mode toggle: Generate or Compare ──
   const [mode, setMode] = useState<'generate' | 'compare'>('generate')
 
@@ -92,6 +104,11 @@ export default function ScenarioBuilderPanel({ mapBounds, onOpenArtifacts, works
   const [genResult, setGenResult] = useState<GenerationResult | null>(null)
   const [genError, setGenError] = useState<string | null>(null)
   const [savedToArtifacts, setSavedToArtifacts] = useState(false)
+  const [draftPlan, setDraftPlan] = useState<string[]>([])
+  const [approvedScenarios, setApprovedScenarios] = useState<ApprovedScenario[]>([])
+  const [buildingReport, setBuildingReport] = useState(false)
+  const [buildError, setBuildError] = useState<string | null>(null)
+  const [reportBuilt, setReportBuilt] = useState(false)
 
   // ── Compare form ──
   const [compareScenarios, setCompareScenarios] = useState<Array<{ name: string; description: string }>>([
@@ -102,6 +119,21 @@ export default function ScenarioBuilderPanel({ mapBounds, onOpenArtifacts, works
   const [comparing, setComparing] = useState(false)
   const [compareResult, setCompareResult] = useState<CompareResult | null>(null)
   const [compareError, setCompareError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!scenarioDraft) return
+    setMode('generate')
+    setContext(scenarioDraft.context || '')
+    setFocusArea(scenarioDraft.focus_area || 'mixed')
+    setSelectedTypes((scenarioDraft.scenarios || []).map(s => s.name).filter(Boolean))
+    setBaseline((scenarioDraft.baseline_metrics || null) as BaselineMetrics | null)
+    setDraftPlan(scenarioDraft.plan || [])
+    setApprovedScenarios((scenarioDraft.scenarios || []).map(s => ({ name: s.name, description: s.description || '' })))
+    setCompareCriteria(scenarioDraft.criteria?.length ? scenarioDraft.criteria : [...DEFAULT_CRITERIA])
+    setGenResult(null)
+    setBuildError(null)
+    setReportBuilt(false)
+  }, [scenarioDraft])
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
@@ -223,6 +255,42 @@ export default function ScenarioBuilderPanel({ mapBounds, onOpenArtifacts, works
     }
   }
 
+  const buildApprovedReport = async () => {
+    const scenarios = approvedScenarios.filter(s => s.name.trim())
+    if (scenarios.length < 2) {
+      setBuildError('Keep at least two scenarios to compare.')
+      return
+    }
+    setBuildingReport(true)
+    setBuildError(null)
+    setReportBuilt(false)
+    try {
+      const res = await fetch(`${API}/build-report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          context: context.trim(),
+          bbox: scenarioDraft?.bbox || mapBounds || undefined,
+          focus_area: focusArea,
+          scenarios,
+          criteria: compareCriteria,
+          baseline_metrics: baseline || undefined,
+          workspace: workspacePath || undefined,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Report generation failed')
+      setReportBuilt(true)
+      onScenariosCreated?.(data.scenarios_data || scenarios)
+      onScenarioDraftClear?.()
+      onOpenArtifacts?.()
+    } catch (e: any) {
+      setBuildError(e.message || 'Report generation failed')
+    } finally {
+      setBuildingReport(false)
+    }
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
@@ -243,6 +311,78 @@ export default function ScenarioBuilderPanel({ mapBounds, onOpenArtifacts, works
       </div>
 
       <div className="sb-body">
+
+        {scenarioDraft && (
+          <div className="sb-review-card">
+            <div className="sb-review-kicker">AI planning proposal</div>
+            <h3 className="sb-review-title">Review before building the report</h3>
+            <p className="sb-review-context">{context}</p>
+            <div className="sb-review-subtitle">Plan</div>
+            <ol className="sb-review-plan">
+              {draftPlan.map((step, i) => <li key={i}>{step}</li>)}
+            </ol>
+            <div className="sb-review-subtitle">Suggested scenarios</div>
+            {scenarioDraft.preview_recommendation && (
+              <div className="sb-preview-recommendation">
+                <span>Preliminary best fit</span>
+                <strong>{scenarioDraft.preview_recommendation}</strong>
+                {scenarioDraft.preview_ranking && scenarioDraft.preview_ranking.length > 0 && (
+                  <small>Ranking: {scenarioDraft.preview_ranking.join(' → ')}</small>
+                )}
+              </div>
+            )}
+            {scenarioDraft.preview_error && <div className="sb-disclaimer">Preliminary scoring will be completed when you accept the plan: {scenarioDraft.preview_error}</div>}
+            <div className="sb-review-scenarios">
+              {approvedScenarios.map((scenario, i) => (
+                <div className="sb-review-scenario" key={`${scenario.name}-${i}`}>
+                  <div className="sb-review-scenario-head">
+                    <input
+                      className="sb-input"
+                      value={scenario.name}
+                      aria-label={`Scenario ${i + 1} name`}
+                      onChange={e => setApprovedScenarios(prev => prev.map((s, idx) => idx === i ? { ...s, name: e.target.value } : s))}
+                    />
+                    {approvedScenarios.length > 2 && (
+                      <button className="sb-remove-type" onClick={() => setApprovedScenarios(prev => prev.filter((_, idx) => idx !== i))}>×</button>
+                    )}
+                  </div>
+                  <textarea
+                    className="sb-textarea sb-review-description"
+                    rows={2}
+                    value={scenario.description}
+                    aria-label={`${scenario.name} description`}
+                    onChange={e => setApprovedScenarios(prev => prev.map((s, idx) => idx === i ? { ...s, description: e.target.value } : s))}
+                  />
+                </div>
+              ))}
+            </div>
+            <button
+              className="sb-add-scenario-btn"
+              onClick={() => setApprovedScenarios(prev => [...prev, { name: 'New scenario', description: '' }])}
+            >+ Add scenario</button>
+
+            <div className="sb-review-subtitle">Score against</div>
+            <div className="sb-criteria-grid">
+              {DEFAULT_CRITERIA.map(c => (
+                <label key={c} className="sb-type-row">
+                  <input
+                    type="checkbox"
+                    checked={compareCriteria.includes(c)}
+                    onChange={() => setCompareCriteria(prev => prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c])}
+                  />
+                  <span>{c}</span>
+                </label>
+              ))}
+            </div>
+            {baseline && <div className="sb-review-data-note">Baseline metrics loaded from the study area. CO₂ and emissions are included in the final assessment.</div>}
+            {buildError && <div className="sb-error">{buildError}</div>}
+            {reportBuilt && <div className="sb-success">Report created and opened in Artifacts.</div>}
+            <button className="sb-approve-btn" onClick={buildApprovedReport} disabled={buildingReport || approvedScenarios.length < 2}>
+              {buildingReport ? <><span className="sb-spinner" /> Building report…</> : <>✓ Accept plan &amp; build report</>}
+            </button>
+            <button className="sb-secondary-btn" onClick={onScenarioDraftClear}>Keep editing later</button>
+          </div>
+        )}
 
         {/* ── Area Analysis Bar (shared by both modes) ── */}
         <div className="sb-section">
@@ -323,6 +463,11 @@ export default function ScenarioBuilderPanel({ mapBounds, onOpenArtifacts, works
                   Notice: {baseline.fetch_errors.length} metric(s) unavailable (OSM rate limit)
                 </div>
               )}
+              {baseline.gis_layer_evidence?.layer_evidence?.length ? (
+                <div className="sb-review-data-note">
+                  Active GIS evidence: {baseline.gis_layer_evidence.layer_evidence.length} mapped layer(s) included in scenario calibration.
+                </div>
+              ) : null}
             </div>
           )}
         </div>

@@ -40,6 +40,7 @@ import {
   LayerGeometryData,
   LayerStyleSpec,
   SelectedFeatureEntry,
+  ScenarioDraft,
 } from './types'
 import {
   computeBreaks,
@@ -328,6 +329,7 @@ function App() {
   const [selectedArtifactId, setSelectedArtifactId] = useState<number | null>(null)
   const [scenarios, setScenarios] = useState<Scenario[]>([])
   const [activeScenarioId, setActiveScenarioId] = useState<string | null>(null)
+  const [scenarioDraft, setScenarioDraft] = useState<ScenarioDraft | null>(null)
 
   // Undo/Redo stack states
   const [pastHistory, setPastHistory] = useState<{ layers: GeoJSONLayer[]; bookmarks: MapBookmark[] }[]>([])
@@ -2107,6 +2109,13 @@ function App() {
   // ── Map action handler (intercepts layer ops, queues the rest) ──
 
   const handleMapAction = useCallback((action: MapAction) => {
+    if (action.type === 'open_scenario_builder') {
+      setScenarioDraft(action.payload.draft as ScenarioDraft)
+      setAppMode('map')
+      setActiveWorkspaceCategory('scenarios')
+      setIsLayerCardOpen(true)
+      return
+    }
     if (action.type === 'switch_basemap') {
       const bm = String(action.payload.basemap || '').toLowerCase()
       if (BASEMAPS[bm]) {
@@ -3485,7 +3494,26 @@ function App() {
                 )
               }
               mapBounds={mapBounds}
-              onOpenArtifacts={() => setAppMode('artifacts')}
+              onOpenArtifacts={() => {
+                setArtifactsRevision((n) => n + 1)
+                setAppMode('artifacts')
+              }}
+              scenarioDraft={scenarioDraft}
+              onScenarioDraftClear={() => setScenarioDraft(null)}
+              onScenariosCreated={(created) => {
+                const createdScenarios = created.map((s) => ({
+                  id: `scenario-${genId()}`,
+                  name: String(s.name || 'Scenario'),
+                  description: String(s.description || ''),
+                  createdAt: Date.now(),
+                  layerIds: layers.map((l) => l.id),
+                  layerVisibility: Object.fromEntries(layers.map((l) => [l.id, l.visible])),
+                }))
+                setScenarios((prev) => [
+                  ...prev.filter((p) => !createdScenarios.some((n) => n.name === p.name)),
+                  ...createdScenarios,
+                ])
+              }}
               workspacePath={workspacePath}
               onExportMapPng={handleExportMapPng}
               onExportMapJpeg={handleExportMapJpeg}
