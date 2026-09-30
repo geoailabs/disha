@@ -218,6 +218,11 @@ function App() {
   const [isLayerCardOpen, setIsLayerCardOpen] = useState(true)
 
   const handleCategoryClick = useCallback((cat: WorkspaceCategory) => {
+    // Layers, files, scenarios, and export are map workspace categories. If
+    // the user is currently viewing Artifacts or Documents, return to the map
+    // surface before opening the category panel.
+    setAppMode('map')
+    setStreetViewActive(false)
     setActiveWorkspaceCategory((prev) => {
       if (prev === cat && isLayerCardOpen) {
         setIsLayerCardOpen(false)

@@ -293,11 +293,13 @@ export default function ScenarioBuilderPanel({ mapBounds, onOpenArtifacts, works
 
   // ── Render ────────────────────────────────────────────────────────────────
 
+  const availableCriteria = Array.from(new Set([...DEFAULT_CRITERIA, ...compareCriteria]))
+
   return (
     <div className="sb-panel">
       {/* Header */}
       <div className="sb-header">
-        <span className="sb-title">AI Scenario Builder</span>
+        <span className="sb-title">{scenarioDraft ? 'Scenario review' : 'AI Scenario Builder'}</span>
         <div className="sb-mode-toggle">
           <button
             className={`sb-mode-btn ${mode === 'generate' ? 'active' : ''}`}
@@ -310,7 +312,7 @@ export default function ScenarioBuilderPanel({ mapBounds, onOpenArtifacts, works
         </div>
       </div>
 
-      <div className="sb-body">
+      <div className={`sb-body ${scenarioDraft ? 'sb-review-mode' : ''}`}>
 
         {scenarioDraft && (
           <div className="sb-review-card">
@@ -363,17 +365,28 @@ export default function ScenarioBuilderPanel({ mapBounds, onOpenArtifacts, works
 
             <div className="sb-review-subtitle">Score against</div>
             <div className="sb-criteria-grid">
-              {DEFAULT_CRITERIA.map(c => (
-                <label key={c} className="sb-type-row">
+              {availableCriteria.map((c, i) => (
+                <label key={`${c}-${i}`} className="sb-type-row sb-criterion-row">
                   <input
                     type="checkbox"
                     checked={compareCriteria.includes(c)}
                     onChange={() => setCompareCriteria(prev => prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c])}
                   />
-                  <span>{c}</span>
+                  {!DEFAULT_CRITERIA.includes(c) ? (
+                    <input
+                      className="sb-input sb-criterion-input"
+                      value={c}
+                      aria-label={`Criterion ${i + 1}`}
+                      onChange={e => setCompareCriteria(prev => prev.map(item => item === c ? e.target.value : item))}
+                    />
+                  ) : <span>{c}</span>}
                 </label>
               ))}
             </div>
+            <button
+              className="sb-add-scenario-btn sb-add-criterion-btn"
+              onClick={() => setCompareCriteria(prev => [...prev, 'New criterion'])}
+            >+ Add criterion</button>
             {baseline && <div className="sb-review-data-note">Baseline metrics loaded from the study area. CO₂ and emissions are included in the final assessment.</div>}
             {buildError && <div className="sb-error">{buildError}</div>}
             {reportBuilt && <div className="sb-success">Report created and opened in Artifacts.</div>}

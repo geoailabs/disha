@@ -238,7 +238,7 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
   }
 
   return (
-    <div className="floating-layer-card left-category-pane">
+    <div className={`floating-layer-card left-category-pane ${activeTab === 'scenarios' ? 'is-scenarios' : ''} ${scenarioDraft ? 'is-scenario-review' : ''}`}>
       {/* Dedicated Floating Category Pane Header */}
       <div className="flc-header">
         <div className="flc-category-title-group">

@@ -83,6 +83,13 @@
   padding: 0;
 }
 
+/* Chat-created drafts use a focused review surface. */
+.sb-review-mode > .sb-section,
+.sb-review-mode > .sb-generate-btn,
+.sb-review-mode > .sb-result-card {
+  display: none;
+}
+
 /* ── Sections ── */
 .sb-section {
   padding: 10px 12px;
@@ -537,6 +544,49 @@
   border: 1px solid rgba(91, 145, 132, 0.45);
   border-radius: 12px;
   background: linear-gradient(180deg, rgba(27, 64, 61, 0.55), rgba(16, 35, 39, 0.72));
+}
+
+/* Full-screen scenario review: use the extra width to keep alternatives in a
+   compact grid and keep the primary action in view without panel scrolling. */
+.is-scenario-review .sb-review-card {
+  width: min(1180px, 100%);
+  height: auto;
+  min-height: 100%;
+  box-sizing: border-box;
+  margin: 0 auto;
+  padding: clamp(18px, 2.2vw, 30px);
+  overflow: visible;
+  position: relative;
+}
+.is-scenario-review .sb-review-title { font-size: clamp(20px, 2vw, 28px); }
+.is-scenario-review .sb-review-context { max-width: 980px; font-size: 13px; }
+.is-scenario-review .sb-review-plan { columns: 2; column-gap: 42px; }
+.is-scenario-review .sb-review-scenarios {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.is-scenario-review .sb-review-scenario { margin-top: 0; }
+.is-scenario-review .sb-review-description {
+  min-height: 78px;
+  height: 78px;
+  overflow: hidden;
+  resize: none;
+  line-height: 1.4;
+}
+.is-scenario-review .sb-criteria-grid { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+.is-scenario-review .sb-approve-btn { max-width: 560px; margin: 13px auto 0; display: block; }
+.is-scenario-review .sb-review-data-note { margin-top: 10px; }
+.is-scenario-review .sb-secondary-btn { display: none; }
+.sb-add-criterion-btn { margin-top: 6px; }
+.sb-criterion-row { min-width: 0; }
+.sb-criterion-input { width: 150px; min-width: 0; padding: 4px 7px; }
+
+@media (max-width: 760px) {
+  .floating-layer-card.is-scenarios { inset: 0; border-radius: 0; }
+  .floating-layer-card.is-scenarios .flc-scenarios-tab { padding: 14px; }
+  .is-scenario-review .sb-review-plan { columns: 1; }
+  .is-scenario-review .sb-review-scenarios { grid-template-columns: 1fr; }
 }
 .sb-review-kicker { color: #a7e0d1; font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
 .sb-review-title { margin: 5px 0 4px; color: #f3faf8; font-size: 16px; }

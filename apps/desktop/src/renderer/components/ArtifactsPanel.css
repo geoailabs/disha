@@ -438,6 +438,28 @@
   font-size: 11px;
 }
 
+.artifact-mermaid-wrap {
+  width: 100%;
+  margin: 18px 0;
+  padding: 16px;
+  box-sizing: border-box;
+  overflow-x: auto;
+  border: 1px solid rgba(139, 213, 194, 0.28);
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(18, 34, 45, 0.96), rgba(13, 24, 35, 0.96));
+}
+
+.artifact-mermaid {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: auto;
+}
+
+.artifact-mermaid-fallback {
+  white-space: pre-wrap;
+}
+
 /* Enhanced tables */
 .artifact-detail-markdown table {
   border-collapse: collapse;
@@ -1661,6 +1683,4 @@
   opacity: 1;
   transform: translate(1px, -1px);
 }
-
-
 

@@ -42,6 +42,56 @@
   max-height: 52px;
 }
 
+/* Scenarios are a focused workflow rather than a narrow utility drawer. Give
+   the review enough room for the proposal, alternatives, and approval action
+   to be visible together. */
+.floating-layer-card.is-scenarios {
+  position: fixed;
+  inset: 14px;
+  left: 14px;
+  width: auto;
+  height: auto;
+  max-width: none;
+  z-index: 120;
+  border-radius: 22px;
+  background: rgba(10, 16, 27, 0.94);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.62);
+}
+
+.floating-layer-card.is-scenarios .flc-content {
+  overflow: hidden;
+  padding: 0;
+}
+
+.floating-layer-card.is-scenarios .flc-tab-view,
+.floating-layer-card.is-scenarios .flc-scenarios-tab {
+  overflow: hidden;
+  padding: 24px clamp(22px, 4vw, 72px) 30px;
+  gap: 18px;
+}
+
+.floating-layer-card.is-scenario-review .flc-scenario-list-section {
+  display: none;
+}
+
+.floating-layer-card.is-scenario-review .flc-scenario-builder-section {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.floating-layer-card.is-scenario-review .sb-panel,
+.floating-layer-card.is-scenario-review .sb-body {
+  height: 100%;
+  min-height: 0;
+}
+
+.floating-layer-card.is-scenario-review .sb-body {
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 10px;
+}
+
 /* Header */
 .flc-header {
   padding: 12px 16px;

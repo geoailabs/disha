@@ -7,6 +7,142 @@ import './ArtifactsPanel.css'
 
 const API_BASE = 'http://localhost:8765/api/artifacts'
 
+interface MermaidNode {
+  id: string
+  label: string
+  shape: 'process' | 'decision'
+  level: number
+  row: number
+}
+
+interface MermaidEdge {
+  from: string
+  to: string
+}
+
+function MermaidDiagram({ source }: { source: string }) {
+  const nodes = new Map<string, { label: string; shape: MermaidNode['shape'] }>()
+  const edges: MermaidEdge[] = []
+  const edgePattern = /([A-Za-z0-9_:.-]+)\s*(?:\[([^\]]+)\]|\{([^}]+)\}|\(([^)]+)\))?\s*-->\s*([A-Za-z0-9_:.-]+)\s*(?:\[([^\]]+)\]|\{([^}]+)\}|\(([^)]+)\))?/g
+
+  const addNode = (id: string, label?: string, shape?: MermaidNode['shape']) => {
+    const existing = nodes.get(id)
+    nodes.set(id, {
+      label: (label || existing?.label || id).replace(/<br\s*\/?>(\s*)/gi, ' ').trim(),
+      shape: shape || existing?.shape || 'process',
+    })
+  }
+
+  source.split('\n').forEach(line => {
+    const clean = line.trim()
+    if (!clean || /^flowchart\s+/i.test(clean) || clean === 'end') return
+    let match: RegExpExecArray | null
+    edgePattern.lastIndex = 0
+    while ((match = edgePattern.exec(clean)) !== null) {
+      const [, from, fromProcess, fromDecision, fromRound, to, toProcess, toDecision, toRound] = match
+      addNode(from, fromProcess || fromDecision || fromRound, fromDecision ? 'decision' : 'process')
+      addNode(to, toProcess || toDecision || toRound, toDecision ? 'decision' : 'process')
+      edges.push({ from, to })
+    }
+  })
+
+  if (nodes.size === 0) return <pre className="artifact-mermaid-fallback">{source}</pre>
+
+  const adjacency = new Map<string, string[]>()
+  const incoming = new Set(edges.map(edge => edge.to))
+  edges.forEach(edge => adjacency.set(edge.from, [...(adjacency.get(edge.from) || []), edge.to]))
+  const root = [...nodes.keys()].find(id => !incoming.has(id)) || [...nodes.keys()][0]
+  const levels = new Map<string, number>([[root, 0]])
+  const queue = [root]
+  while (queue.length) {
+    const current = queue.shift()!
+    for (const next of adjacency.get(current) || []) {
+      const level = Math.max(levels.get(next) ?? 0, (levels.get(current) || 0) + 1)
+      if (level !== levels.get(next)) {
+        levels.set(next, level)
+        queue.push(next)
+      }
+    }
+  }
+
+  const rowsByLevel = new Map<number, string[]>()
+  ;[...nodes.keys()].forEach(id => {
+    const level = levels.get(id) ?? 0
+    rowsByLevel.set(level, [...(rowsByLevel.get(level) || []), id])
+  })
+  const layout: MermaidNode[] = [...nodes.entries()].map(([id, node]) => {
+    const level = levels.get(id) ?? 0
+    const row = rowsByLevel.get(level)!.indexOf(id)
+    return { id, ...node, level, row }
+  })
+  const maxLevel = Math.max(...layout.map(node => node.level))
+  const maxRows = Math.max(...[...rowsByLevel.values()].map(row => row.length))
+  // Flowcharts read more naturally as a vertical decision path: stages move
+  // downward, while alternatives at the same stage sit beside one another.
+  const width = Math.max(680, maxRows * 190 + 70)
+  const height = Math.max(360, (maxLevel + 1) * 112 + 70)
+  const position = (node: MermaidNode) => {
+    const levelWidth = rowsByLevel.get(node.level)?.length || 1
+    // Center narrow stages over the widest branch, keeping alternatives
+    // symmetric around the main decision path.
+    const centeredRow = node.row + (maxRows - levelWidth) / 2
+    return { x: 35 + centeredRow * 190, y: 35 + node.level * 112 }
+  }
+  const getNode = (id: string) => layout.find(node => node.id === id)!
+  const wrap = (label: string) => label.match(/.{1,25}(?:\s|$)/g)?.map(line => line.trim()).filter(Boolean).slice(0, 3) || [label.slice(0, 30)]
+
+  return (
+    <div className="artifact-mermaid-wrap" role="img" aria-label="Scenario decision flowchart">
+      <svg className="artifact-mermaid" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMinYMin meet">
+        <defs>
+          <marker id="artifact-flow-arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L7,3 z" fill="#8bd5c2" />
+          </marker>
+        </defs>
+        {edges.map((edge, index) => {
+          const from = position(getNode(edge.from))
+          const to = position(getNode(edge.to))
+          return (
+            <line
+              key={`${edge.from}-${edge.to}-${index}`}
+              x1={from.x + 78}
+              y1={from.y + 56}
+              x2={to.x + 78}
+              y2={to.y}
+              stroke="#8bd5c2"
+              strokeWidth="2"
+              markerEnd="url(#artifact-flow-arrow)"
+            />
+          )
+        })}
+        {layout.map(node => {
+          const { x, y } = position(node)
+          const lines = wrap(node.label)
+          return node.shape === 'decision' ? (
+            <g key={node.id} transform={`translate(${x + 78} ${y + 28})`}>
+              <polygon points="0,-28 78,0 0,28 -78,0" fill="#263b55" stroke="#f2c879" strokeWidth="2" />
+              {lines.map((line, index) => <text key={index} x="0" y={-5 + index * 13} textAnchor="middle" fill="#fff5d6" fontSize="11" fontFamily="sans-serif">{line}</text>)}
+            </g>
+          ) : (
+            <g key={node.id}>
+              <rect x={x} y={y} width="156" height="56" rx="10" fill="#1b3440" stroke="#8bd5c2" strokeWidth="2" />
+              {lines.map((line, index) => <text key={index} x={x + 78} y={y + 23 + index * 13} textAnchor="middle" fill="#e7fbf5" fontSize="11" fontFamily="sans-serif">{line}</text>)}
+            </g>
+          )
+        })}
+      </svg>
+    </div>
+  )
+}
+
+const markdownCode = ({ className, children, ...props }: any) => {
+  const language = /language-(\w+)/.exec(className || '')?.[1]
+  if (language?.toLowerCase() === 'mermaid') {
+    return <MermaidDiagram source={String(children).replace(/\n$/, '')} />
+  }
+  return <code className={className} {...props}>{children}</code>
+}
+
 const getSlug = (node: any): string => {
   if (!node) return ''
   if (typeof node === 'string') {
@@ -908,6 +1044,7 @@ export default function ArtifactsPanel({
                 remarkPlugins={[remarkGfm]}
                 rehypePlugins={[rehypeHighlight]}
                 components={{
+                  code: markdownCode,
                   ...headingComponents,
                   img: ({ src, alt, ...props }) => {
                     let resolvedSrc = src || ''
@@ -1086,6 +1223,7 @@ export default function ArtifactsPanel({
             remarkPlugins={[remarkGfm]}
             rehypePlugins={[rehypeHighlight]}
             components={{
+              code: markdownCode,
               ...headingComponents,
               img: ({ src, alt, ...props }) => {
                 let resolvedSrc = src || ''
