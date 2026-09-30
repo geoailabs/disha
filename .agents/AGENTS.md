@@ -72,3 +72,15 @@ This file documents rules and guidelines for pair programming on this repository
 * **Bracket & Lifecycle Hook Integrity:** Large components (such as `MapView.tsx` at 2,400+ lines, `ChatPanel.tsx`, and `App.tsx`) have tightly nested React hooks. When adding, replacing, or refactoring hooks (`useEffect`, `useCallback`, `useImperativeHandle`), ALWAYS check that adjacent hooks retain their closing brackets and dependency arrays (e.g. `}, [])`).
 * **Inspect Diff Bounds:** Before saving edits, inspect 5–10 lines before and after the replacement block to ensure no cleanup callbacks (`return () => { ... }`) or enclosing function scopes were inadvertently truncated.
 
+### 12. Zero-Overlap Workspace Layout Insets
+* **Maintain Dynamic Safe Offsets:** Full-screen workspace views (`.mundi-workspace-view`) must preserve safe layout insets (`left: calc(var(--sidebar-width) + 26px)`, `right: var(--chat-drawer-offset)`, `top: 14px`, `bottom: 14px`). Never set width to `100vw` or remove margins, as this causes workspace containers (`DocumentView`, `ArtifactsPanel`, `ScenarioBuilderPanel`, `DiagnosticsPanel`) to slip underneath the floating `AppSidebar` on the left or the sliding `ChatDrawer` on the right.
+* **Frosted Glassmorphic Architecture:** Use Canva Sans typography, 20px card border radii, and frosted backdrop blur (`blur(28px)`) to maintain design uniformity across all workspace cards.
+
+### 13. Map Navigation Stack & Interactive Compass
+* **Unified Control Stack:** Navigation controls on `MapView.tsx` must stay unified in `.map-nav-stack` at top-right. Do not re-inject default unstyled MapLibre `NavigationControl` instances or duplicate compass needles.
+* **Compass Click-to-North Contract:** Clicking the compass rose must trigger `mapRef.current.easeTo({ bearing: 0, pitch: 0, duration: 800 })` to smoothly return camera bearing and pitch to North in a 2D flat perspective.
+
+### 14. Artifacts Header & Categorized Exports
+* **Categorized Dropdown:** All artifact export formats must be accessible via the categorized header download dropdown (`⬇ Download`). Do not add sprawling rows of export buttons to the bottom of detail views.
+* **Compact Header Provenance:** Display spatial provenance via the header `ℹ Sources` popover button instead of full-width inline cards, preserving vertical space for report content.
+

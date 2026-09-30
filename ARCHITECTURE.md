@@ -21,10 +21,10 @@ A desktop application (macOS / Windows / Linux) that unifies multiple analytical
 
 | Pane / Mode | Purpose |
 |---|---|
-| **Map** (center, Map mode) | Interactive MapLibre GL canvas with switchable raster basemaps, vector layer rendering, data-driven symbology (categorized, graduated) + text labels, drawing tools, marker pins, measurement, and a live legend. |
-| **Document view** (center, Document mode) | Drop in a planning PDF or map image; the AI analyzes land use, zoning, networks, and spatial patterns via multimodal vision, with automatic/manual georeferencing and digitizing tools. |
+| **Map** (center, Map mode) | Interactive MapLibre GL canvas with switchable raster basemaps, vector layer rendering, data-driven symbology (categorized, graduated) + text labels, drawing tools, marker pins, measurement, a live legend, and a unified glassmorphic navigation stack (compass rose + zoom controls with click-to-North easing). |
+| **Document view** (center, Document mode) | Glassmorphic 20px card container featuring an interactive drag-and-drop dropzone (`PDF`, `TIFF`, `PNG`, `JPEG`, `WEBP`), Canva Sans typography, segmented PDF pagination toolbar, and a live vector RAG status pill. |
 | **Left panel** | Tabs for **Files** (workspace tree & vector import), **Layers** (+ Symbology & Attribute editors), **Bookmarks**, **Export** (publication figures & clipped layers), **Zoning legend**, **Scenario Builder** (MCDA evaluation), and **Diagnostics** (system self-checks). |
-| **Right panel** | Tabs for **Chat** (streaming AI assistant, inline tool calls, interactive option cards, model switcher) and **Artifacts** (markdown reports, tables, plots, and figures with 8-format exports). |
+| **Right panel** | Tabs for **Chat** (streaming AI assistant, inline tool calls, interactive option cards, model switcher) and **Artifacts** (markdown reports, tables, plots, and figures with a categorized 11-format download dropdown and compact header Sources popover). |
 
 Toggle between **Map** and **Document** modes from the title bar.
 
@@ -60,9 +60,14 @@ Style any vector layer based on its feature properties:
 - Seven free raster basemaps: Street (OSM), Satellite (Esri World Imagery), Dark / Light (CartoDB), Terrain (OpenTopoMap), Topo (Esri), Humanitarian (OSM-HOT).
 - **Keyless 360° Street View:** Right-click anywhere on the map to inspect coordinates, drop reverse-geocoded pins, query the AI, or open an embedded 360° street-level panorama (powered by the `streetlevel` library and pannellum).
 
+### Navigation Stack & Orientation
+- **Unified Navigation Pill:** Custom glassmorphic stack at top-right housing an interactive rotating compass rose and `+`/`−` zoom buttons.
+- **Click-to-North Reset:** Clicking the compass smoothly resets camera bearing and pitch to North in a 2D flat perspective via `mapRef.current.easeTo({ bearing: 0, pitch: 0, duration: 800 })`.
+
 ### Bookmarks & Publication Export
 - Save named map extents as bookmarks. The assistant can also save and navigate to bookmarks.
-- **Publication Map Export:** Export publication-ready figures with Web-Mercator scale bars, bearing-aware north arrows, title blocks, legends, and attributions in PNG or PDF.
+- **Publication Map Export:** Export publication-ready figures with Web-Mercator scale bars, bearing-aware north arrows, title blocks, legends, and attributions in PNG, JPEG, or PDF.
+- **Labeled Map Exports & GeoJSON Downloads:** Direct layer GeoJSON downloads and on-canvas labeled exports.
 - **Zero-Crop Geographic Padding:** When exporting study areas, the exporter calculates bounding boxes and applies an **18% geographic padding** on all four cardinal directions, repainting the WebGL buffer for uncropped figures.
 
 ## Document Mode & Master Plan Digitization
@@ -93,15 +98,22 @@ The chat panel provides streaming conversational intelligence with full tool vis
 
 ## Artifacts & Multi-Format Export
 
-Generated reports, analytical tables, charts, and figures are cataloged in the **Artifacts** panel and stored in a local SQLite database (`disha.db`). Artifacts can be edited, reordered, and exported in **8 formats**:
-1. **PDF (`.pdf`)** — Formatted publication document via `ReportLab` (`%PDF-1.4`).
+Generated reports, analytical tables, charts, and figures are cataloged in the **Artifacts** panel and stored in a local SQLite database (`disha.db`). Artifacts can be edited, reordered, and exported across **11 formats** via a sleek categorized header download dropdown:
+1. **PDF (`.pdf`)** — Formatted publication document via `ReportLab` (`%PDF-1.4`) with automated Mermaid diagram compilation.
 2. **Word (`.docx`)** — Microsoft Word document via `python-docx` with embedded figures and tables.
 3. **HTML (`.html`)** — Standalone responsive HTML report with modern CSS styling.
-4. **PNG Image (`.png`)** — High-resolution map or chart snapshot.
-5. **JPEG Image (`.jpg`)** — Compressed image figure.
-6. **Excel (`.xlsx`)** — Multi-column spreadsheet via `openpyxl`.
-7. **JSON (`.json`)** — Raw structured data and GeoJSON feature collections.
-8. **TXT (`.txt`)** — Plain text document.
+4. **Markdown (`.md`)** — Standard GFM markdown document export.
+5. **PNG Image (`.png`)** — High-resolution map or chart snapshot.
+6. **JPEG Image (`.jpg`)** — Compressed image figure.
+7. **SVG (`.svg`)** — Scalable vector graphics export.
+8. **TIFF (`.tif`)** — High-fidelity uncompressed raster export for GIS workflows.
+9. **WebP (`.webp`)** — Modern web-optimized lossy/lossless image format.
+10. **GeoJSON (`.geojson`)** — Full spatial vector geometry and feature properties.
+11. **Excel (`.xlsx`)** — Multi-column spreadsheet via `openpyxl`.
+12. **JSON (`.json`)** — Raw structured data and GeoJSON feature collections.
+13. **TXT (`.txt`)** — Plain text document.
+
+The panel features a compact header **"Sources"** popover dropdown for spatial provenance (replacing bottom action bars and bulky cards), and is housed inside a frosted glassmorphic card container styled with Canva Sans typography.
 
 ---
 
@@ -118,7 +130,7 @@ Generated reports, analytical tables, charts, and figures are cataloged in the *
 | **LLM & Reasoning** | OpenAI API (Chat Completions streaming, tool calling), OpenAI Responses API (`o4-mini-deep-research`), OpenAI Embeddings (`text-embedding-3-small`) |
 | **Geospatial & Analysis** | Shapely, pyproj (WGS84 ellipsoidal geodesic math), DuckDB `spatial`, GeoPandas, Fiona, NetworkX |
 | **External Geospatial APIs** | Overpass API (OSM), Nominatim, OSRM, Open-Meteo, Overture Maps (S3 Parquet), WorldPop, Google Earth Engine, Google Maps Platform |
-| **Document & Chart Engines** | ReportLab, python-docx, openpyxl, Matplotlib, markdown, pdfjs-dist, pypdf |
+| **Document & Chart Engines** | ReportLab, python-docx, openpyxl, Matplotlib, markdown, pdfjs-dist, pypdf, Playwright/Chromium (Mermaid PDF diagrams) |
 | **Storage & Cache** | SQLite (WAL mode for artifacts & HTTP cache), JSON files for workspace state |
 | **Packaging & Freezing** | electron-builder, PyInstaller (frozen backend binary) |
 
@@ -137,8 +149,9 @@ Generated reports, analytical tables, charts, and figures are cataloged in the *
 │       │   ├── compose-figure.ts  Publication figure compositor (title/legend/scale/arrow)
 │       │   ├── legend-data.ts     Shared legend builder for live legend and export compositor
 │       │   └── pdf-raster.ts      PDF page rasterization via pdfjs-dist
-│       └── components/            MapView, ChatPanel, ArtifactsPanel, LayerPanel, SymbologyPanel,
-│                                  AttributeTable, ScenarioBuilderPanel, DiagnosticsPanel, DocumentView,
+│       └── components/            MapView (nav stack + compass), ChatPanel, ArtifactsPanel (11 formats),
+│                                  LayerPanel, SymbologyPanel, AttributeTable, ScenarioBuilderPanel,
+│                                  DiagnosticsPanel, DocumentView (glassmorphic dropzone + RAG pill),
 │                                  ExportPanel, StreetViewWorkspace, BookmarkPanel, FileTree, Legend...
 ├── packages/backend/              Python FastAPI backend
 │   ├── main.py                    FastAPI app, lifespan, CORS, and router registration
@@ -148,7 +161,7 @@ Generated reports, analytical tables, charts, and figures are cataloged in the *
 │   ├── routers/                   10 Mounted API Routers:
 │   │   ├── chat.py                ★ Agentic loop, tool registry, action contract, deep research
 │   │   ├── files.py               Workspace file listing and vector file conversion/probing
-│   │   ├── artifacts.py           Artifact CRUD, file uploads, and 8-format download/export endpoints
+│   │   ├── artifacts.py           Artifact CRUD, file uploads, and 11-format download/export endpoints
 │   │   ├── geocode.py             Forward and reverse geocoding proxy
 │   │   ├── streetview.py          Keyless Street View metadata and equirectangular panoramas
 │   │   ├── wms.py                 WMS GetCapabilities and GetFeatureInfo CORS proxy
@@ -166,11 +179,13 @@ Generated reports, analytical tables, charts, and figures are cataloged in the *
 │   │   ├── places_hub.py          Google Places Platform and Overture 3D buildings & POIs
 │   │   ├── scenarios_hub.py       Planning scenario generation and MCDA matrix comparisons
 │   │   └── utility_hub.py         Geocoding, web search, measurements, PlotServer, artifacts
-│   ├── mcp_servers/               Underlying MCP server implementations (OSM, GIS, weather, zoning, etc.)
+│   ├── mcp_servers/               Underlying MCP servers (OSM, GIS, weather, zoning, scenarios, etc.)
+│   │   └── scenario_server.py     Scenario planning & MCDA evaluation MCP server
 │   ├── tools/                     Authoritative backend engines:
 │   │   ├── spatial_registry.py    ★ Central spatial registry with IoU >= 90% deduplication & geodesic math
 │   │   ├── task_pipeline.py       ★ Queue & Heap orchestrator for document asset-pipeline ordering
-│   │   ├── export_engine.py       ★ Multi-format export compiler (PDF, Word, HTML, XLSX, PNG, JPEG)
+│   │   ├── export_engine.py       ★ Multi-format export compiler (11 formats + Mermaid in PDF)
+│   │   ├── mermaid_renderer.py    ★ Mermaid diagram to PNG/SVG compiler for PDF deliverables
 │   │   ├── geo.py                 Geodesic area/perimeter/buffer calculations via pyproj WGS84
 │   │   ├── vector_convert.py      Vector conversion to EPSG:4326 via DuckDB spatial
 │   │   ├── utility.py             UtilityServer implementation (web search, geocode, measure)
@@ -317,7 +332,7 @@ Authoritative singleton tracking all polygon geometries in the workspace:
 - **Task Pipeline Orchestrator (`tools/task_pipeline.py`):** Enforces dependency order when the AI generates multi-asset documents:
   1. Priority Queue Phase: Generates map snapshots (`export_map_jpeg`) and charts (`create_plot`), reserving artifact IDs and file paths.
   2. Document Heap Phase: Replaces placeholder image syntax with verified file paths before executing `create_artifact`.
-- **Multi-Format Export Engine (`tools/export_engine.py`):** Pure Python document compilation engine supporting 8 formats: `PDF` (ReportLab `%PDF-1.4`), `Word (.docx)` (python-docx), `HTML` (markdown), `PNG`, `JPEG` (Pillow), `Excel (.xlsx)` (openpyxl), `JSON`, and `TXT`.
+- **Multi-Format Export Engine (`tools/export_engine.py`):** Pure Python document compilation engine supporting **11 formats**: `PDF` (ReportLab `%PDF-1.4` with automated Mermaid diagram compilation via `mermaid_renderer.py`), `Word (.docx)` (python-docx), `HTML` (markdown), `Markdown (.md)`, `PNG`, `JPEG` (Pillow), `SVG`, `TIFF`, `WebP`, `GeoJSON`, `Excel (.xlsx)` (openpyxl), `JSON`, and `TXT`.
 
 ## RAG Indexing & Document Semantic Search (`routers/rag.py`)
 
@@ -443,6 +458,30 @@ Renderer interacts with Electron main via `window.electronAPI`:
 - `getLastWorkspace()` / `setLastWorkspace(path)`: Last workspace persistence.
 - `getModels()` / `getCurrentModel()` / `switchModel(modelId)`: Model configuration management.
 - `onAppBeforeQuit(callback)`: Flushes project saves before window unload.
+
+## Zero-Overlap Workspace Layout Architecture & UI Aesthetics
+
+Disha implements a floating glassmorphic shell architecture with dynamic safe insets to guarantee zero content overlap between floating panels and workspace views:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Window Header & Mode Switcher (Map / Document / Artifacts / Diagnostics)    │
+├─────────┬─────────────────────────────────────────────────────────┬─────────┤
+│ Floating│ Inset Workspace Container (.mundi-workspace-view)       │ Floating│
+│ Sidebar │ ┌─────────────────────────────────────────────────────┐ │ Chat    │
+│ (72px)  │ │ Frosted Glass Card (20px radius, blur(28px))        │ │ Drawer  │
+│         │ │ Left:   calc(var(--sidebar-width) + 26px)           │ │         │
+│         │ │ Right:  var(--chat-drawer-offset)                   │ │         │
+│         │ │ Top: 14px  │  Bottom: 14px                          │ │         │
+│         │ └─────────────────────────────────────────────────────┘ │         │
+└─────────┴─────────────────────────────────────────────────────────┴─────────┘
+```
+
+- **Dynamic Layout Insets:** `.mundi-workspace-view` enforces strict boundary insets:
+  - `left: calc(var(--sidebar-width) + 26px)` preserves a generous air gap from `AppSidebar`.
+  - `right: var(--chat-drawer-offset)` smoothly tracks the sliding `ChatDrawer` (`20px` closed $\rightarrow$ `440px+` open) with cubic-bezier easing (`0.16, 1, 0.3, 1`).
+- **Canva Sans Typography & Frosted Glass:** All panels use clean Canva Sans typography, subtle border outlines (`rgba(255, 255, 255, 0.08)`), and multi-layer box shadows.
+- **Top-Right Map Navigation Stack:** Replaces MapLibre's unstyled default `NavigationControl` with a glassmorphic pill combining an interactive rotating compass rose (click to ease bearing & pitch to North) and tactile zoom buttons.
 
 ## Persistence Subsystem
 

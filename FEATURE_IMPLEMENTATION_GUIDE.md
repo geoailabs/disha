@@ -1,6 +1,6 @@
 # 🚀 Disha Feature Implementation & Subsystem Architecture Guide
 
-## Domain Hubs, Spatial Registry, Multi-Format Exports, Task Pipeline, & Spatial Context Engine
+## Domain Hubs, Spatial Registry, Multi-Format Exports, Task Pipeline, Navigation Stack & Zero-Overlap UI
 
 This document provides a comprehensive, in-depth technical guide detailing the core architectures, subsystems, and feature implementations powering the **Disha AI Desktop IDE for Urban and Regional Planners**.
 
@@ -10,13 +10,13 @@ This document provides a comprehensive, in-depth technical guide detailing the c
 
 Urban and regional planning software requires unified coordination between high-performance interactive cartography (MapLibre GL), agentic AI reasoning across diverse planning disciplines, centralized geospatial entity tracking, and production-grade exportable deliverables.
 
-We implemented and hardened twelve core platform capabilities:
+We implemented and hardened eighteen core platform capabilities:
 
 1. **7+1 Domain Hub Architecture & ToolResult Protocol**: Replaces unorganized flat tool collections with cohesive domain subsystems (`Spatial`, `Mobility`, `Environment`, `Planning`, `Demographics`, `Places`, `Scenarios`, and `Utility`), returning typed execution packets (`ToolResult`) with automated side-effect routing.
 2. **Central Spatial & Polygon Registry**: Single source of truth for all study areas, zoning parcels, and boundaries, enforcing $\ge 90\%$ Intersection-over-Union (IoU) deduplication, geodesic ellipsoidal calculations (`pyproj.Geod`), and live map layer synchronization.
 3. **Token-Optimized Spatial Context Engine**: Converts complex GeoJSON layers (which previously triggered `400 context_length_exceeded` errors at ~274,000 tokens) into compact, semantically rich spatial metadata (~100 tokens, a $\mathbf{99.96\%}$ reduction).
 4. **Task Pipeline Orchestrator (`task_pipeline.py`)**: Implements a Priority-Queue (Asset Phase) and Document-Heap (Compilation Phase) dependency execution model that prevents document hallucination by generating real map/chart assets before compiling documents.
-5. **Multi-Format Artifact Export Engine (`export_engine.py`)**: Enables single-click and chat-driven exports across **8 modalities**: `PDF` (`ReportLab` native `%PDF-1.4`), `Word (.docx)`, `HTML`, `PNG Image`, `JPEG Image`, `Excel (.xlsx)`, `JSON`, and `TXT`.
+5. **Multi-Format Artifact Export Engine (`export_engine.py`)**: Enables single-click and chat-driven exports across **11 modalities**: `PDF` (`ReportLab` native `%PDF-1.4` with automated Mermaid diagram compilation), `Word (.docx)`, `HTML`, `Markdown (.md)`, `PNG Image`, `JPEG Image`, `SVG`, `TIFF`, `WebP`, `GeoJSON`, `Excel (.xlsx)`, `JSON`, and `TXT`.
 6. **Plot & Histogram MCP Server (`PlotServer`)**: Integrated into `UtilityHub` to generate dark- and light-themed publication charts (`bar`, `histogram`, `pie`, `line`, `scatter`) via Matplotlib and persist them directly into the artifact catalog.
 7. **Uncropped Bounding-Box Map Composer**: Calculates exact layer bounding coordinates, applies an **$18\%$ geographic margin padding on all four cardinal directions**, and flushes the WebGL frame buffer for zero-crop map snapshots with true planar aspect ratios.
 8. **RAG Vector Search & Document Indexing Subsystem (`routers/rag.py`)**: Automatically parses workspace documents (`.pdf`, `.docx`, `.txt`, `.md`), computes OpenAI vector embeddings via `text-embedding-3-small`, and injects top-ranked chunks into chat context.
@@ -25,6 +25,11 @@ We implemented and hardened twelve core platform capabilities:
 11. **OpenCode Agent Runtime & MCP Tool Adapter**: Autonomous multi-step orchestration via headless `opencode serve` and stdio JSON-RPC MCP adapter.
 12. **Geographic Interpretation & Boundary Containment**: Resolves administrative boundaries and enforces spatial polygon containment without substituting broad search extents, bounding boxes, or radial proximity.
 13. **Document Visualization & Section Heading Independence**: Generates separate, dedicated map figures per requested document heading with strict layer isolation.
+14. **End-to-End Planning Scenario & MCDA Reports (`scenarios_hub.py`)**: Multi-Criteria Decision Analysis scoring, scenario generation, and automated markdown reports with spatial indicators.
+15. **Unified Map Navigation Stack & Interactive Compass Rose (`MapView.tsx`)**: Consolidated top-right glassmorphic navigation pill pairing a rotating compass rose with `+`/`−` zoom buttons. Clicking the compass rose smoothly resets bearing and pitch to North (`mapRef.current.easeTo({ bearing: 0, pitch: 0, duration: 800 })`).
+16. **Zero-Overlap Workspace Layout Insets & Frosted Glassmorphism (`App.css`, `DocumentView.css`, `ArtifactsPanel.css`)**: Dynamic geometric insets on `.mundi-workspace-view` (`left: calc(var(--sidebar-width) + 26px)`, `right: var(--chat-drawer-offset)`, `top: 14px`, `bottom: 14px`), preventing workspace views from overlapping with the floating `AppSidebar` or `ChatDrawer`. Styled with Canva Sans typography, 20px rounded cards, and frosted backdrop blur.
+17. **Categorized 11-Format Export Dropdown & Header Sources Popover (`ArtifactsPanel.tsx`)**: Replaces sprawling bottom action bars and legacy format buttons with a sleek top-left categorized download dropdown (Documents, Images, Data) and a compact header "Sources" popover dropdown for spatial provenance.
+18. **Interactive Drag-and-Drop DocumentView Dropzone & RAG Vector Toolbar (`DocumentView.tsx`)**: Reusable empty-state dropzone supporting native file browsing and drag-and-drop for `PDF`, `TIFF`, `PNG`, `JPEG`, and `WEBP`, coupled with segmented PDF page controls and a glowing vector RAG status pill.
 
 ---
 
@@ -35,8 +40,10 @@ flowchart TD
     subgraph Frontend ["Electron Renderer (React 19 + MapLibre GL)"]
         UserSel["User Selects GeoJSON Feature / Layer Collection"]
         MapCanvas["MapLibre WebGL Canvas"]
+        NavStack["Unified Map Nav Stack (Compass Rose + Zoom Controls)"]
         Composer["composeFigure() + fitBboxAndSnapshot()"]
-        ArtPanel["ArtifactsPanel (8 Multi-Format Buttons)"]
+        ArtPanel["ArtifactsPanel (Categorized 11-Format Dropdown + Sources Popover)"]
+        DocView["DocumentView (Glassmorphic Dropzone + RAG Toolbar)"]
         ChatUI["ChatPanel.tsx (Prompt & Context Pill)"]
     end
 
@@ -48,7 +55,7 @@ flowchart TD
         DomainHubs["7+1 Domain Hubs (BaseDomainHub)"]
         RAGRouter["routers/rag.py (Vector Search & Embeddings)"]
         PlotMCP["PlotServer (create_plot)"]
-        ExpEngine["tools/export_engine.py (Doc Compiler)"]
+        ExpEngine["tools/export_engine.py (11-Format Doc Compiler + Mermaid)"]
         ArtStore["tools/artifact_store.py (SQLite DB)"]
     end
 
@@ -69,9 +76,10 @@ flowchart TD
     DomainHubs -->|Generate Plots| PlotMCP
     PlotMCP -->|Save Image Artifact| ArtStore
     Composer -->|Capture 18% Padded Canvas| ExpEngine
-    ExpEngine -->|Generate PDF / DOCX / HTML / XLSX| ArtStore
+    ExpEngine -->|Generate PDF / DOCX / HTML / XLSX / Images| ArtStore
     ArtStore -->|HTTP /export Endpoint| ArtPanel
     ChatLoop -->|Auto Map Action (WebSocket)| MapCanvas
+    NavStack -.->|Ease to North / Pitch 0 / Zoom| MapCanvas
 ```
 
 ---
@@ -201,18 +209,29 @@ Implemented in `packages/backend/mcp_servers/plot_server.py` and exposed via `Ut
 
 ## 📄 6. Multi-Format Artifact Export Engine (`tools/export_engine.py`)
 
-The multi-format compiler in `packages/backend/tools/export_engine.py` allows any planning report, spatial summary, table, or map view to be exported into 8 distinct formats:
+The multi-format compiler in `packages/backend/tools/export_engine.py` allows any planning report, spatial summary, table, or map view to be exported across **11 distinct formats**:
 
 | Format | Technology / Engine | Key Capabilities |
 |---|---|---|
-| **PDF (`.pdf`)** | `ReportLab` | Native `%PDF-1.4` binary stream; includes document title, formatted paragraphs, bullet lists, and embedded map figure. Pure Python, requiring zero system C-libraries. |
+| **PDF (`.pdf`)** | `ReportLab` + `mermaid_renderer.py` | Native `%PDF-1.4` binary stream with embedded maps, tables, headers, and pre-compiled high-res PNG renders of Mermaid flowcharts/diagrams. Pure Python base with zero required C-libraries. |
 | **Word (`.docx`)** | `python-docx` | Native Microsoft Word document formatting; includes H1/H2 headings, table grids, bullet points, and centered map image figures. |
 | **HTML (`.html`)** | `markdown` | Self-contained, responsive HTML report styled with modern CSS typography and base64-embedded map snapshots. |
+| **Markdown (`.md`)** | Native Markdown | Clean GFM (GitHub Flavored Markdown) text stream with relative asset references. |
 | **PNG (`.png`)** | `Pillow` (PIL) | High-resolution raster map image snapshot with legend, scale bar, and compass rose. |
 | **JPEG (`.jpg`)** | `Pillow` (PIL) | Compressed RGB JPEG map snapshot ($95\%$ quality). |
+| **SVG (`.svg`)** | Native Vector XML | Scalable vector graphics export for diagrams, plots, and layout figures. |
+| **TIFF (`.tif`)** | `Pillow` (PIL) | High-fidelity uncompressed raster export suitable for print publishing and GIS overlay workflows. |
+| **WebP (`.webp`)** | `Pillow` (PIL) | Modern web-optimized lossy/lossless image format with high compression ratios. |
+| **GeoJSON (`.geojson`)** | Standard `json` / DuckDB | Full spatial vector geometry and feature attribute properties (EPSG:4326). |
 | **Excel (`.xlsx`)** | `openpyxl` | Formatted multi-column workbook containing feature properties, attribute tables, and zonal data. |
 | **JSON (`.json`)** | Standard `json` | Raw structured metadata and GeoJSON feature collections. |
 | **TXT (`.txt`)** | Standard I/O | Plain text document export. |
+
+### Mermaid Diagram Compilation for PDF (`tools/mermaid_renderer.py`)
+To render rich architectural flows, scenario comparisons, and decision trees directly in exported PDF documents, `mermaid_renderer.py`:
+1. Scans Markdown content for ````mermaid ... ```` code blocks.
+2. Compiles diagrams into standalone HTML/SVG wrappers using headless Chromium/Playwright or CLI mermaid compilers (`mmdc`), falling back to clean high-contrast text boxes if graphics engines are unavailable.
+3. Injects high-resolution rasterized diagrams into the ReportLab story flow, ensuring identical visual fidelity between interactive chat views and exported PDF deliverables.
 
 ---
 
@@ -321,3 +340,97 @@ When compiling multi-section urban planning deliverables with maps and statistic
 - **Heading-Level Visual Independence:** When the user requests separate visuals under separate headings, each heading receives its own dedicated visual asset.
 - **Layer Isolation per Section:** When capturing a map figure for a specific heading, pass `layers_to_show` to `export_map_jpeg`/`export_map_png`/`export_map_pdf` containing only that section's target layers and background boundary outline. This isolates section visuals while preserving all created layers on the interactive map canvas (without deleting or removing canvas layers).
 - **Document Asset Sequencing:** The appropriate document structure is inferred from requested headings, and all required underlying maps, plots, statistics, and image artifacts are generated before assembling the document.
+
+---
+
+## 🧭 15. Unified Map Navigation Stack & Interactive Compass Rose
+
+### The Challenge
+In earlier versions, map orientation and zoom controls were fragmented across unstyled MapLibre defaults (`NavigationControl`) and separate floating indicators. The compass was static or purely visual, and controls occupied scattered corners of the canvas without consistent glassmorphic styling.
+
+### The Solution Implementation
+1. **Consolidated Glassmorphic Pill (`MapView.tsx`, `MapView.css`)**:
+   - The default MapLibre `NavigationControl` was removed in favor of a custom, unified React component: `.map-nav-stack`.
+   - Anchored to the top-right of the map canvas (`top: 18px`, `right: 18px`), matching the IDE's floating dark glass aesthetic (`rgba(15, 23, 42, 0.78)` background, `backdrop-filter: blur(16px)`, `1px solid rgba(255, 255, 255, 0.12)`, `border-radius: 24px`).
+2. **Interactive Compass Rose (Click-to-North Reset)**:
+   - Houses a rotating SVG compass rose (`.compass-btn`) that dynamically reflects the map's current camera bearing (`transform: rotate(${-bearing}deg)`).
+   - Clicking the compass triggers smooth camera easing back to true North in a 2D flat perspective:
+     ```typescript
+     mapRef.current.easeTo({
+       bearing: 0,
+       pitch: 0,
+       duration: 800,
+     })
+     ```
+   - Features glowing blue cardinal points, an orange-red North needle tip (`#ef4444`), and subtle hover scale animations.
+3. **Integrated Zoom Controls**:
+   - Positioned directly below the compass rose, separated by a subtle 1px translucent divider (`rgba(255, 255, 255, 0.08)`).
+   - Features `+` (`mapRef.current.zoomIn()`) and `−` (`mapRef.current.zoomOut()`) buttons with active tactile states and smooth MapLibre camera transitions.
+
+---
+
+## 📐 16. Zero-Overlap Workspace Layout Insets & Frosted Glassmorphism
+
+### The Layout Conflict
+When switching between map view and workspace modes (`DocumentView`, `ArtifactsPanel`, `ScenarioBuilderPanel`, `DiagnosticsPanel`), full-width panels previously extended from screen edge to screen edge. This caused content to slide underneath the floating `AppSidebar` on the left and the sliding `ChatDrawer` on the right, obscuring buttons, scrollbars, and document margins.
+
+### The Geometric Inset Solution (`App.css`, `App.tsx`)
+Disha implements dynamic safe offsets on `.mundi-workspace-view`:
+```css
+.mundi-workspace-view {
+  position: absolute;
+  top: 14px;
+  bottom: 14px;
+  left: calc(var(--sidebar-width) + 26px);
+  right: var(--chat-drawer-offset);
+  z-index: 15;
+  transition: right 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+              left 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  flex-direction: column;
+}
+```
+- **Left Safe Inset:** `calc(var(--sidebar-width) + 26px)` provides an air gap between the floating navigation rail (`72px`) and the workspace container.
+- **Right Safe Inset:** Dynamically tied to `--chat-drawer-offset` (which expands from `20px` when closed to `440px+` when open), ensuring the workspace smoothly resizes as the user opens or closes the chat drawer without any visual overlap.
+- **Frosted Glass Container:** Rounded with `20px` border-radii, `backdrop-filter: blur(28px)`, Canva Sans typography, and deep elevation shadows (`box-shadow: 0 24px 60px -12px rgba(0, 0, 0, 0.65)`).
+
+---
+
+## 📦 17. Categorized 11-Format Export Dropdown & Header Sources Popover (`ArtifactsPanel.tsx`)
+
+### Streamlined Artifact Header
+The previous layout featured a cluttered row of 8 individual export buttons along the bottom of the artifact detail pane. This consumed vertical reading space and forced users to scroll past long markdown reports to export files.
+
+### The Modern Header Architecture
+1. **Categorized Download Dropdown**:
+   - Consolidated into a single sleek dropdown button (`⬇ Download`) in the artifact header.
+   - Categorized into three logical groups with distinct visual tags:
+     - **Documents**: PDF (`.pdf`), Word (`.docx`), HTML (`.html`), Markdown (`.md`).
+     - **Images**: PNG (`.png`), JPEG (`.jpg`), SVG (`.svg`), TIFF (`.tif`), WebP (`.webp`).
+     - **Data**: GeoJSON (`.geojson`), Excel (`.xlsx`), JSON (`.json`), Plain Text (`.txt`).
+2. **Compact Header "Sources" Popover**:
+   - Replaces the legacy full-width inline provenance card.
+   - Displays a clean pill badge `ℹ Sources` in the header next to the download button.
+   - Clicking opens a glassmorphic popover listing spatial source datasets, boundary coordinates, coordinate reference systems (EPSG:4326), and processing timestamps.
+3. **Elimination of Bottom Action Bars**:
+   - Cleaned up bottom action bars from all detail views (`report`, `figure`, `table`, `scenario`), granting full unhindered vertical space to document reading and data inspection.
+
+---
+
+## 📥 18. Interactive Drag-and-Drop DocumentView Dropzone & RAG Vector Toolbar
+
+### Upgraded Document Surface (`DocumentView.tsx`, `DocumentView.css`)
+In Document Mode, users examine master plans, zoning maps, regional PDFs, and aerial imagery. The view now features:
+
+1. **Interactive Empty-State Dropzone**:
+   - Designed as a centered glassmorphic card with subtle dashed borders and active drag states (`dragover` pulse animation).
+   - Highlights supported file extensions with colorful badges: `PDF`, `TIFF`, `PNG`, `JPEG`, `WEBP`.
+   - Supports both native OS drag-and-drop and a direct "Browse Files" button invoking `window.electronAPI.openFile()`.
+2. **Glassmorphic Document Toolbar**:
+   - Houses a segmented PDF pager with previous/next controls, direct page number input, and total page count.
+   - Displays zoom controls (`+`, `−`, `Reset`) and current zoom percentage badge.
+3. **Glowing RAG Vector Status Indicator**:
+   - An intelligent pill badge in the document header reflecting real-time indexing status:
+     - 🟢 **`Indexed (Vector RAG Active)`**: Indicates document embeddings are computed in `<workspace>/.disha/rag_index.json` and actively fueling chat retrieval.
+     - ⚪ **`Unindexed`**: Offers single-click background vectorization via `/api/rag/index`.
+

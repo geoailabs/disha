@@ -33,7 +33,7 @@ Backend (packages/backend/) talks to:
 | Channel | Endpoint / Bridge | Used for |
 |---|---|---|
 | **WebSocket** (renderer ↔ backend) | `ws://localhost:8765/api/chat/ws` | Streaming chat tokens, tool execution status, map action dispatch, interactive questions (`ask_question`), deep-research progress. |
-| **HTTP** (renderer ↔ backend) | `http://localhost:8765/api/*` | 10 mounted routers: Workspace file management & vector ingest (`/api/files`), Artifact CRUD & 8-format exports (`/api/artifacts`), Forward/Reverse geocoding (`/api/geocode`), Keyless Street View (`/api/streetview`), WMS proxy (`/api/wms`), GEE tile proxy & auth (`/api/gee`), Direct scenario generation (`/api/scenarios`), Document RAG indexing & search (`/api/rag`), Startup diagnostics (`/api/diagnostics`), and loopback bridges (`/api/chat/internal_action`, `/api/chat/internal_question`). |
+| **HTTP** (renderer ↔ backend) | `http://localhost:8765/api/*` | 10 mounted routers: Workspace file management & vector ingest (`/api/files`), Artifact CRUD & 11-format exports (`/api/artifacts`), Forward/Reverse geocoding (`/api/geocode`), Keyless Street View (`/api/streetview`), WMS proxy (`/api/wms`), GEE tile proxy & auth (`/api/gee`), Direct scenario generation (`/api/scenarios`), Document RAG indexing & search (`/api/rag`), Startup diagnostics (`/api/diagnostics`), and loopback bridges (`/api/chat/internal_action`, `/api/chat/internal_question`). |
 | **OpenCode MCP & SSE** (backend ↔ runtime) | `http://127.0.0.1:4096/session` + stdio MCP | Multi-step agent loops, conversation context compaction, and tool invocation via `packages/backend/llm/opencode/`. |
 | **Electron IPC** (renderer ↔ main) | `window.electronAPI.*` (`src/preload/index.ts`) | Local OS only — folder picker, file read/write, base64 file read for vision, workspace persistence, model selection switching. |
 
@@ -105,7 +105,7 @@ switch_basemap · add_gee_layer · add_raster_overlay
 1. **Task Pipeline Orchestrator (`tools/task_pipeline.py`):** When the AI requests document compilation (`create_artifact`) alongside map exports (`export_map_jpeg`) or charts (`create_plot`), the pipeline enforces a two-phase execution:
    - **Queue Phase (Assets):** Executes map exports and chart tools first, collecting real file paths (`artifacts_store/<id>.jpg`).
    - **Heap Phase (Document):** Injects real asset paths into document markdown before compiling Word/PDF documents, preventing placeholder hallucinations.
-2. **Multi-Format Export Engine (`tools/export_engine.py`):** Compiles markdown reports, map snapshots, and tables into **8 export formats**: `PDF` (`ReportLab` native `%PDF-1.4`), `Word (.docx)`, `HTML`, `PNG Image`, `JPEG Image`, `Excel (.xlsx)`, `JSON`, and `TXT`.
+2. **Multi-Format Export Engine (`tools/export_engine.py`):** Compiles markdown reports, map snapshots, and tables into **11 export formats**: `PDF` (`ReportLab` native `%PDF-1.4` with automated Mermaid diagram compilation), `Word (.docx)`, `HTML`, `Markdown (.md)`, `PNG Image`, `JPEG Image`, `SVG`, `TIFF`, `WebP`, `GeoJSON`, `Excel (.xlsx)`, `JSON`, and `TXT`.
 
 ## Geospatial Conventions
 
@@ -114,13 +114,15 @@ switch_basemap · add_gee_layer · add_raster_overlay
 - **Area and perimeter math are strictly geodesic:** `tools/geo.py` and `tools/spatial_registry.py` compute ellipsoidal metrics using `pyproj.Geod(ellps="WGS84")`. Quantitative spatial metrics (`area_km2`, `area_hectares`, `centroid`, `bbox`) must NEVER be stripped from model responses.
 - **Tile sources are free raster XYZ:** OSM, CartoDB, Esri, OpenTopoMap, OSM-HOT (defined in `types.ts:BASEMAPS`). GEE raster tiles are proxied with Bearer authentication via `/api/gee/tiles`.
 
-## Frontend State Architecture
+## Frontend State Architecture & UI Guidelines
 
 Pure React `useState`/`useRef`. **No** external state library (no Zustand, Redux, or React Context). All state lives in `App.tsx` and flows down as props:
 - `layers`: Canonical GeoJSON layer list (data + `LayerStyleSpec`).
 - `mapActions`: Queue array processed and drained by `MapView.tsx` via `onActionsProcessed`.
 - `conversations`: Persisted in `project.json`.
 - `isClosingRef`: Workspace auto-save concurrency guard.
+- **Zero-Overlap Safe Layout Insets:** Full-screen workspace views (`DocumentView`, `ArtifactsPanel`, `ScenarioBuilderPanel`, `DiagnosticsPanel`) must be styled with the `.mundi-workspace-view` layout insets (`left: calc(var(--sidebar-width) + 26px)`, `right: var(--chat-drawer-offset)`, `top: 14px`, `bottom: 14px`) to prevent them from sliding underneath the floating `AppSidebar` or `ChatDrawer`.
+- **Unified Map Navigation Stack:** Map controls are rendered via `.map-nav-stack` in `MapView.tsx`, combining a rotating compass rose (click to ease bearing & pitch to North) with `+`/`−` zoom buttons. Never inject default MapLibre `NavigationControl` instances.
 
 ## Critical Invariants & Guardrails
 
@@ -132,6 +134,8 @@ Pure React `useState`/`useRef`. **No** external state library (no Zustand, Redux
 6. **Autonomous Execution & Implicit Authorization:** When the user requests a document, report, map, plot, analysis, or other artifact that requires data to be retrieved or generated first, execute the necessary intermediate operations automatically before producing the requested artifact. Do not stop to ask the user to confirm that you should proceed ("proceed", "yes") when the requested outputs and geographic scope are already clear. Do not ask the user to select administrative levels, datasets, data providers, or GIS operations unless the request is genuinely ambiguous and materially affects the result. If required data or maps are not yet available, retrieve or generate them using available tools (never invent figures, statistics, or maps). The user's request implicitly authorizes all intermediate data retrieval, spatial analysis, visualization, and artifact-generation steps.
 7. **Geographic Interpretation & Boundary Containment:** When a user asks for features "in" a named geographic place, resolve the place boundary and spatially filter the requested features to that boundary. The geographic constraint implied by the user's wording must be preserved during tool selection, data retrieval, spatial processing, and visualization without substituting broad search extents, bounding boxes, viewports, or proximity searches. Internally infer and perform any necessary boundary resolution, clipping, intersection, containment, or filtering operations without requiring explicit GIS phrasing or hardcoding places.
 8. **Document Visualization & Output Preservation:** When the user requests separate visuals under separate headings, generate a separate distinct visual for each heading; do not combine them unless explicitly requested. Each visual must contain only layers and information relevant to its corresponding request, with only necessary geographic context (no cross-section layer contamination). To achieve layer isolation without deleting canvas layers, specify `layers_to_show` in `export_map_jpeg`/`export_map_png`/`export_map_pdf` containing only the constant study area boundary and the section's target feature/route layer. Preserve all created layers on the interactive map canvas (never remove or delete canvas layers during document compilation). When compiling a document, infer the structure from requested headings and generate all required underlying maps, plots, statistics, and artifacts before assembling the document.
+9. **Zero-Overlap Layout Insets:** Always enforce dynamic safe margins on `.mundi-workspace-view` (`left: calc(var(--sidebar-width) + 26px)`, `right: var(--chat-drawer-offset)`, `top: 14px`, `bottom: 14px`) to prevent workspace views from overlapping with the floating sidebar or sliding chat drawer.
+10. **Map Navigation Stack Integrity:** Map orientation and zooming are managed by the unified glassmorphic `.map-nav-stack` component. Clicking the rotating compass rose must invoke `mapRef.current.easeTo({ bearing: 0, pitch: 0, duration: 800 })` to ease camera bearing and pitch to North in a 2D flat perspective. Do not re-inject default unstyled MapLibre `NavigationControl` instances.
 
 ## Run Instructions
 

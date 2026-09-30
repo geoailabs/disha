@@ -15,7 +15,9 @@ Disha unifies an interactive spatial map canvas with a multi-domain AI reasoning
 - **Import real GIS data** — Drop a shapefile, GeoPackage, KML/KMZ, GPX, or CSV into the workspace and it's reprojected to WGS84 and loaded as a layer (DuckDB `spatial`, no GDAL binary to bundle).
 - **Data-driven symbology + labels** — Categorize by a string property or graduate a numeric property into a choropleth, add on-map text labels, and read it all back in a live legend. Drive it from chat or the Symbology panel.
 - **Manual drawing + attribute editing** — Draw points/lines/polygons on the map, then edit their attributes in a spreadsheet-style table.
-- **Multi-format publication exports** — Export planning reports, figures, and tables into **8 modalities**: PDF (`ReportLab` native `%PDF-1.4`), Word (`.docx`), HTML, PNG Image, JPEG Image, Excel (`.xlsx`), JSON, and TXT.
+- **Multi-format publication exports** — Export planning reports, figures, and tables into **11 modalities**: PDF (`ReportLab` native `%PDF-1.4` with automated Mermaid diagram compilation), Word (`.docx`), HTML, Markdown (`.md`), PNG Image, JPEG Image, SVG, TIFF, WebP, GeoJSON, Excel (`.xlsx`), JSON, and TXT.
+- **Unified Map Navigation Stack** — Circular compass rose docked above `+`/`−` zoom controls in a top-right glassmorphic pill. Clicking the compass rose smoothly eases bearing and pitch back to true North in a 2D flat view (`easeTo({ bearing: 0, pitch: 0 })`).
+- **Zero-Overlap Glassmorphic Shell** — Workspace views (`DocumentView`, `ArtifactsPanel`, `ScenarioBuilderPanel`, `DiagnosticsPanel`) inset safely between the floating `AppSidebar` and `ChatDrawer` using Canva Sans typography, frosted glass blur, categorized header export dropdowns, and compact spatial source popovers.
 - **Document analysis & digitization mode** — Drop in a planning PDF or map image; the AI analyzes land use, zoning, transport networks, and labels via vision, with georeferencing and vector digitization tools.
 - **Centralized Spatial & Polygon Registry** — Tracks study areas and boundaries with $\ge 90\%$ IoU deduplication, WGS84 ellipsoidal geodesic math (`pyproj.Geod`), and live map synchronization.
 - **Autonomous execution & implicit authorization** — Automatically executes all required intermediate data fetches, boundary resolutions, and spatial operations without stopping to ask for user permission ("proceed", "yes") or confirmation.
@@ -40,14 +42,18 @@ Disha unifies an interactive spatial map canvas with a multi-domain AI reasoning
 | **Attribute table** | Spreadsheet-style editor for any layer's feature properties — add/rename/delete columns, edit cells, delete rows. |
 | **Basemaps** | Seven free raster basemaps — Street (OSM), Satellite (Esri), Dark/Light (CartoDB), Terrain (OpenTopoMap), Topo (Esri), Humanitarian (OSM-HOT). No API key needed. |
 | **Bookmarks** | Save the current extent as a named bookmark; the assistant can save and fly to bookmarks too. |
-| **Export** | Publication-ready **PNG** and **PDF** figures (title, legend, scale bar, north arrow, attribution baked in), saved to disk or to Artifacts; per-layer **GeoJSON** download; **clip to extent**; and **save-by-region** (search an OSM boundary, preview it, and clip all layers to it). |
+| **Navigation Stack** | Glassmorphic top-right stack with interactive rotating compass rose (click to reset bearing and pitch to North) and zoom controls. |
+| **Export** | Publication-ready **PNG**, **PDF** (with scale bar, north arrow, legend, title block, and Mermaid diagram support), labeled map exports, per-layer **GeoJSON** download, **clip to extent**, and **save-by-region**. |
 | **Zoning** | Built-in legend (R1, R2, C1, I1, G, MX, INST). Load a GeoJSON with a `zone_code` property and ask the assistant to analyze per-zone area/density or detect overlapping zones. |
-| **Street View** | Right-click anywhere on the map to drop a pin, ask the assistant about the spot, or open an embedded 360° panorama (keyless — panoramas come from the `streetlevel` library, rendered with pannellum). |
+| **Street View** | Right-click anywhere on the map to drop a pin, inspect coordinates, ask the assistant about the spot, or open an embedded 360° panorama (keyless — powered by `streetlevel` and pannellum). |
 
 ### 📄 Document Mode
 
 Drop in or open a planning document for AI analysis:
-- **Images** (PNG, JPG, JPEG, WEBP, GIF, BMP) — Sent directly to the model's vision input.
+- **Interactive Drag-and-Drop Dropzone** — Centered glassmorphic dropzone with format badges for `PDF`, `TIFF`, `PNG`, `JPEG`, and `WEBP` plus native file browser integration.
+- **Glassmorphic Toolbar** — Segmented PDF page switcher, page jump input, total page indicator, zoom percentage readout, and zoom reset.
+- **Vector RAG Status Indicator** — Live glowing status pill indicating whether the active document is indexed in `<workspace>/.disha/rag_index.json` for semantic chat retrieval.
+- **Images** (PNG, JPG, JPEG, WEBP, GIF, BMP, TIFF) — Sent directly to the model's vision input.
 - **PDF** — Rasterized client-side with `pdfjs-dist` (capped at 2200px on the long axis) and sent as vision input, with multi-page navigation.
 - **Georeferencing & Digitization** — Identify visual landmarks, georeference the document, and digitize visual boundaries and POIs into real map layers.
 

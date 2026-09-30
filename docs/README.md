@@ -6,7 +6,7 @@ Hosted live on GitHub Pages from the root `/docs` folder.
 
 ## Portal Structure
 
-- **`index.html`**: Flagship homepage with hero prompt simulator, 14-feature catalog, architecture comparison, and multi-platform download hub.
+- **`index.html`**: Flagship homepage with hero prompt simulator, 18-feature catalog, architecture comparison, and multi-platform download hub.
 - **`docs.html`**: Comprehensive documentation hub, system architecture, 7+1 Domain Hubs reference, AI prompt handbook, spatial registry, and live data connectors.
 - **`404.html`**: Custom themed 404 page for missing routes on GitHub Pages.
 - **`js/components.js`**: Shared component loader unifying Header, Navigation, Footer, and SVG branding across all pages.

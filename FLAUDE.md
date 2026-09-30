@@ -42,10 +42,10 @@ pnpm --filter @disha/desktop build
 | **Domain Hubs** | `packages/backend/domains/` | 8 Domain Hubs implementing `BaseDomainHub` in `domains/protocol.py`, returning typed `ToolResult`. |
 | **Spatial Registry** | `packages/backend/tools/spatial_registry.py` | Authoritative polygon singleton, IoU $\ge 90\%$ deduplication, geodesic math (`pyproj.Geod`). |
 | **Task Pipeline** | `packages/backend/tools/task_pipeline.py` | Queue-before-Heap dependency ordering for map exports and document compilation. |
-| **Export Engine** | `packages/backend/tools/export_engine.py` | Multi-format compiler for 8 formats (`.pdf`, `.docx`, `.html`, `.png`, `.jpg`, `.xlsx`, `.json`, `.txt`). |
+| **Export Engine** | `packages/backend/tools/export_engine.py` | Multi-format compiler for 11 formats (`.pdf` with Mermaid diagrams, `.docx`, `.html`, `.md`, `.png`, `.jpg`, `.svg`, `.tif`, `.webp`, `.geojson`, `.xlsx`, `.json`, `.txt`). |
 | **RAG Indexing** | `packages/backend/routers/rag.py` | Workspace document parsing, OpenAI embeddings, and semantic vector search. |
 | **State Container** | `apps/desktop/src/renderer/App.tsx` | Pure React state (`useState`/`useRef`), action routing, workspace auto-save lifecycle guards. |
-| **Map Component** | `apps/desktop/src/renderer/components/MapView.tsx` | MapLibre GL setup, paint expressions, drawing tools, uncropped 18% padded snapshot composer. |
+| **Map Component** | `apps/desktop/src/renderer/components/MapView.tsx` | MapLibre GL setup, paint expressions, drawing tools, uncropped 18% padded snapshot composer, and unified glassmorphic navigation stack (rotating compass rose + zoom controls). |
 | **Chat Component** | `apps/desktop/src/renderer/components/ChatPanel.tsx` | WebSocket client, streaming markdown, question option cards, deep research UI. |
 | **Preload IPC** | `apps/desktop/src/preload/index.ts` | IPC bridge between Chromium renderer and Electron main process. |
 
@@ -94,3 +94,7 @@ When the AI calls an action tool or a hub returns a `map_action`, it is dispatch
    When a user asks for features "in" a named geographic place, resolve the place boundary and spatially filter the requested features to that boundary. Preserve the containment constraint across tool selection, data retrieval, and spatial processing without substituting broad bounding boxes or proximity radii. Infer all intermediate GIS steps internally.
 8. **Document Visualization & Output Preservation:**
    When separate visuals are requested under separate headings in a document, generate a separate distinct visual for each heading (do not combine them). Each visual must contain only layers and information relevant to its specific heading without carrying unrelated layers from other sections. Implement visual isolation exclusively using `layers_to_show` during map exports (e.g., constant boundary + section target layer) so that created layers are preserved on the map canvas. Generate all required underlying maps, plots, and statistics before assembling the document.
+9. **Zero-Overlap Workspace Layout Insets:**
+   Always enforce dynamic safe margins on `.mundi-workspace-view` (`left: calc(var(--sidebar-width) + 26px)`, `right: var(--chat-drawer-offset)`, `top: 14px`, `bottom: 14px`) to prevent workspace views (`DocumentView`, `ArtifactsPanel`, `ScenarioBuilderPanel`, `DiagnosticsPanel`) from sliding underneath the floating sidebar or sliding chat drawer.
+10. **Unified Map Navigation Stack:**
+   Map orientation and zooming are managed by the unified glassmorphic `.map-nav-stack` component. Clicking the rotating compass rose must invoke `mapRef.current.easeTo({ bearing: 0, pitch: 0, duration: 800 })` to ease camera bearing and pitch to North in a 2D flat perspective. Do not re-inject default unstyled MapLibre `NavigationControl` instances.
