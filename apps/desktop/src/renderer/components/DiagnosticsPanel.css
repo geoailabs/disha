@@ -113,20 +113,42 @@
 .diag-item {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
+  gap: 14px;
+  min-width: 0;
+  min-height: 72px;
   padding: 10px 12px;
   background: rgba(22, 26, 34, 0.7);
   border: 1px solid rgba(85, 91, 110, 0.3);
   border-radius: 6px;
 }
 
-.diag-item-name {
+.diag-meta {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.diag-meta strong {
+  display: block;
   font-size: 13px;
-  font-weight: 500;
+  line-height: 1.25;
+  font-weight: 650;
   color: var(--bright-snow, #faf9f9);
 }
 
+.diag-meta span {
+  display: block;
+  color: var(--muted-teal, #89b0ae);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
 .diag-badge {
+  flex: 0 0 auto;
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 4px;
@@ -141,9 +163,18 @@
 }
 
 .diag-badge.warn {
+  max-width: 108px;
+  text-align: center;
+  line-height: 1.15;
   background: rgba(255, 214, 186, 0.16);
   color: var(--peach-fuzz, #ffd6ba);
   border: 1px solid rgba(255, 214, 186, 0.4);
+}
+
+@media (max-width: 620px) {
+  .diag-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .diag-badge.fail {
