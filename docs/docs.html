@@ -13,8 +13,16 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   
+  <!-- Early Theme Reset -->
+  <script>
+    try {
+      localStorage.removeItem('disha-theme');
+      document.documentElement.setAttribute('data-theme', 'light');
+    } catch(e) {}
+  </script>
+
   <!-- Stylesheets -->
-  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/style.css?v=2.1" />
   
   <style>
     /* Documentation Portal Specific Styles (Linear Minimalist) */
@@ -737,8 +745,8 @@ LIMIT 100;</pre>
   <div id="site-footer"></div>
 
   <!-- Scripts -->
-  <script src="js/components.js"></script>
-  <script src="js/main.js"></script>
+  <script src="js/components.js?v=2.1"></script>
+  <script src="js/main.js?v=2.1"></script>
 
   <script>
     // Live Sidebar Search & Filter
