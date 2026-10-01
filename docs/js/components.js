@@ -7,12 +7,7 @@
 (function () {
   'use strict';
 
-  const DISHA_BRAND_SVG = `
-    <svg viewBox="0 0 32 32" fill="none" width="22" height="22" aria-label="Disha Logo">
-      <path d="M16 2L19.5 12.5L30 16L19.5 19.5L16 30L12.5 19.5L2 16L12.5 12.5L16 2Z" fill="currentColor"/>
-      <circle cx="16" cy="16" r="2.5" fill="#5E6AD2"/>
-    </svg>
-  `;
+  const DISHA_BRAND_SVG = '';
 
   function detectCurrentPage() {
     const path = window.location.pathname.toLowerCase();
@@ -28,9 +23,6 @@
       <div class="wrap">
         <div class="header-inner">
           <a href="index.html" class="brand-link" title="Disha Home">
-            <div class="brand-logo-icon">
-              ${DISHA_BRAND_SVG}
-            </div>
             <span>Disha</span>
           </a>
 
@@ -72,9 +64,6 @@
         <div class="footer-top">
           <div class="footer-brand">
             <a href="index.html" class="brand-link">
-              <div class="brand-logo-icon">
-                ${DISHA_BRAND_SVG}
-              </div>
               <span>Disha</span>
             </a>
             <p>

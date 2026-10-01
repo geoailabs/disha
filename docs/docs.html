@@ -17,45 +17,25 @@
   <link rel="stylesheet" href="css/style.css" />
   
   <style>
-    /* Documentation Portal Specific Styles */
-    .docs-search-bar {
-      margin-bottom: 20px;
-      position: relative;
-    }
-    .docs-search-input {
-      width: 100%;
-      padding: 10px 14px 10px 36px;
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-md);
-      color: var(--text-primary);
-      font-family: var(--font-sans);
-      font-size: 0.88rem;
-      transition: var(--transition-fast);
-    }
-    .docs-search-input:focus {
-      outline: none;
-      border-color: var(--accent-cyan);
-      box-shadow: var(--shadow-glow);
-    }
-    .docs-search-icon {
-      position: absolute;
-      left: 12px;
-      top: 50%;
-      transform: translateY(-50%);
-      color: var(--text-muted);
-      pointer-events: none;
+    /* Documentation Portal Specific Styles (Linear Minimalist) */
+    .docs-nav-list,
+    .docs-nav-list li {
+      list-style: none !important;
+      list-style-type: none !important;
+      margin: 0 !important;
+      padding: 0 !important;
     }
     .hub-card {
-      background: var(--bg-panel);
-      border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-md);
-      padding: 24px;
-      margin-bottom: 20px;
-      transition: var(--transition-fast);
+      background: transparent;
+      border: none;
+      border-top: 1px solid var(--border-subtle);
+      border-radius: 0;
+      padding: 28px 0;
+      margin-bottom: 24px;
+      transition: border-color var(--transition-fast);
     }
     .hub-card:hover {
-      border-color: var(--border-strong);
+      border-top-color: var(--text-primary);
     }
     .hub-header {
       display: flex;
@@ -75,7 +55,7 @@
       font-size: 0.88rem;
     }
     .tool-table th {
-      background: var(--bg-secondary);
+      background: transparent;
       color: var(--text-muted);
       font-family: var(--font-mono);
       font-size: 0.78rem;
@@ -95,23 +75,26 @@
       border-bottom: none;
     }
     .prompt-box {
-      background: var(--bg-panel);
-      border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-md);
-      padding: 18px;
-      margin-bottom: 14px;
+      background: transparent;
+      border: none;
+      border-top: 1px solid var(--border-subtle);
+      border-radius: 0;
+      padding: 20px 0;
+      margin-bottom: 20px;
     }
     .channel-badge {
       display: inline-block;
       font-family: var(--font-mono);
       font-size: 0.75rem;
-      padding: 3px 8px;
-      border-radius: 4px;
-      margin-right: 6px;
+      font-weight: 600;
+      padding: 0;
+      background: transparent;
+      border: none;
+      margin-right: 8px;
     }
-    .channel-ws { background: rgba(56, 189, 248, 0.15); color: var(--accent-cyan); border: 1px solid rgba(56, 189, 248, 0.3); }
-    .channel-http { background: rgba(16, 185, 129, 0.15); color: var(--accent-emerald); border: 1px solid rgba(16, 185, 129, 0.3); }
-    .channel-ipc { background: rgba(129, 140, 248, 0.15); color: var(--accent-violet); border: 1px solid rgba(129, 140, 248, 0.3); }
+    .channel-ws { color: #0284C7; }
+    .channel-http { color: #059669; }
+    .channel-ipc { color: #7C3AED; }
   </style>
 </head>
 <body data-page="docs">
@@ -120,7 +103,7 @@
   <div id="site-header"></div>
 
   <!-- Page Hero Header -->
-  <section style="padding: 50px 0 36px; border-bottom: 1px solid var(--border-subtle); background: var(--bg-secondary);">
+  <section style="padding: 50px 0 36px; border-bottom: 1px solid var(--border-subtle); background: #FFFFFF;">
     <div class="wrap">
       <div class="eyebrow">Comprehensive Technical Documentation</div>
       <h1 style="font-size: clamp(2rem, 4vw, 3rem); margin-bottom: 10px;">Disha Documentation Hub</h1>
@@ -143,22 +126,22 @@
 
         <div class="docs-nav-group">
           <div class="docs-nav-title">System Guide</div>
-          <ul class="docs-nav-list">
-            <li><a href="#overview" class="docs-nav-link active">1. System Architecture</a></li>
-            <li><a href="#installation" class="docs-nav-link">2. Installation & Setup</a></li>
-            <li><a href="#domain-hubs" class="docs-nav-link">3. 7+1 Domain Hubs & Tools</a></li>
-            <li><a href="#prompts" class="docs-nav-link">4. Prompt Engineering Handbook</a></li>
-            <li><a href="#registry" class="docs-nav-link">5. Spatial & Polygon Registry</a></li>
-            <li><a href="#connectors" class="docs-nav-link">6. Data Connectors & Engines</a></li>
+          <ul class="docs-nav-list" style="list-style: none !important; list-style-type: none !important; padding: 0 !important; margin: 0 !important;">
+            <li style="list-style: none !important;"><a href="#overview" class="docs-nav-link active">1. System Architecture</a></li>
+            <li style="list-style: none !important;"><a href="#installation" class="docs-nav-link">2. Installation & Setup</a></li>
+            <li style="list-style: none !important;"><a href="#domain-hubs" class="docs-nav-link">3. 7+1 Domain Hubs & Tools</a></li>
+            <li style="list-style: none !important;"><a href="#prompts" class="docs-nav-link">4. Prompt Engineering Handbook</a></li>
+            <li style="list-style: none !important;"><a href="#registry" class="docs-nav-link">5. Spatial & Polygon Registry</a></li>
+            <li style="list-style: none !important;"><a href="#connectors" class="docs-nav-link">6. Data Connectors & Engines</a></li>
           </ul>
         </div>
 
         <div class="docs-nav-group" style="margin-top:24px;">
           <div class="docs-nav-title">Quick Links</div>
-          <ul class="docs-nav-list">
-            <li><a href="https://github.com/geoailabs/disha" target="_blank" rel="noopener" class="docs-nav-link">GitHub Repository</a></li>
-            <li><a href="https://github.com/geoailabs/disha/issues" target="_blank" rel="noopener" class="docs-nav-link">Report an Issue</a></li>
-            <li><a href="index.html#download" class="docs-nav-link">Download Desktop App</a></li>
+          <ul class="docs-nav-list" style="list-style: none !important; list-style-type: none !important; padding: 0 !important; margin: 0 !important;">
+            <li style="list-style: none !important;"><a href="https://github.com/geoailabs/disha" target="_blank" rel="noopener" class="docs-nav-link">GitHub Repository</a></li>
+            <li style="list-style: none !important;"><a href="https://github.com/geoailabs/disha/issues" target="_blank" rel="noopener" class="docs-nav-link">Report an Issue</a></li>
+            <li style="list-style: none !important;"><a href="index.html#download" class="docs-nav-link">Download Desktop App</a></li>
           </ul>
         </div>
       </aside>
