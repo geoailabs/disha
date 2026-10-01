@@ -909,38 +909,40 @@ section {
 }
 
 /* ==========================================================================
-   14 Feature Categories (Linear Bento Grid)
+   14 Feature Categories (Linear Minimalist Unboxed Grid)
    ========================================================================== */
 .features-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 16px;
+  gap: 48px 36px;
 }
 
 .feature-card {
-  background: var(--bg-panel);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  padding: 24px;
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  border-radius: 0;
+  padding: 24px 0 0 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   position: relative;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-  box-shadow: var(--shadow-xs);
+  box-shadow: none;
+  transition: border-color var(--transition-fast);
 }
 
 .feature-card:hover {
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow-md);
-  transform: translateY(-1px);
+  border-top-color: var(--text-primary);
+  background: transparent;
+  box-shadow: none;
+  transform: none;
 }
 
 .feature-card-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 .feature-num {
@@ -948,17 +950,28 @@ section {
   font-size: 0.75rem;
   color: var(--text-muted);
   font-weight: 500;
+  letter-spacing: 0.04em;
 }
 
 .feature-card-icon {
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-md);
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-subtle);
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  background: transparent;
+  border: none;
   display: flex;
   align-items: center;
   justify-content: center;
+  color: var(--text-secondary);
+  transition: color var(--transition-fast);
+}
+
+.feature-card-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.feature-card:hover .feature-card-icon {
   color: var(--text-primary);
 }
 
@@ -967,13 +980,18 @@ section {
   font-weight: 600;
   color: var(--text-primary);
   letter-spacing: -0.015em;
-  margin: 0;
+  margin: 4px 0 2px;
+  transition: color var(--transition-fast);
+}
+
+.feature-card:hover h3 {
+  color: var(--accent-indigo);
 }
 
 .feature-card p {
   font-size: 0.875rem;
   color: var(--text-secondary);
-  line-height: 1.55;
+  line-height: 1.6;
   flex: 1;
 }
 
@@ -981,7 +999,7 @@ section {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 8px;
+  margin-top: 6px;
 }
 
 .feature-tag {
@@ -989,10 +1007,10 @@ section {
   font-size: 0.6875rem;
   font-weight: 500;
   padding: 2px 7px;
-  border-radius: var(--radius-xs);
-  background: var(--bg-tertiary);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.035);
   border: 1px solid transparent;
-  color: var(--text-secondary);
+  color: var(--text-muted);
 }
 
 /* ==========================================================================
