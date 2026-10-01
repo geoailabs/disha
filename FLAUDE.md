@@ -47,6 +47,8 @@ pnpm --filter @disha/desktop build
 | **State Container** | `apps/desktop/src/renderer/App.tsx` | Pure React state (`useState`/`useRef`), action routing, workspace auto-save lifecycle guards. |
 | **Map Component** | `apps/desktop/src/renderer/components/MapView.tsx` | MapLibre GL setup, paint expressions, drawing tools, uncropped 18% padded snapshot composer, and unified glassmorphic navigation stack (rotating compass rose + zoom controls). |
 | **Chat Component** | `apps/desktop/src/renderer/components/ChatPanel.tsx` | WebSocket client, streaming markdown, question option cards, deep research UI. |
+| **Scenario Builder** | `apps/desktop/src/renderer/components/ScenarioBuilderPanel.tsx` | Scenario review workspace, policy sliders, and multi-row trade-off balance sheet matrix. |
+| **Export & Clip Modals** | `apps/desktop/src/renderer/components/MapExportModal.tsx` & `SpatialClipModal.tsx` | Publication map export modal and bounding-box spatial clipping dialogs. |
 | **Preload IPC** | `apps/desktop/src/preload/index.ts` | IPC bridge between Chromium renderer and Electron main process. |
 
 ---

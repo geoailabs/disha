@@ -812,3 +812,29 @@
   font-weight: 700;
 }
 
+.sb-col-scenario.is-recommended {
+  background: rgba(139, 213, 194, 0.12);
+  border-left: 1px solid rgba(139, 213, 194, 0.35);
+  border-right: 1px solid rgba(139, 213, 194, 0.35);
+}
+
+.sb-recommended-pill {
+  display: inline-block;
+  font-size: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #0b1f1a;
+  background: #8bd5c2;
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-top: 3px;
+}
+
+.sb-tradeoff-table td.is-recommended {
+  background: rgba(139, 213, 194, 0.05);
+  font-weight: 600;
+  color: #f3faf8;
+}
+
+

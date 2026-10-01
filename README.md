@@ -6,18 +6,40 @@ Disha unifies an interactive spatial map canvas with a multi-domain AI reasoning
 
 > **Architecture:** Electron + React 19 + MapLibre GL desktop frontend connected to a Python FastAPI backend powered by **7 Core Urban Planning Domains + 1 Cross-Cutting Utility Engine**.
 
+<p align="center">
+  <img src="assets/screenshots/02_main_workspace_clean.png" alt="Disha Desktop IDE - Main Map Canvas and Agentic Planning Workspace" width="100%" />
+</p>
+
+---
+
+## 📸 Interface Gallery & Visual Walkthrough
+
+| Live Planning Workspace & Map Canvas | Layer Management & Data Symbology |
+|:---:|:---:|
+| ![Main Workspace](assets/screenshots/02_main_workspace_clean.png) | ![Layers Panel](assets/screenshots/04_layers_tab.png) |
+| *Interactive MapLibre GL canvas, category drawer, and agentic chat* | *Categorized and graduated styling, attribute tables, and layer drag-and-drop* |
+
+| Cartographic Publication & Map Export | System Diagnostics & Planning Health |
+|:---:|:---:|
+| ![Map Export Modal](assets/screenshots/04_export_dialog.png) | ![System Diagnostics](assets/screenshots/01_system_diagnostics.png) |
+| *Publication modal with scale bar, north arrow, title block, and multi-format export* | *Integrated health checks for local GIS runtimes, DuckDB, GEE, and AI APIs* |
+
 ---
 
 ## Highlights
 
 - **Agentic chat over a live map** — Natural-language requests turn into real map actions (fly, draw, mark, style layers) and data fetches, streamed token-by-token with every tool call visible inline.
 - **Rich 7+1 domain geospatial toolset** — OpenStreetMap (Overpass/Nominatim), Overture Maps, Google Places & environment, GIS geometry + overlay analysis (buffer, hull, area, intersection, difference, clip, dissolve, spatial join, nearest), zoning analysis, demographics (WorldPop), weather & air quality, GEE satellite imagery, GTFS transit feeds, and OD matrices.
+- **Interactive Scenario Planning & Policy Levers** — Full-screen scenario review workspace with empirical policy sliders (Target FAR, Green Space Quota %, Transit Mode Share %, EV Share %) and multi-row trade-off balance sheets (GFA, Population Capacity, Water MLD, Mobility CO₂) with recommended best-fit scenarios.
+- **Publication Map Export & Spatial Clip Modals** — Dedicated modal dialogs (`MapExportModal`, `SpatialClipModal`) for high-resolution PNG, JPEG, and PDF map figure publishing with scale bars, north arrows, title blocks, and region clipping.
+- **Client-Side Mermaid Flowcharts** — Native SVG flowchart renderer in the Artifacts Panel dynamically rendering decision trees and process workflows from markdown reports.
 - **Import real GIS data** — Drop a shapefile, GeoPackage, KML/KMZ, GPX, or CSV into the workspace and it's reprojected to WGS84 and loaded as a layer (DuckDB `spatial`, no GDAL binary to bundle).
-- **Data-driven symbology + labels** — Categorize by a string property or graduate a numeric property into a choropleth, add on-map text labels, and read it all back in a live legend. Drive it from chat or the Symbology panel.
-- **Manual drawing + attribute editing** — Draw points/lines/polygons on the map, then edit their attributes in a spreadsheet-style table.
+- **Data-driven symbology + labels** — Categorize by a string property or graduate a numeric property into a choropleth, add on-map text labels, and read it all back in a live legend. Drive it from chat, the Symbology panel, or right-click layer quick-color swatches.
+- **Manual drawing + attribute editing** — Draw points/lines/polygons on the map, edit attributes in a spreadsheet-style table, and export selected features directly to GeoJSON.
 - **Multi-format publication exports** — Export planning reports, figures, and tables into **11 modalities**: PDF (`ReportLab` native `%PDF-1.4` with automated Mermaid diagram compilation), Word (`.docx`), HTML, Markdown (`.md`), PNG Image, JPEG Image, SVG, TIFF, WebP, GeoJSON, Excel (`.xlsx`), JSON, and TXT.
 - **Unified Map Navigation Stack** — Circular compass rose docked above `+`/`−` zoom controls in a top-right glassmorphic pill. Clicking the compass rose smoothly eases bearing and pitch back to true North in a 2D flat view (`easeTo({ bearing: 0, pitch: 0 })`).
 - **Zero-Overlap Glassmorphic Shell** — Workspace views (`DocumentView`, `ArtifactsPanel`, `ScenarioBuilderPanel`, `DiagnosticsPanel`) inset safely between the floating `AppSidebar` and `ChatDrawer` using Canva Sans typography, frosted glass blur, categorized header export dropdowns, and compact spatial source popovers.
+- **Zero-Config First Launch & Default Workspace** — Automatic initialization of `~/Documents/Disha` with a first-launch welcome modal, enabling instant drag-and-drop spatial file analysis.
 - **Document analysis & digitization mode** — Drop in a planning PDF or map image; the AI analyzes land use, zoning, transport networks, and labels via vision, with georeferencing and vector digitization tools.
 - **Centralized Spatial & Polygon Registry** — Tracks study areas and boundaries with $\ge 90\%$ IoU deduplication, WGS84 ellipsoidal geodesic math (`pyproj.Geod`), and live map synchronization.
 - **Autonomous execution & implicit authorization** — Automatically executes all required intermediate data fetches, boundary resolutions, and spatial operations without stopping to ask for user permission ("proceed", "yes") or confirmation.
@@ -34,18 +56,28 @@ Disha unifies an interactive spatial map canvas with a multi-domain AI reasoning
 
 | Feature | What it does |
 |---|---|
-| **Layers** | Click a `.geojson` in the Files pane to load it as a styled vector layer. The Layers pane gives count, visibility toggle, zoom-to, remove, symbology editor, and attribute editor. AI-generated layers appear here automatically. |
+| **Layers & Reordering** | Click a `.geojson` in the Files pane to load it as a styled vector layer. The Layers pane provides count, visibility toggle, zoom-to, remove, layer drag-and-drop reordering, and triggers for Symbology and Attribute editors. AI-generated layers appear here automatically. |
+| **Layer Context Menu** | Portal-rendered floating right-click menu with instant color swatches, opacity slider, feature selection export, and zoom/delete actions. |
 | **Vector import** | Click a `.shp`, `.gpkg`, `.kml`, `.kmz`, `.gpx`, or `.csv` in the Files pane and it's converted to WGS84 GeoJSON in your workspace and loaded as a layer. CRS is auto-detected and reprojected; CSVs are point-mapped from auto-detected lat/lng columns. |
 | **Symbology** | Style any layer by data: **categorized** (color by a string property like `zone_code`), **graduated** (choropleth by a numeric property like `population`, equal-interval or quantile), plus on-map **text labels** from any property. Edit in the Symbology panel or ask the assistant to `style_layer`. |
 | **Legend** | A live floating legend renders automatically whenever a visible layer has categorized or graduated styling. |
 | **Drawing** | Draw points, lines, and polygons directly on the map; each becomes a real layer and opens an attribute table so you can tag it (e.g. set `zone_code`) before styling. |
-| **Attribute table** | Spreadsheet-style editor for any layer's feature properties — add/rename/delete columns, edit cells, delete rows. |
+| **Attribute table** | Spreadsheet-style editor for any layer's feature properties — add/rename/delete columns, edit cells, delete rows, and export feature selections to GeoJSON. |
 | **Basemaps** | Seven free raster basemaps — Street (OSM), Satellite (Esri), Dark/Light (CartoDB), Terrain (OpenTopoMap), Topo (Esri), Humanitarian (OSM-HOT). No API key needed. |
 | **Bookmarks** | Save the current extent as a named bookmark; the assistant can save and fly to bookmarks too. |
 | **Navigation Stack** | Glassmorphic top-right stack with interactive rotating compass rose (click to reset bearing and pitch to North) and zoom controls. |
-| **Export** | Publication-ready **PNG**, **PDF** (with scale bar, north arrow, legend, title block, and Mermaid diagram support), labeled map exports, per-layer **GeoJSON** download, **clip to extent**, and **save-by-region**. |
+| **Export Modal** | Publication-ready **PNG**, **JPEG**, and **PDF** map exports (with scale bar, north arrow, legend, title block, and Mermaid diagram support), labeled map exports, per-layer **GeoJSON** download, **clip to extent**, and **save-by-region**. |
 | **Zoning** | Built-in legend (R1, R2, C1, I1, G, MX, INST). Load a GeoJSON with a `zone_code` property and ask the assistant to analyze per-zone area/density or detect overlapping zones. |
 | **Street View** | Right-click anywhere on the map to drop a pin, inspect coordinates, ask the assistant about the spot, or open an embedded 360° panorama (keyless — powered by `streetlevel` and pannellum). |
+
+### 📊 Scenario Planning & Policy Levers
+
+- **Full-Screen Scenario Review Workspace** — Dedicated workspace mode (`.is-scenarios`) providing sufficient canvas room for proposals, alternatives, and approvals without cramped panel scrolling.
+- **Deep-Research Policy Levers** — Interactive `HyperparameterSliders` allowing real-time calibration of Target FAR, Green Space Quota (%), Transit Mode Share (%), and Electric Vehicle Share (% EV).
+- **Multi-Row Trade-Off Balance Sheet** — Side-by-side comparative matrix calculating Gross Floor Area ($\text{m}^2$), Population Capacity, Daily Water Demand (MLD), and Annual Mobility $\text{CO}_2$ (t/yr) across baseline and alternative scenarios.
+- **Highlighted Recommended Scenario** — Automatic multi-criteria evaluation scoring displaying a prominent `RECOMMENDED: <name>` header badge, `#1, #2` ranking hierarchy, and highlighted matrix columns with teal `Recommended` tags.
+- **On-Demand Footprint Visualization** — Visualize study boundaries and proposed development footprints directly onto the live MapLibre canvas with one click.
+- **Client-Side Mermaid Flowcharts** — Native SVG flowchart rendering in the Artifacts Panel for decision trees and stage workflows.
 
 ### 📄 Document Mode
 

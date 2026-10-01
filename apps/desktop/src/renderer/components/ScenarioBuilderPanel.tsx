@@ -986,22 +986,149 @@ export default function ScenarioBuilderPanel({
               <div className="sb-result-card">
                 <div className="sb-result-header">
                   <span className="sb-result-badge recommended">
-                    RECOMMENDED: {compareResult.recommended_scenario}
+                    RECOMMENDED: {compareResult.recommended_scenario || 'Comparative Evaluation'}
                   </span>
                   {savedToArtifacts && (
                     <button className="sb-view-artifacts-btn" onClick={onOpenArtifacts}>
-                      View in Artifacts
+                      View in Artifacts →
                     </button>
                   )}
                 </div>
-                <div className="sb-ranking">
-                  {compareResult.ranking.map((name, i) => (
-                    <div key={i} className={`sb-ranking-row ${i === 0 ? 'top' : ''}`}>
-                      <span className="sb-rank-num">#{i + 1}</span>
-                      <span className="sb-rank-name">{name}</span>
-                    </div>
-                  ))}
+
+                {compareResult.ranking && compareResult.ranking.length > 0 && (
+                  <div className="sb-ranking">
+                    {compareResult.ranking.map((name, i) => (
+                      <div key={i} className={`sb-ranking-row ${i === 0 ? 'top' : ''}`}>
+                        <span className="sb-rank-num">#{i + 1}</span>
+                        <span className="sb-rank-name">{name}</span>
+                        {name === compareResult.recommended_scenario && (
+                          <span className="sb-recommended-pill" style={{ marginLeft: 6 }}>Best Fit</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="sb-eval-notice">
+                  Empirical multi-criteria evaluation across capacity, mobility, resources, and carbon emissions. Final planning decisions rest with the urban planning authority.
                 </div>
+
+                {compareResult.tradeoff_matrix && compareResult.tradeoff_matrix.length > 0 && (
+                  <div className="sb-tradeoff-container">
+                    <table className="sb-tradeoff-table">
+                      <thead>
+                        <tr>
+                          <th className="sb-col-metric">Indicator</th>
+                          {compareResult.tradeoff_matrix.map((s, idx) => {
+                            const isRec = s.name === compareResult.recommended_scenario
+                            return (
+                              <th key={idx} className={`sb-col-scenario ${isRec ? 'is-recommended' : ''}`}>
+                                <div className="sb-th-name">{s.name}</div>
+                                {isRec && <span className="sb-recommended-pill">Recommended</span>}
+                              </th>
+                            )
+                          })}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr className="sb-group-row">
+                          <td colSpan={compareResult.tradeoff_matrix.length + 1}>Policy Levers</td>
+                        </tr>
+                        <tr>
+                          <td>Target FAR</td>
+                          {compareResult.tradeoff_matrix.map((s, idx) => (
+                            <td key={idx} className={s.name === compareResult.recommended_scenario ? 'is-recommended' : ''}>
+                              {s.hyperparameters?.target_far?.toFixed(1) ?? '—'}
+                            </td>
+                          ))}
+                        </tr>
+                        <tr>
+                          <td>Green Space Quota</td>
+                          {compareResult.tradeoff_matrix.map((s, idx) => (
+                            <td key={idx} className={s.name === compareResult.recommended_scenario ? 'is-recommended' : ''}>
+                              {s.hyperparameters?.green_quota_pct ?? '—'}%
+                            </td>
+                          ))}
+                        </tr>
+                        <tr>
+                          <td>Transit Mode Share</td>
+                          {compareResult.tradeoff_matrix.map((s, idx) => (
+                            <td key={idx} className={s.name === compareResult.recommended_scenario ? 'is-recommended' : ''}>
+                              {s.hyperparameters?.transit_share_pct ?? '—'}%
+                            </td>
+                          ))}
+                        </tr>
+                        <tr>
+                          <td>Electric Vehicle Share</td>
+                          {compareResult.tradeoff_matrix.map((s, idx) => (
+                            <td key={idx} className={s.name === compareResult.recommended_scenario ? 'is-recommended' : ''}>
+                              {s.hyperparameters?.electric_share_pct ?? '—'}% EV
+                            </td>
+                          ))}
+                        </tr>
+
+                        <tr className="sb-group-row">
+                          <td colSpan={compareResult.tradeoff_matrix.length + 1}>Spatial &amp; Resource Balance Sheet</td>
+                        </tr>
+                        <tr>
+                          <td>Gross Floor Area</td>
+                          {compareResult.tradeoff_matrix.map((s, idx) => (
+                            <td key={idx} className={s.name === compareResult.recommended_scenario ? 'is-recommended' : ''}>
+                              {s.metrics?.gross_floor_area_m2?.toLocaleString()} m²
+                            </td>
+                          ))}
+                        </tr>
+                        <tr>
+                          <td>Population Capacity</td>
+                          {compareResult.tradeoff_matrix.map((s, idx) => (
+                            <td key={idx} className={s.name === compareResult.recommended_scenario ? 'is-recommended' : ''}>
+                              {s.metrics?.population_capacity?.toLocaleString()} residents
+                            </td>
+                          ))}
+                        </tr>
+                        <tr>
+                          <td>Daily Water Demand</td>
+                          {compareResult.tradeoff_matrix.map((s, idx) => (
+                            <td key={idx} className={s.name === compareResult.recommended_scenario ? 'is-recommended' : ''}>
+                              {s.metrics?.daily_water_demand_mld} MLD
+                            </td>
+                          ))}
+                        </tr>
+                        <tr>
+                          <td>Est. Mobility CO₂</td>
+                          {compareResult.tradeoff_matrix.map((s, idx) => (
+                            <td key={idx} className={s.name === compareResult.recommended_scenario ? 'is-recommended' : ''}>
+                              {s.metrics?.annual_co2_tons?.toLocaleString()} t/yr
+                            </td>
+                          ))}
+                        </tr>
+
+                        <tr className="sb-group-row">
+                          <td colSpan={compareResult.tradeoff_matrix.length + 1}>Criteria Scores (out of 10)</td>
+                        </tr>
+                        {compareCriteria.map((c) => (
+                          <tr key={c}>
+                            <td>{c}</td>
+                            {compareResult.tradeoff_matrix!.map((s, idx) => (
+                              <td key={idx} className={s.name === compareResult.recommended_scenario ? 'is-recommended' : ''}>
+                                {s.scores?.[c] ?? '—'}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                        <tr className="sb-composite-row">
+                          <td>Composite Score</td>
+                          {compareResult.tradeoff_matrix.map((s, idx) => (
+                            <td key={idx} className={s.name === compareResult.recommended_scenario ? 'is-recommended' : ''}>
+                              <strong>{s.composite_score?.toFixed(1) ?? '—'} / 10</strong>
+                            </td>
+                          ))}
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
                 <div className={`sb-disclaimer ${compareResult.scoring_method === 'real_data' ? 'real-data' : ''}`}>
                   {compareResult.disclaimer}
                 </div>

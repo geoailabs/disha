@@ -10,7 +10,7 @@ This document provides a comprehensive, in-depth technical guide detailing the c
 
 Urban and regional planning software requires unified coordination between high-performance interactive cartography (MapLibre GL), agentic AI reasoning across diverse planning disciplines, centralized geospatial entity tracking, and production-grade exportable deliverables.
 
-We implemented and hardened eighteen core platform capabilities:
+We implemented and hardened twenty-two core platform capabilities:
 
 1. **7+1 Domain Hub Architecture & ToolResult Protocol**: Replaces unorganized flat tool collections with cohesive domain subsystems (`Spatial`, `Mobility`, `Environment`, `Planning`, `Demographics`, `Places`, `Scenarios`, and `Utility`), returning typed execution packets (`ToolResult`) with automated side-effect routing.
 2. **Central Spatial & Polygon Registry**: Single source of truth for all study areas, zoning parcels, and boundaries, enforcing $\ge 90\%$ Intersection-over-Union (IoU) deduplication, geodesic ellipsoidal calculations (`pyproj.Geod`), and live map layer synchronization.
@@ -30,6 +30,10 @@ We implemented and hardened eighteen core platform capabilities:
 16. **Zero-Overlap Workspace Layout Insets & Frosted Glassmorphism (`App.css`, `DocumentView.css`, `ArtifactsPanel.css`)**: Dynamic geometric insets on `.mundi-workspace-view` (`left: calc(var(--sidebar-width) + 26px)`, `right: var(--chat-drawer-offset)`, `top: 14px`, `bottom: 14px`), preventing workspace views from overlapping with the floating `AppSidebar` or `ChatDrawer`. Styled with Canva Sans typography, 20px rounded cards, and frosted backdrop blur.
 17. **Categorized 11-Format Export Dropdown & Header Sources Popover (`ArtifactsPanel.tsx`)**: Replaces sprawling bottom action bars and legacy format buttons with a sleek top-left categorized download dropdown (Documents, Images, Data) and a compact header "Sources" popover dropdown for spatial provenance.
 18. **Interactive Drag-and-Drop DocumentView Dropzone & RAG Vector Toolbar (`DocumentView.tsx`)**: Reusable empty-state dropzone supporting native file browsing and drag-and-drop for `PDF`, `TIFF`, `PNG`, `JPEG`, and `WEBP`, coupled with segmented PDF page controls and a glowing vector RAG status pill.
+19. **Interactive Policy Levers & Multi-Row Trade-Off Matrix (`ScenarioBuilderPanel.tsx`)**: Full-screen scenario review workspace (`is-scenarios`) featuring interactive policy sliders (`HyperparameterSliders`: Target FAR, Green Space Quota %, Transit Mode Share %, Electric Vehicle Share % EV), resource balance sheets (GFA, Population Capacity, Water Demand MLD, Mobility CO₂), and highlighted recommended best-fit scenarios.
+20. **Client-Side SVG Mermaid Decision Flowchart Engine (`ArtifactsPanel.tsx`)**: Native client-side SVG renderer for decision trees, alternatives analysis, and multi-stage planning processes directly within generated reports.
+21. **Modal-Driven Publication Map Exporter & Spatial Clip (`MapExportModal.tsx`, `SpatialClipModal.tsx`)**: Dedicated modal windows for configuring cartographic title blocks, scale bars, north arrows, layers, and bounding-box spatial clipping.
+22. **Native Floating Layer Context Menus & Direct GeoJSON Feature Export (`FloatingLayerCard.tsx`, `AttributeTable.tsx`)**: Portal-rendered right-click context menu offering instant color swatches, opacity sliders, layer drag-and-drop reordering, and direct single-click GeoJSON export for selected features.
 
 ---
 

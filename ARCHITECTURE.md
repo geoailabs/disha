@@ -4,6 +4,10 @@
 
 Disha unifies an interactive spatial map canvas with a multi-domain AI reasoning engine. Planners can explore, analyze, model, and document complex urban environments through natural conversation and direct spatial interaction — bridging computational GIS, domain-specific planning analytics, and cartography into a unified desktop workspace.
 
+<p align="center">
+  <img src="assets/screenshots/02_main_workspace_clean.png" alt="Disha Main Planning Workspace" width="100%" />
+</p>
+
 This document is split into two halves:
 
 - **Part 1 — For Users.** What the app does and how to use it.
@@ -23,8 +27,8 @@ A desktop application (macOS / Windows / Linux) that unifies multiple analytical
 |---|---|
 | **Map** (center, Map mode) | Interactive MapLibre GL canvas with switchable raster basemaps, vector layer rendering, data-driven symbology (categorized, graduated) + text labels, drawing tools, marker pins, measurement, a live legend, and a unified glassmorphic navigation stack (compass rose + zoom controls with click-to-North easing). |
 | **Document view** (center, Document mode) | Glassmorphic 20px card container featuring an interactive drag-and-drop dropzone (`PDF`, `TIFF`, `PNG`, `JPEG`, `WEBP`), Canva Sans typography, segmented PDF pagination toolbar, and a live vector RAG status pill. |
-| **Left panel** | Tabs for **Files** (workspace tree & vector import), **Layers** (+ Symbology & Attribute editors), **Bookmarks**, **Export** (publication figures & clipped layers), **Zoning legend**, **Scenario Builder** (MCDA evaluation), and **Diagnostics** (system self-checks). |
-| **Right panel** | Tabs for **Chat** (streaming AI assistant, inline tool calls, interactive option cards, model switcher) and **Artifacts** (markdown reports, tables, plots, and figures with a categorized 11-format download dropdown and compact header Sources popover). |
+| **Left panel** | Tabs for **Files** (workspace tree & vector import), **Layers** (+ Symbology & Attribute editors, drag-and-drop reordering, portal context menu), **Bookmarks**, **Export** (modal figure exports & clipped layers), **Zoning legend**, **Scenario Builder** (policy levers & trade-off matrix), and **Diagnostics** (system self-checks). |
+| **Right panel** | Tabs for **Chat** (streaming AI assistant, inline tool calls, interactive option cards, model switcher) and **Artifacts** (markdown reports, Mermaid flowcharts, tables, plots, and figures with a categorized 11-format download dropdown and compact header Sources popover). |
 
 Toggle between **Map** and **Document** modes from the title bar.
 
@@ -43,7 +47,8 @@ Open any folder via the title-bar button. The application:
 ### Layers & Vector Ingestion
 - Click `.geojson` files to load vector layers.
 - Click Shapefiles, GeoPackages, KML, KMZ, GPX, or CSV files to auto-convert them to EPSG:4326 GeoJSON via backend DuckDB `spatial` (`ST_Read` + `ST_Transform`). CSV files automatically detect latitude and longitude columns.
-- The **Layers** panel provides layer visibility toggles, zoom-to extent, remove layer, and triggers for the **Symbology** panel and **Attribute Table**.
+- The **Layers** panel provides layer visibility toggles, zoom-to extent, remove layer, drag-and-drop layer reordering, and triggers for the **Symbology** panel and **Attribute Table**.
+- **Native Portal Context Menu:** Right-click any layer in the Layers list to open a native-style floating context menu rendered via React portals (`createPortal`), offering instant quick-color swatches, opacity adjustments, and selection exports.
 
 ### Data-Driven Symbology & Text Labels
 Style any vector layer based on its feature properties:
@@ -54,7 +59,7 @@ Style any vector layer based on its feature properties:
 
 ### Drawing Tools & Attribute Editor
 - Toolbar draw tools for **points**, **lines**, and **polygons**. Click to place vertices, double-click/Enter to complete, Escape to cancel, Backspace to undo vertices.
-- Drawn shapes become real layers and open the **Attribute Table** to edit feature properties, add/delete columns, and modify values.
+- Drawn shapes become real layers and open the **Attribute Table** to edit feature properties, add/delete columns, edit cells, and export selected features directly to GeoJSON.
 
 ### Basemaps & Street View
 - Seven free raster basemaps: Street (OSM), Satellite (Esri World Imagery), Dark / Light (CartoDB), Terrain (OpenTopoMap), Topo (Esri), Humanitarian (OSM-HOT).
@@ -66,9 +71,16 @@ Style any vector layer based on its feature properties:
 
 ### Bookmarks & Publication Export
 - Save named map extents as bookmarks. The assistant can also save and navigate to bookmarks.
-- **Publication Map Export:** Export publication-ready figures with Web-Mercator scale bars, bearing-aware north arrows, title blocks, legends, and attributions in PNG, JPEG, or PDF.
-- **Labeled Map Exports & GeoJSON Downloads:** Direct layer GeoJSON downloads and on-canvas labeled exports.
+- **Dedicated Map Export Modal (`MapExportModal`):** Export publication-ready figures with Web-Mercator scale bars, bearing-aware north arrows, title blocks, legends, layer visibility selectors, and attributions in PNG, JPEG, or PDF.
+- **Dedicated Spatial Clip Modal (`SpatialClipModal`):** Clip study areas by bounding box or region polygon, preview boundaries, and save clipped layers directly into the workspace.
 - **Zero-Crop Geographic Padding:** When exporting study areas, the exporter calculates bounding boxes and applies an **18% geographic padding** on all four cardinal directions, repainting the WebGL buffer for uncropped figures.
+
+## Scenario Planning & Policy Levers
+- **Full-Screen Workspace (`.is-scenarios`):** Expands the scenario review card into a dedicated planning canvas with space for multiple alternatives side-by-side.
+- **Deep-Research Policy Levers (`HyperparameterSliders`):** Live sliders for Target FAR, Green Space Quota (%), Transit Mode Share (%), and Electric Vehicle Share (% EV).
+- **Multi-Row Trade-Off Balance Sheet:** Side-by-side comparative table computing Gross Floor Area ($\text{m}^2$), Population Capacity, Daily Water Demand (MLD), and Annual Mobility $\text{CO}_2$ (t/yr) alongside multi-criteria evaluation scores out of 10.
+- **Best-Fit Recommended Highlight:** Prominently highlights the recommended scenario with a header badge, `#1, #2` ranking hierarchy, and teal column highlights.
+- **On-Demand Footprint Visualization:** Click "Visualize Study Footprint on Map" to immediately project the scenario study extent onto the interactive MapLibre map.
 
 ## Document Mode & Master Plan Digitization
 Drop in or open external planning documents:

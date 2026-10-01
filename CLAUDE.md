@@ -7,7 +7,7 @@ Orientation and reference handbook for AI coding assistants working in the Disha
 - **[AGENTS.md](file:///Users/smriti/Documents/GitHub/disha/AGENTS.md)** — Architectural orientation, invariants, communication channels, 7+1 Domain Hubs, and coding rules.
 - **[ARCHITECTURE.md](file:///Users/smriti/Documents/GitHub/disha/ARCHITECTURE.md)** — In-depth architectural design, user/developer guides, and API route index.
 - **[FLAUDE.md](file:///Users/smriti/Documents/GitHub/disha/FLAUDE.md)** — Quick reference cheat sheet, critical invariants, and command cheat sheet.
-- **[FEATURE_IMPLEMENTATION_GUIDE.md](file:///Users/smriti/Documents/GitHub/disha/FEATURE_IMPLEMENTATION_GUIDE.md)** — Exhaustive deep dive on all 18 core platform capabilities, subsystems, and mathematical models.
+- **[FEATURE_IMPLEMENTATION_GUIDE.md](file:///Users/smriti/Documents/GitHub/disha/FEATURE_IMPLEMENTATION_GUIDE.md)** — Exhaustive deep dive on all 22 core platform capabilities, subsystems, and mathematical models.
 - **[.agents/AGENTS.md](file:///Users/smriti/Documents/GitHub/disha/.agents/AGENTS.md)** — Workspace-specific rules, race condition fixes, and GIS best practices.
 
 ---

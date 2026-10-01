@@ -171,5 +171,7 @@ pnpm --filter @disha/desktop build
 5. `apps/desktop/src/renderer/App.tsx` — Single state container, action routing, workspace auto-save guards.
 6. `apps/desktop/src/renderer/components/MapView.tsx` — MapLibre setup, symbology paint expressions, drawing tools, map snapshot composer.
 7. `apps/desktop/src/renderer/components/ChatPanel.tsx` — WebSocket client, streaming markdown, question interactions, deep research UI.
-8. `apps/desktop/src/renderer/types.ts` — Shared interfaces, `LayerStyleSpec`, basemaps, zone presets, `MapAction` union.
-9. `apps/desktop/src/preload/index.ts` — IPC bridge between renderer and Electron main.
+8. `apps/desktop/src/renderer/components/ScenarioBuilderPanel.tsx` — Scenario comparison, policy sliders, and trade-off balance sheet matrix.
+9. `apps/desktop/src/renderer/components/MapExportModal.tsx` & `SpatialClipModal.tsx` — Publication map exports and spatial clipping modals.
+10. `apps/desktop/src/renderer/types.ts` — Shared interfaces, `LayerStyleSpec`, basemaps, zone presets, `MapAction` union.
+11. `apps/desktop/src/preload/index.ts` — IPC bridge between renderer and Electron main.
