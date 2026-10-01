@@ -25,6 +25,7 @@ import DiagnosticsPanel from './components/DiagnosticsPanel'
 import AppSidebar, { type WorkspaceCategory } from './components/AppSidebar'
 import { FloatingLayerCard, type FloatingTab } from './components/FloatingLayerCard'
 import { FloatingPromptBar } from './components/FloatingPromptBar'
+import { FirstLaunchModal } from './components/FirstLaunchModal'
 import appIcon from './assets/icon.png'
 import {
   GeoJSONLayer,
@@ -51,7 +52,7 @@ import {
 import { composeFigure } from './lib/compose-figure'
 import { buildLegendEntries } from './lib/legend-data'
 
-type LeftTab = 'files' | 'layers' | 'bookmarks' | 'export' | 'zoning' | 'scenarios'
+type LeftTab = 'files' | 'layers' | 'bookmarks' | 'zoning' | 'scenarios'
 type AppMode = 'map' | 'document' | 'artifacts'
 
 function genId() {
@@ -198,6 +199,9 @@ function App() {
   const [openDocs, setOpenDocs] = useState<OpenDocument[]>([])
   const [activeDocId, setActiveDocId] = useState<string | null>(null)
   const [workspacePath, setWorkspacePath] = useState<string | null>(null)
+  const [defaultWorkspacePath, setDefaultWorkspacePath] = useState<string | null>(null)
+  const [showFirstLaunchModal, setShowFirstLaunchModal] = useState(false)
+  const [systemDefaultDishaPath, setSystemDefaultDishaPath] = useState<string>('')
   const [activeLeftTab, setActiveLeftTab] = useState<LeftTab>('files')
   const [stylingLayerId, setStylingLayerId] = useState<string | null>(null)
   const [attrLayerId, setAttrLayerId] = useState<string | null>(null)
@@ -515,11 +519,38 @@ function App() {
 
   // ── Workspace ──
 
-  // Auto-restore last workspace on startup
+  // Auto-restore last workspace or default workspace on startup
   useEffect(() => {
-    window.electronAPI.getLastWorkspace().then((last) => {
-      if (last) setWorkspacePath(last)
+    Promise.all([
+      window.electronAPI.getLastWorkspace().catch(() => null),
+      window.electronAPI.getDefaultWorkspace().catch(() => null),
+      window.electronAPI.getDefaultDishaFolder().catch(() => ''),
+    ]).then(([last, def, sysDefault]) => {
+      const resolvedSysDefault = def || sysDefault || ''
+      setSystemDefaultDishaPath(resolvedSysDefault)
+      if (def) {
+        setDefaultWorkspacePath(def)
+      }
+      if (last) {
+        setWorkspacePath(last)
+      } else if (def) {
+        setWorkspacePath(def)
+      } else {
+        // Neither last nor default workspace exists -> first launch!
+        setShowFirstLaunchModal(true)
+      }
     }).catch(() => { })
+  }, [])
+
+  const handleConfirmFirstLaunch = useCallback(async (chosenPath: string) => {
+    try {
+      await window.electronAPI.setDefaultWorkspace(chosenPath)
+      setDefaultWorkspacePath(chosenPath)
+      setWorkspacePath(chosenPath)
+      setShowFirstLaunchModal(false)
+    } catch (err) {
+      console.error('Failed to set default workspace:', err)
+    }
   }, [])
 
   const resetWorkspaceState = useCallback(() => {
@@ -774,21 +805,22 @@ function App() {
       try { await saveDocumentsToWorkspace(workspacePath, openDocs, activeDocId) } catch { /* non-fatal */ }
     }
 
-    // Now safely clear all state
-    setWorkspacePath(null)
+    // Now safely clear all state and smoothly switch to default library folder
     resetWorkspaceState()
+    const targetWs = defaultWorkspacePath
+    setWorkspacePath(targetWs)
 
     // Backend: clear chat session history
     chatPanelRef.current?.resetHistory()
 
-    window.electronAPI.setLastWorkspace(null).catch(() => { })
+    window.electronAPI.setLastWorkspace(targetWs).catch(() => { })
 
     // Release the guard after a tick so subsequent interactions work normally
     setTimeout(() => {
       isClosingRef.current = false
       setIsTransitioning(false)
     }, 100)
-  }, [workspacePath, resetWorkspaceState, openDocs, activeDocId, saveDocumentsToWorkspace])
+  }, [workspacePath, defaultWorkspacePath, resetWorkspaceState, openDocs, activeDocId, saveDocumentsToWorkspace])
 
   // ── Layer management ──
 
@@ -1199,12 +1231,12 @@ function App() {
   }, [layers])
 
   // Convert a non-GeoJSON vector file (shapefile/GPKG/KML/KMZ/GPX/CSV) to a
-  // workspace-local .geojson via the backend, then load it as a layer. Requires
-  // an open workspace (the backend writes the converted file inside it).
+  // workspace-local .geojson via the backend, then load it as a layer.
   const convertAndAddLayer = useCallback(
     async (entry: FileEntry) => {
-      if (!workspacePath) {
-        setConvertError('Open a workspace folder before importing this file type.')
+      const targetWs = workspacePath || defaultWorkspacePath || ''
+      if (!targetWs) {
+        setConvertError('Library folder is not ready yet.')
         return
       }
       setConvertingFile(entry.name)
@@ -1213,7 +1245,7 @@ function App() {
         const resp = await fetch('http://localhost:8765/api/files/convert', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path: entry.path, workspace: workspacePath }),
+          body: JSON.stringify({ path: entry.path, workspace: targetWs }),
         })
         const data = await resp.json()
         if (data.error) {
@@ -1229,7 +1261,7 @@ function App() {
         setConvertingFile(null)
       }
     },
-    [workspacePath, addLayer],
+    [workspacePath, defaultWorkspacePath, addLayer],
   )
 
   const handleFileClick = useCallback(
@@ -1245,13 +1277,10 @@ function App() {
   )
 
   const handleImportSpatialFiles = useCallback(async () => {
-    if (!workspacePath) {
-      setConvertError('Open a workspace folder before importing files.')
-      return
-    }
+    const targetWs = workspacePath || defaultWorkspacePath || ''
     setConvertError(null)
     try {
-      const paths = await window.electronAPI.importSpatialFiles(workspacePath)
+      const paths = await window.electronAPI.importSpatialFiles(targetWs)
       if (!paths || paths.length === 0) return
 
       for (const fp of paths) {
@@ -1267,7 +1296,7 @@ function App() {
             const resp = await fetch('http://localhost:8765/api/files/convert', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ path: fp, workspace: workspacePath }),
+              body: JSON.stringify({ path: fp, workspace: targetWs }),
             })
             const data = await resp.json()
             if (data.error) {
@@ -1286,7 +1315,7 @@ function App() {
     } catch (err) {
       setConvertError(`Import failed: ${err}`)
     }
-  }, [workspacePath, addLayer])
+  }, [workspacePath, defaultWorkspacePath, addLayer])
 
 
   // ── Admin boundary save ──
@@ -1317,7 +1346,8 @@ function App() {
   }, [])
 
   const handleSaveByRegion = useCallback(async (displayName: string, boundaryGeom: BoundaryGeometry) => {
-    if (!workspacePath || layers.length === 0) return
+    const targetWs = workspacePath || defaultWorkspacePath
+    if (!targetWs || layers.length === 0) return
     const boundary: Feature<BoundaryGeometry> = { type: 'Feature', geometry: boundaryGeom, properties: {} }
     const allClipped: Feature[] = []
     for (const layer of layers) {
@@ -1380,7 +1410,7 @@ function App() {
       }
     }
     const safeName = displayName.replace(/[^a-z0-9-_]/gi, '_').slice(0, 40) || 'region'
-    const filePath = `${workspacePath}/${safeName}.geojson`
+    const filePath = `${targetWs}/${safeName}.geojson`
     await window.electronAPI.writeFile(
       filePath,
       JSON.stringify({ type: 'FeatureCollection', features: allClipped }, null, 2),
@@ -1391,7 +1421,7 @@ function App() {
       ...prev,
       { type: 'remove_layer', payload: { layer_name: '__boundary_preview__' } },
     ])
-  }, [workspacePath, layers, addLayer])
+  }, [workspacePath, defaultWorkspacePath, layers, addLayer])
 
   const handleBookmarkGoTo = useCallback((b: MapBookmark) => {
     setMapActions((prev) => [
@@ -1489,9 +1519,24 @@ function App() {
     return pdf
   }, [])
 
-  const handleExportMapPng = useCallback(async (title?: string, options?: { layers_to_show?: string[]; layer_name?: string; bbox?: any }) => {
+  const handleExportMapPng = useCallback(async (title?: string, options?: { layers_to_show?: string[]; layer_name?: string; bbox?: any; saveAs?: boolean }) => {
     const figure = await composeMapFigure(title || suggestExportTitleRef.current(), options)
     if (!figure) return
+
+    if (options?.saveAs && window.electronAPI?.showSaveDialog && window.electronAPI?.writeBinaryFile) {
+      const defaultFilename = `${(title || 'map').replace(/[^a-z0-9-_]/gi, '_')}-${Date.now()}.png`
+      const res = await window.electronAPI.showSaveDialog({
+        defaultPath: defaultFilename,
+        filters: [{ name: 'PNG Image', extensions: ['png'] }],
+      })
+      if (!res.canceled && res.filePath) {
+        const dataUrl = figure.toDataURL('image/png')
+        const base64Data = dataUrl.split(',')[1] || ''
+        await window.electronAPI.writeBinaryFile(res.filePath, base64Data)
+      }
+      return
+    }
+
     figure.toBlob((blob) => {
       if (!blob) return
       const a = document.createElement('a')
@@ -1502,9 +1547,24 @@ function App() {
     })
   }, [composeMapFigure])
 
-  const handleExportMapJpeg = useCallback(async (title?: string, options?: { layers_to_show?: string[]; layer_name?: string; bbox?: any }) => {
+  const handleExportMapJpeg = useCallback(async (title?: string, options?: { layers_to_show?: string[]; layer_name?: string; bbox?: any; saveAs?: boolean }) => {
     const figure = await composeMapFigure(title || suggestExportTitleRef.current(), options)
     if (!figure) return
+
+    if (options?.saveAs && window.electronAPI?.showSaveDialog && window.electronAPI?.writeBinaryFile) {
+      const defaultFilename = `${(title || 'map').replace(/[^a-z0-9-_]/gi, '_')}-${Date.now()}.jpg`
+      const res = await window.electronAPI.showSaveDialog({
+        defaultPath: defaultFilename,
+        filters: [{ name: 'JPEG Image', extensions: ['jpg', 'jpeg'] }],
+      })
+      if (!res.canceled && res.filePath) {
+        const dataUrl = figure.toDataURL('image/jpeg', 0.94)
+        const base64Data = dataUrl.split(',')[1] || ''
+        await window.electronAPI.writeBinaryFile(res.filePath, base64Data)
+      }
+      return
+    }
+
     figure.toBlob((blob) => {
       if (!blob) return
       const a = document.createElement('a')
@@ -1515,10 +1575,24 @@ function App() {
     }, 'image/jpeg', 0.94)
   }, [composeMapFigure])
 
-  const handleExportPdf = useCallback(async (title?: string, options?: { layers_to_show?: string[]; layer_name?: string; bbox?: any }) => {
+  const handleExportPdf = useCallback(async (title?: string, options?: { layers_to_show?: string[]; layer_name?: string; bbox?: any; saveAs?: boolean }) => {
     const figure = await composeMapFigure(title || suggestExportTitleRef.current(), options)
     if (!figure) return
     const pdf = await composedToPdf(figure)
+
+    if (options?.saveAs && window.electronAPI?.showSaveDialog && window.electronAPI?.writeBinaryFile) {
+      const defaultFilename = `${(title || 'map-report').replace(/[^a-z0-9-_]/gi, '_')}-${Date.now()}.pdf`
+      const res = await window.electronAPI.showSaveDialog({
+        defaultPath: defaultFilename,
+        filters: [{ name: 'PDF Document', extensions: ['pdf'] }],
+      })
+      if (!res.canceled && res.filePath) {
+        const pdfBase64 = pdf.output('datauristring').split(',')[1] || ''
+        await window.electronAPI.writeBinaryFile(res.filePath, pdfBase64)
+      }
+      return
+    }
+
     pdf.save(`map-report-${Date.now()}.pdf`)
   }, [composeMapFigure, composedToPdf])
 
@@ -1634,6 +1708,85 @@ function App() {
     URL.revokeObjectURL(a.href)
   }, [layers])
 
+  const handleExportFeatures = useCallback(
+    (
+      features: Feature[],
+      options?: { saveAs?: boolean; promoteToLayer?: boolean; layerName?: string },
+    ) => {
+      if (!features || features.length === 0) return
+
+      if (options?.promoteToLayer) {
+        const newName = options.layerName || `Selection Layer (${features.length})`
+        const newLayer: GeoJSONLayer = {
+          id: `layer-${genId()}`,
+          name: newName,
+          visible: true,
+          data: {
+            type: 'FeatureCollection',
+            features: JSON.parse(JSON.stringify(features)),
+          },
+          color: '#00b4d8',
+        }
+        setLayers((prev) => [newLayer, ...prev])
+        setSelectedFeatures([])
+        return
+      }
+
+      const geojsonStr = JSON.stringify({ type: 'FeatureCollection', features }, null, 2)
+
+      if (options?.saveAs && window.electronAPI?.showSaveDialog && window.electronAPI?.writeFile) {
+        const defaultFilename = `selection-${Date.now()}.geojson`
+        window.electronAPI
+          .showSaveDialog({
+            defaultPath: defaultFilename,
+            filters: [{ name: 'GeoJSON', extensions: ['geojson', 'json'] }],
+          })
+          .then((res) => {
+            if (!res.canceled && res.filePath) {
+              window.electronAPI.writeFile(res.filePath, geojsonStr)
+            }
+          })
+          .catch(() => {})
+        return
+      }
+
+      // Default 1-click download and save to workspace library
+      const targetWs = workspacePath || defaultWorkspacePath
+      if (targetWs && window.electronAPI?.writeFile) {
+        const filename = `selection-${Date.now()}.geojson`
+        const sep = targetWs.includes('\\') ? '\\' : '/'
+        const fullPath = `${targetWs}${sep}${filename}`
+        window.electronAPI.writeFile(fullPath, geojsonStr).then(() => {
+          setFileTreeRevision((r) => r + 1)
+        }).catch(() => {})
+      }
+
+      const blob = new Blob([geojsonStr], { type: 'application/geo+json' })
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = `selection-${Date.now()}.geojson`
+      a.click()
+      URL.revokeObjectURL(a.href)
+    },
+    [workspacePath, defaultWorkspacePath],
+  )
+
+  const handleLayerQuickStyle = useCallback(
+    (layerId: string, style: { color?: string; opacity?: number }) => {
+      setLayers((prev) =>
+        prev.map((l) => {
+          if (l.id !== layerId) return l
+          return {
+            ...l,
+            ...(style.color ? { color: style.color, fillColor: style.color, lineColor: style.color } : {}),
+            ...(style.opacity !== undefined ? { opacity: style.opacity } : {}),
+          }
+        }),
+      )
+    },
+    [],
+  )
+
   // ── Shared helper: upsert a named GeoJSON layer ──
 
   const clipLayersToBboxAndSave = useCallback(
@@ -1700,8 +1853,9 @@ function App() {
         },
       }
       const serialized = JSON.stringify(exportData, null, 2)
-      if (workspacePath) {
-        const path = `${workspacePath}/${base}.geojson`
+      const targetWs = workspacePath || defaultWorkspacePath
+      if (targetWs) {
+        const path = `${targetWs}/${base}.geojson`
         await window.electronAPI.writeFile(path, serialized)
         addLayer(base, path)
         setActiveLeftTab('layers')
@@ -1717,7 +1871,7 @@ function App() {
       anchor.remove()
       window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1500)
     },
-    [layers, workspacePath, addLayer],
+    [layers, workspacePath, defaultWorkspacePath, addLayer],
   )
 
   const upsertLayer = useCallback((layerName: string, data: FeatureCollection, color?: string, styleSpec?: any) => {
@@ -3405,6 +3559,7 @@ function App() {
                 onRedo={handleGlobalRedo}
                 canUndo={pastHistory.length > 0}
                 canRedo={futureHistory.length > 0}
+                onExportFeatures={handleExportFeatures}
               />
             </div>
 
@@ -3413,12 +3568,14 @@ function App() {
               isOpen={isLayerCardOpen}
               activeTab={activeWorkspaceCategory as FloatingTab}
               onTabChange={(tab) => {
-                if (tab === 'layers' || tab === 'files' || tab === 'scenarios' || tab === 'export') {
+                if (tab === 'layers' || tab === 'files' || tab === 'scenarios') {
                   setActiveWorkspaceCategory(tab)
                 }
               }}
               onClose={() => setIsLayerCardOpen(false)}
               layers={layers}
+              onReorderLayers={setLayers}
+              onUpdateLayerQuickStyle={handleLayerQuickStyle}
               selectedLayerIds={Array.from(selectedLayerIds)}
               onToggleLayer={toggleLayer}
               onRemoveLayer={removeLayer}
@@ -3543,6 +3700,12 @@ function App() {
               onOpenWorkspace={handleSelectWorkspace}
               onCloseWorkspace={handleCloseWorkspace}
               onHoverFeature={handleHoverFeature}
+              onAddToMap={(geojson, name) => {
+                setMapActions((prev) => [
+                  ...prev,
+                  { type: 'add_geojson', payload: { geojson: geojson as any, name } },
+                ])
+              }}
             />
 
             {/* Floating Bottom-Center Prompt Bar */}
@@ -3663,6 +3826,7 @@ function App() {
                       onClose={() => setAttrLayerId(null)}
                       selectedFeatures={selectedFeatures}
                       onSelectFeature={handleSelectFeature}
+                      onExportFeatures={handleExportFeatures}
                     />
                   </div>
                 </div>
@@ -3887,6 +4051,12 @@ function App() {
         <DiagnosticsPanel
           onClose={() => setShowDiagnostics(false)}
           workspacePath={workspacePath}
+        />
+      )}
+      {showFirstLaunchModal && (
+        <FirstLaunchModal
+          defaultPath={systemDefaultDishaPath || '~/Documents/Disha'}
+          onConfirm={handleConfirmFirstLaunch}
         />
       )}
     </div>

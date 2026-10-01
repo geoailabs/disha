@@ -9,6 +9,7 @@ interface AttributeTableProps {
   onClose: () => void
   selectedFeatures: SelectedFeatureEntry[]
   onSelectFeature: (entry: SelectedFeatureEntry | null, shiftKey: boolean) => void
+  onExportFeatures?: (features: Feature[], options?: { saveAs?: boolean; promoteToLayer?: boolean; layerName?: string }) => void
 }
 
 // Properties that drive rendering/labels — editable, but we surface them; the
@@ -31,6 +32,7 @@ export default function AttributeTable({
   onClose,
   selectedFeatures,
   onSelectFeature,
+  onExportFeatures,
 }: AttributeTableProps) {
   const features = useMemo(() => layer.data?.features || [], [layer.data])
   const columns = useMemo(() => columnsOf(features), [features])
@@ -71,7 +73,11 @@ export default function AttributeTable({
     commit(features.filter((_, i) => i !== rowIdx))
   }
 
-  const selectedCount = selectedFeatures.filter((e) => e.layerId === layer.id).length
+  const selectedEntries = useMemo(
+    () => selectedFeatures.filter((e) => e.layerId === layer.id),
+    [selectedFeatures, layer.id],
+  )
+  const selectedCount = selectedEntries.length
 
   if (features.length === 0) {
     return (
@@ -106,6 +112,24 @@ export default function AttributeTable({
           </span>
         </div>
         <div className="attr-header-actions">
+          {selectedCount > 0 && onExportFeatures && (
+            <button
+              type="button"
+              className="attr-btn attr-header-btn attr-export-btn"
+              onClick={() => {
+                const targetFeatures = selectedEntries.map((e) => e.feature).filter(Boolean)
+                onExportFeatures(targetFeatures, { saveAs: false })
+              }}
+              title="Export selected features as GeoJSON"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 4 }}>
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              Export Selected ({selectedCount})
+            </button>
+          )}
           <div className="attr-header-addcol">
             <input
               className="attr-input attr-header-input"

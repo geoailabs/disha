@@ -1,22 +1,25 @@
 import { useState } from 'react'
-import type { Polygon, MultiPolygon } from 'geojson'
-import { GeoJSONLayer, BoundaryGeometry } from '../types'
+import type { GeoJSONLayer, BoundaryGeometry } from '../types'
 import './ExportPanel.css'
 
 interface NominatimResult {
+  place_id: number
   display_name: string
-  geojson: Polygon | MultiPolygon | { type: string }
-  osm_type: string
   type: string
+  osm_type: string
+  geojson: {
+    type: string
+    coordinates: any
+  }
 }
 
 interface ExportPanelProps {
   layers: GeoJSONLayer[]
-  workspacePath: string | null
-  onExportMapPng: (title?: string) => void
-  onExportMapJpeg?: (title?: string) => void
+  workspacePath?: string | null
+  onExportMapPng: (title?: string, options?: { layers_to_show?: string[]; layer_name?: string; bbox?: any; saveAs?: boolean }) => void
+  onExportMapJpeg?: (title?: string, options?: { layers_to_show?: string[]; layer_name?: string; bbox?: any; saveAs?: boolean }) => void
   onExportLayer: (layerId: string) => void
-  onExportPdf: (title?: string) => void
+  onExportPdf: (title?: string, options?: { layers_to_show?: string[]; layer_name?: string; bbox?: any; saveAs?: boolean }) => void
   onExportClippedRegion: (name: string) => void
   onPreviewBoundary: (geom: BoundaryGeometry | null) => void
   onSaveByRegion: (displayName: string, boundaryGeom: BoundaryGeometry) => void
@@ -125,6 +128,7 @@ export default function ExportPanel({
           type="button"
           className="export-btn primary"
           onClick={() => onExportMapPng(artifactTitle.trim() || undefined)}
+          title="Save PNG image"
         >
           Download PNG
         </button>
@@ -132,6 +136,7 @@ export default function ExportPanel({
           type="button"
           className="export-btn"
           onClick={() => onExportMapJpeg ? onExportMapJpeg(artifactTitle.trim() || undefined) : onExportMapPng(artifactTitle.trim() || undefined)}
+          title="Save JPEG image"
         >
           Download JPEG
         </button>
@@ -139,8 +144,17 @@ export default function ExportPanel({
           type="button"
           className="export-btn"
           onClick={() => onExportPdf(artifactTitle.trim() || undefined)}
+          title="Save PDF document"
         >
           Download PDF
+        </button>
+        <button
+          type="button"
+          className="export-btn"
+          onClick={() => onExportMapPng(artifactTitle.trim() || undefined, { saveAs: true })}
+          title="Choose a specific folder to save the image"
+        >
+          Save As…
         </button>
       </div>
 
@@ -195,19 +209,19 @@ export default function ExportPanel({
           type="text"
           placeholder="output base name"
           className="export-input"
-          disabled={!workspacePath || layers.length === 0}
+          disabled={layers.length === 0}
         />
         <button
           type="submit"
           className="export-btn"
-          disabled={!workspacePath || layers.length === 0}
-          title="Clip all layers to visible bounds and save into workspace"
+          disabled={layers.length === 0}
+          title="Clip all layers to visible bounds and save"
         >
           Save clipped GeoJSON
         </button>
       </form>
-      {!workspacePath && (
-        <p className="export-warn">Open a workspace folder to save clipped files.</p>
+      {layers.length === 0 && (
+        <p className="export-warn">Load at least one layer to clip.</p>
       )}
 
       {/* ── Save by admin boundary ── */}
@@ -262,7 +276,7 @@ export default function ExportPanel({
             <button
               type="button"
               className="export-btn primary"
-              disabled={!workspacePath || layers.length === 0}
+              disabled={layers.length === 0}
               onClick={() => {
                 if (selectedRegion.geojson.type !== 'Polygon' && selectedRegion.geojson.type !== 'MultiPolygon') return
                 onSaveByRegion(
@@ -270,7 +284,7 @@ export default function ExportPanel({
                   selectedRegion.geojson as BoundaryGeometry,
                 )
               }}
-              title={!workspacePath ? 'Open a workspace first' : 'Clip all layers to this boundary and save'}
+              title="Clip all layers to this boundary and save"
             >
               Save within this region
             </button>
@@ -282,9 +296,6 @@ export default function ExportPanel({
               Clear
             </button>
           </div>
-          {!workspacePath && (
-            <p className="export-warn">Open a workspace folder to save.</p>
-          )}
           {layers.length === 0 && (
             <p className="export-warn">Load at least one layer to clip.</p>
           )}

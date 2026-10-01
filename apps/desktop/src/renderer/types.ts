@@ -93,7 +93,16 @@ export interface ScenarioDraft {
   bbox?: { south: number; west: number; north: number; east: number } | null
   focus_area?: string
   baseline_metrics?: Record<string, any>
-  scenarios: Array<{ name: string; description?: string }>
+  scenarios: Array<{
+    name: string
+    description?: string
+    hyperparameters?: {
+      electric_share_pct?: number
+      transit_share_pct?: number
+      target_far?: number
+      green_quota_pct?: number
+    }
+  }>
   criteria?: string[]
   preview_recommendation?: string
   preview_ranking?: string[]

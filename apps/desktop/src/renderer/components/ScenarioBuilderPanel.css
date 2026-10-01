@@ -605,5 +605,210 @@
 .sb-approve-btn:hover { background: #b9f0e1; }
 .sb-approve-btn:disabled { opacity: .55; cursor: wait; }
 .sb-secondary-btn { width: 100%; margin-top: 7px; padding: 7px; border: 1px solid rgba(167, 224, 209, .25); border-radius: 7px; color: #b6d1cc; background: transparent; cursor: pointer; }
-.sb-secondary-btn:hover { background: rgba(167, 224, 209, .08); }
 .sb-success { margin-top: 9px; color: #9be2cf; font-size: 12px; }
+
+/* ── Deep Research-style Policy Levers & Hyperparameters ── */
+.sb-hp-container {
+  margin-top: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.22);
+  overflow: hidden;
+}
+
+.sb-hp-toggle-btn {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 5px 8px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: #94a3b8;
+  font-size: 10px;
+  font-family: inherit;
+  transition: background 0.15s, color 0.15s;
+}
+
+.sb-hp-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: #f1f5f9;
+}
+
+.sb-hp-toggle-label {
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 6px;
+}
+
+.sb-hp-body {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.sb-hp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sb-hp-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10px;
+  color: #cbd5e1;
+}
+
+.sb-hp-val {
+  font-size: 10px;
+  color: var(--accent, #89b4fa);
+  font-weight: 700;
+}
+
+.sb-hp-body input[type="range"] {
+  accent-color: var(--accent, #89b4fa);
+  width: 100%;
+  margin: 2px 0;
+  cursor: pointer;
+}
+
+.sb-hp-sub {
+  font-size: 9px;
+  color: #64748b;
+  line-height: 1.2;
+}
+
+/* ── Source tags & On-demand visualize ── */
+.sb-source-tag {
+  display: inline-block;
+  font-size: 8px;
+  font-weight: 600;
+  color: #67e8f9;
+  background: rgba(103, 232, 249, 0.1);
+  border: 1px solid rgba(103, 232, 249, 0.2);
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-top: 2px;
+  width: fit-content;
+}
+
+.sb-visualize-btn {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: rgba(186, 230, 253, 0.08);
+  border: 1px solid rgba(186, 230, 253, 0.25);
+  color: #bae6fd;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.sb-visualize-btn:hover {
+  background: rgba(186, 230, 253, 0.18);
+  border-color: #7dd3fc;
+}
+
+/* ── Compare scenario cards ── */
+.sb-compare-scenario-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  margin-bottom: 6px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sb-result-badge.comparative {
+  color: #93c5fd;
+  background: rgba(147, 197, 253, 0.12);
+  border-color: rgba(147, 197, 253, 0.3);
+}
+
+.sb-eval-notice {
+  font-size: 10px;
+  color: #94a3b8;
+  line-height: 1.35;
+  background: rgba(255, 255, 255, 0.03);
+  border-left: 2px solid var(--accent, #89b4fa);
+  padding: 6px 9px;
+  border-radius: 0 4px 4px 0;
+  margin-top: 2px;
+}
+
+/* ── Trade-off side-by-side matrix ── */
+.sb-tradeoff-container {
+  margin-top: 8px;
+  overflow-x: auto;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  max-width: 100%;
+}
+
+.sb-tradeoff-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+  text-align: left;
+  color: #e2e8f0;
+}
+
+.sb-tradeoff-table th,
+.sb-tradeoff-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  white-space: nowrap;
+}
+
+.sb-col-metric {
+  background: rgba(255, 255, 255, 0.04);
+  color: #94a3b8;
+  font-weight: 600;
+  min-width: 110px;
+  position: sticky;
+  left: 0;
+}
+
+.sb-col-scenario {
+  background: rgba(255, 255, 255, 0.02);
+  min-width: 120px;
+  font-weight: 600;
+  color: #f1f5f9;
+}
+
+.sb-th-name {
+  color: #f8fafc;
+  font-size: 11px;
+}
+
+.sb-group-row td {
+  background: rgba(255, 255, 255, 0.06);
+  color: #94a3b8;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 4px 8px;
+}
+
+.sb-composite-row td {
+  background: rgba(147, 197, 253, 0.08);
+  color: #93c5fd;
+  font-weight: 700;
+}
+

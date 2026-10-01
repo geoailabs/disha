@@ -531,6 +531,12 @@
   box-shadow: 0 2px 8px rgba(0, 122, 255, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.4);
 }
 
+.map-context-menu .ctx-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.12);
+  margin: 4px 6px;
+}
+
 
 /* ── Hover popups for AI/user features ── */
 .mv-hover-popup {

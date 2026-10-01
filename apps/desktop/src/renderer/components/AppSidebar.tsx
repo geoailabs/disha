@@ -3,10 +3,9 @@ import './AppSidebar.css'
 import layersIcon from '../assets/icons/layers_icons.png'
 import filesIcon from '../assets/icons/files_icon.png'
 import scenariosIcon from '../assets/icons/scenarios_icon.png'
-import exportIcon from '../assets/icons/export_icon.png'
 
 export type AppNavMode = 'map' | 'streetview' | 'artifacts' | 'document'
-export type WorkspaceCategory = 'layers' | 'files' | 'scenarios' | 'export'
+export type WorkspaceCategory = 'layers' | 'files' | 'scenarios'
 
 interface AppSidebarProps {
   currentMode: AppNavMode
@@ -148,25 +147,6 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
                 {scenarioCount > 0 && <span className="sidebar-pill-badge">{scenarioCount}</span>}
               </div>
             )}
-          </button>
-
-          {/* Export */}
-          <button
-            className={`sidebar-nav-item ${activeCategory === 'export' && isCategoryPanelOpen ? 'active' : ''}`}
-            onClick={() => onCategoryClick?.('export')}
-            title="Export Maps, Reports & GeoData"
-          >
-            <div className="sidebar-nav-icon">
-              <span
-                className="sidebar-mask-icon"
-                style={{
-                  WebkitMaskImage: `url("${exportIcon}")`,
-                  maskImage: `url("${exportIcon}")`,
-                }}
-                aria-hidden="true"
-              />
-            </div>
-            {!isCollapsed && <span className="sidebar-nav-label">Export</span>}
           </button>
         </div>
 

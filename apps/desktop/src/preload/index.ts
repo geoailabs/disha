@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readFile: (filePath: string) => ipcRenderer.invoke('read-file', filePath),
   writeFile: (filePath: string, content: string) =>
     ipcRenderer.invoke('write-file', filePath, content),
+  writeBinaryFile: (filePath: string, base64Content: string) =>
+    ipcRenderer.invoke('write-binary-file', filePath, base64Content),
   onAppBeforeQuit: (handler: () => void | Promise<void>) => {
     ipcRenderer.removeAllListeners('app-before-quit')
     ipcRenderer.on('app-before-quit', async () => {
@@ -14,6 +16,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   getLastWorkspace: () => ipcRenderer.invoke('get-last-workspace'),
   setLastWorkspace: (p: string | null) => ipcRenderer.invoke('set-last-workspace', p),
+  getDefaultDishaFolder: () => ipcRenderer.invoke('get-default-disha-folder'),
+  getDefaultWorkspace: () => ipcRenderer.invoke('get-default-workspace'),
+  setDefaultWorkspace: (p: string) => ipcRenderer.invoke('set-default-workspace', p),
+  selectFolder: (title?: string) => ipcRenderer.invoke('select-folder', title),
+  showItemInFolder: (filePath: string) => ipcRenderer.invoke('show-item-in-folder', filePath),
+  showSaveDialog: (opts: { defaultPath?: string; filters?: { name: string; extensions: string[] }[] }) =>
+    ipcRenderer.invoke('show-save-dialog', opts),
   openFile: (opts: { filters?: { name: string; extensions: string[] }[] }) =>
     ipcRenderer.invoke('open-file', opts),
   readFileBase64: (filePath: string) => ipcRenderer.invoke('read-file-base64', filePath),

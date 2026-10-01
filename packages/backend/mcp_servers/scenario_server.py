@@ -2,10 +2,16 @@ from __future__ import annotations
 import json
 import math
 import asyncio
+import re
 from pathlib import Path
+from typing import Any
+from pyproj import Geod
+from shapely.geometry import box, shape
 from llm.base import ToolDeclaration
 from mcp_servers.demographics_server import DemographicsServer
 from mcp_servers.emissions_server import EmissionsServer
+
+_GEOD = Geod(ellps="WGS84")
 
 
 class ScenarioServer:
@@ -323,6 +329,25 @@ class ScenarioServer:
             return generated
 
         scenarios = generated.get("scenarios_data", [])
+        default_hp_map = {
+            "baseline": {"target_far": 1.5, "electric_share_pct": 5, "transit_share_pct": 15, "green_quota_pct": 10},
+            "compact": {"target_far": 3.5, "electric_share_pct": 25, "transit_share_pct": 35, "green_quota_pct": 15},
+            "transit": {"target_far": 4.0, "electric_share_pct": 30, "transit_share_pct": 50, "green_quota_pct": 15},
+            "green": {"target_far": 1.8, "electric_share_pct": 45, "transit_share_pct": 30, "green_quota_pct": 35},
+            "pedestrian": {"target_far": 2.8, "electric_share_pct": 35, "transit_share_pct": 40, "green_quota_pct": 20},
+            "cool": {"target_far": 2.0, "electric_share_pct": 30, "transit_share_pct": 25, "green_quota_pct": 30},
+            "parking": {"target_far": 2.5, "electric_share_pct": 20, "transit_share_pct": 30, "green_quota_pct": 15},
+            "integrated": {"target_far": 3.2, "electric_share_pct": 40, "transit_share_pct": 45, "green_quota_pct": 25},
+        }
+        for s in scenarios:
+            name_lower = s.get("name", "").lower()
+            profile_key = "baseline"
+            for k in default_hp_map:
+                if k in name_lower:
+                    profile_key = k
+                    break
+            s["hyperparameters"] = dict(default_hp_map.get(profile_key, {"target_far": 2.5, "electric_share_pct": 20, "transit_share_pct": 30, "green_quota_pct": 15}))
+
         preview_comparison: dict[str, Any] = {}
         if len(scenarios) >= 2:
             try:
@@ -386,13 +411,14 @@ class ScenarioServer:
         if generated.get("status") != "success":
             return generated
 
-        # Preserve names and descriptions edited in the Scenario panel.
+        # Preserve names, descriptions, and hyperparameters edited in the Scenario panel.
         overrides = args.get("scenario_overrides")
         if isinstance(overrides, list) and overrides:
             generated["scenarios_data"] = [
                 {
                     "name": str(item.get("name") or "Scenario"),
                     "description": str(item.get("description") or ""),
+                    "hyperparameters": item.get("hyperparameters", {}),
                 }
                 for item in overrides
                 if isinstance(item, dict) and str(item.get("name") or "").strip()
@@ -400,7 +426,11 @@ class ScenarioServer:
             generated["scenario_count"] = len(generated["scenarios_data"])
 
         scenario_inputs = [
-            {"name": s["name"], "description": s.get("description", "")}
+            {
+                "name": s["name"],
+                "description": s.get("description", ""),
+                "hyperparameters": s.get("hyperparameters", {}),
+            }
             for s in generated.get("scenarios_data", [])
         ]
         comparison = await self._compare_scenarios({
@@ -532,9 +562,29 @@ class ScenarioServer:
 
     # ── analyze_area_for_scenarios ────────────────────────────────────────────
 
+    @staticmethod
+    def _extract_layer_features(layer: dict, workspace: str = "") -> list[dict]:
+        feats = layer.get("features")
+        if isinstance(feats, list) and feats:
+            return feats
+        file_path = layer.get("filePath")
+        if file_path:
+            p = Path(file_path)
+            if not p.is_absolute() and workspace:
+                p = Path(workspace) / p
+            if p.exists() and p.suffix.lower() in (".geojson", ".json"):
+                try:
+                    with open(p, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        return data.get("features") or []
+                except Exception:
+                    pass
+        return []
+
     async def _analyze_area(self, args: dict) -> dict:
         """
-        Fetch real OSM/GTFS/green-space metrics for a bounding box.
+        Fetch real geospatial metrics for a bounding box, checking user workspace
+        layers first and using OpenStreetMap Overpass as a fallback for missing data.
         Returns a baseline_metrics dict.
         """
         bbox = args.get("bbox", {})
@@ -555,6 +605,121 @@ class ScenarioServer:
 
         results: dict = {"area_km2": round(area_km2, 3)}
         errors: list[str] = []
+        user_layers_used: list[str] = []
+
+        bbox_box = box(w, s, e, n)
+        layers = args.get("layers") or (args.get("_map_context") or {}).get("layers") or []
+
+        # ── 1. Check for user-provided road layer ──
+        if want("road_density"):
+            for layer in layers:
+                if not isinstance(layer, dict):
+                    continue
+                layer_name = (layer.get("name") or "").lower()
+                layer_props = " ".join(str(p).lower() for p in (layer.get("properties") or []))
+                geom_types = layer.get("geometryTypes") or []
+                is_road = any(t in geom_types for t in ("LineString", "MultiLineString")) or any(k in layer_name or k in layer_props for k in ("road", "street", "highway", "traffic", "route", "corridor"))
+                if not is_road:
+                    continue
+                feats = self._extract_layer_features(layer, workspace)
+                if not feats:
+                    continue
+                total_road_m = 0.0
+                for feat in feats:
+                    g = feat.get("geometry")
+                    if not g:
+                        continue
+                    try:
+                        sh_geom = shape(g)
+                        if sh_geom.is_empty:
+                            continue
+                        if sh_geom.intersects(bbox_box):
+                            clipped = sh_geom.intersection(bbox_box)
+                            total_road_m += _GEOD.geometry_length(clipped)
+                    except Exception:
+                        continue
+                if total_road_m > 0:
+                    total_km = total_road_m / 1000.0
+                    results["road_density_km_per_km2"] = round(total_km / area_km2, 2)
+                    results["road_length_km"] = round(total_km, 2)
+                    results["road_source"] = f"user_layer: {layer.get('name', 'Roads')}"
+                    user_layers_used.append(layer.get("name", "Roads"))
+                    break
+
+        # ── 2. Check for user-provided green space / park layer ──
+        if want("green_space"):
+            for layer in layers:
+                if not isinstance(layer, dict):
+                    continue
+                layer_name = (layer.get("name") or "").lower()
+                layer_props = " ".join(str(p).lower() for p in (layer.get("properties") or []))
+                geom_types = layer.get("geometryTypes") or []
+                is_polygon = any(t in geom_types for t in ("Polygon", "MultiPolygon"))
+                has_green = any(k in layer_name or k in layer_props for k in ("green", "park", "garden", "forest", "open_space", "pos", "rec", "allotment", "buffer", "landuse", "zone"))
+                if not (is_polygon and has_green):
+                    continue
+                feats = self._extract_layer_features(layer, workspace)
+                if not feats:
+                    continue
+                total_green_m2 = 0.0
+                for feat in feats:
+                    g = feat.get("geometry")
+                    if not g:
+                        continue
+                    p_str = " ".join(str(v).lower() for v in (feat.get("properties") or {}).values())
+                    is_feat_green = any(k in p_str for k in ("green", "park", "garden", "forest", "open_space", "pos", "rec", "recreation")) or any(k in layer_name for k in ("green", "park", "garden", "forest"))
+                    if not is_feat_green:
+                        continue
+                    try:
+                        sh_geom = shape(g)
+                        if sh_geom.is_empty:
+                            continue
+                        if sh_geom.intersects(bbox_box):
+                            clipped = sh_geom.intersection(bbox_box)
+                            area_m2_val, _ = _GEOD.geometry_area_perimeter(clipped)
+                            total_green_m2 += abs(area_m2_val)
+                    except Exception:
+                        continue
+                if total_green_m2 > 0:
+                    green_km2 = total_green_m2 / 1_000_000.0
+                    results["green_space_km2"] = round(green_km2, 3)
+                    results["green_space_pct"] = min(100.0, round(green_km2 / area_km2 * 100.0, 1))
+                    results["green_source"] = f"user_layer: {layer.get('name', 'Parks/Green')}"
+                    user_layers_used.append(layer.get("name", "Parks/Green"))
+                    break
+
+        # ── 3. Check for user-provided transit stops ──
+        if want("transit_coverage"):
+            for layer in layers:
+                if not isinstance(layer, dict):
+                    continue
+                layer_name = (layer.get("name") or "").lower()
+                layer_props = " ".join(str(p).lower() for p in (layer.get("properties") or []))
+                geom_types = layer.get("geometryTypes") or []
+                is_point = any(t in geom_types for t in ("Point", "MultiPoint"))
+                has_transit = any(k in layer_name or k in layer_props for k in ("transit", "bus", "station", "stop", "metro", "rail", "subway"))
+                if not (is_point and has_transit):
+                    continue
+                feats = self._extract_layer_features(layer, workspace)
+                if not feats:
+                    continue
+                total_stops = 0
+                for feat in feats:
+                    g = feat.get("geometry")
+                    if not g or g.get("type") != "Point":
+                        continue
+                    coords = g.get("coordinates")
+                    if isinstance(coords, (list, tuple)) and len(coords) >= 2:
+                        lon, lat = coords[0], coords[1]
+                        if w <= lon <= e and s <= lat <= n:
+                            total_stops += 1
+                if total_stops > 0:
+                    results["transit_stops"] = total_stops
+                    coverage_km2 = total_stops * 0.785
+                    results["transit_coverage_pct"] = min(100.0, round(coverage_km2 / area_km2 * 100.0, 1))
+                    results["transit_source"] = f"user_layer: {layer.get('name', 'Transit Stops')}"
+                    user_layers_used.append(layer.get("name", "Transit Stops"))
+                    break
 
         bbox_str = f"{s},{w},{n},{e}"
 
@@ -571,6 +736,7 @@ out geom;
                 total_km = _way_length_km(data.get("elements", []))
                 results["road_density_km_per_km2"] = round(total_km / area_km2, 2)
                 results["road_length_km"] = round(total_km, 2)
+                results["road_source"] = "fallback: OpenStreetMap"
             except Exception as exc:
                 errors.append(f"road_density: {exc}")
                 results["road_density_km_per_km2"] = None
@@ -581,7 +747,6 @@ out geom;
 node["public_transport"~"stop_position|platform"]["bus"="yes"]({bbox_str});
 out count;
 """
-            # Also count railway stations
             query2 = f"""
 [out:json][timeout:20];
 node["railway"~"station|halt|tram_stop"]({bbox_str});
@@ -600,11 +765,11 @@ out count;
                 except Exception:
                     rail_stops = 0
                 total_stops = bus_stops + rail_stops
-                # Rough % area coverage: each stop covers ~0.785 km² (500m radius circle)
                 coverage_km2 = total_stops * 0.785
                 transit_pct = min(100.0, round(coverage_km2 / area_km2 * 100, 1))
                 results["transit_stops"] = total_stops
                 results["transit_coverage_pct"] = transit_pct
+                results["transit_source"] = "fallback: OpenStreetMap"
             except Exception as exc:
                 errors.append(f"transit: {exc}")
                 results["transit_stops"] = None
@@ -626,6 +791,7 @@ out geom;
                 green_pct = min(100.0, round(green_km2 / area_km2 * 100, 1))
                 results["green_space_km2"] = round(green_km2, 3)
                 results["green_space_pct"] = green_pct
+                results["green_source"] = "fallback: OpenStreetMap"
             except Exception as exc:
                 errors.append(f"green_space: {exc}")
                 results["green_space_km2"] = None
@@ -644,6 +810,7 @@ out geom;
                 walk_km = _way_length_km(data.get("elements", []))
                 results["footway_km"] = round(walk_km, 2)
                 results["walkability_km_per_km2"] = round(walk_km / area_km2, 2)
+                results["walkability_source"] = "fallback: OpenStreetMap"
             except Exception as exc:
                 errors.append(f"walkability: {exc}")
                 results["walkability_km_per_km2"] = None
@@ -666,6 +833,7 @@ out geom;
                     pop = demog_res.get("population") or 0
                     results["population_count"] = pop
                     results["population_density_ha"] = round(pop / (area_km2 * 100.0), 2) if area_km2 > 0 else 0.0
+                    results["population_source"] = "WorldPop 100m grid"
                 except Exception as exc:
                     errors.append(f"population_density: {exc}")
                     results["population_density_ha"] = None
@@ -682,29 +850,41 @@ out geom;
                 results["employment_count"] = jobs
                 results["employment_density_jobs_per_km2"] = round(jobs / area_km2, 2) if area_km2 > 0 else 0.0
                 results["employment_breakdown"] = emp_res.get("breakdown") or {}
+                results["employment_source"] = "Geospatial Proxy Model"
             except Exception as exc:
                 errors.append(f"employment_density: {exc}")
                 results["employment_density_jobs_per_km2"] = None
 
         tasks = []
-        if want("road_density"):
+        if want("road_density") and results.get("road_density_km_per_km2") is None:
             tasks.append(fetch_road_density())
-        if want("transit_coverage"):
+        if want("transit_coverage") and results.get("transit_coverage_pct") is None:
             tasks.append(fetch_transit())
-        if want("green_space"):
+        if want("green_space") and results.get("green_space_pct") is None:
             tasks.append(fetch_green_space())
         if want("walkability"):
             tasks.append(fetch_walkability())
         tasks.append(fetch_demographics_and_jobs())
 
-        await asyncio.gather(*tasks)
+        if tasks:
+            await asyncio.gather(*tasks)
 
         results["fetch_errors"] = errors
-        results["data_source"] = "OpenStreetMap via Overpass API"
+        results["data_source"] = (
+            f"User GIS layers ({', '.join(user_layers_used)}) + OpenStreetMap Fallback"
+            if user_layers_used
+            else "OpenStreetMap via Overpass API"
+        )
+        results["data_sources_used"] = {
+            "roads": results.get("road_source", "fallback: OpenStreetMap"),
+            "transit": results.get("transit_source", "fallback: OpenStreetMap"),
+            "green_space": results.get("green_source", "fallback: OpenStreetMap"),
+            "walkability": results.get("walkability_source", "fallback: OpenStreetMap"),
+            "population": results.get("population_source", "WorldPop 100m grid"),
+        }
         results["bbox"] = bbox
         results["note"] = (
-            "These are real values measured from OpenStreetMap and WorldPop/Geospatial Proxy. "
-            "Use this dict as baseline_metrics in compare_scenarios for data-anchored scoring."
+            "Baseline metrics measured from active workspace GIS layers where available, with OpenStreetMap / WorldPop fallback."
         )
         return {"status": "success", "baseline_metrics": results}
 
@@ -1034,15 +1214,96 @@ out geom;
         # Estimate tailpipe emissions for each scenario and incorporate into scoring
         em_server = EmissionsServer()
         emissions_scenarios = []
+        tradeoff_matrix = []
+        area_km2 = float(baseline.get("area_km2") or 2.0)
+        area_m2 = area_km2 * 1_000_000.0
+
         for sc in scenarios:
             name_sc = sc.get("name", "Unknown")
             profile = self._infer_scenario_profile(name_sc, sc.get("description", ""))
+            hp = sc.get("hyperparameters") or {}
+            desc = sc.get("description", "")
+
+            # Smart parsing if hyperparameters are not explicitly supplied
+            target_far = hp.get("target_far")
+            if target_far is None:
+                far_m = re.search(r'\bfar\s*[:=]?\s*([0-9.]+)', desc, re.I)
+                target_far = float(far_m.group(1)) if far_m else (1.5 if "baseline" in name_sc.lower() else (4.0 if "transit" in name_sc.lower() else (3.5 if "compact" in name_sc.lower() else (1.8 if "green" in name_sc.lower() else 2.5))))
+            else:
+                target_far = float(target_far)
+
+            electric_share_pct = hp.get("electric_share_pct")
+            if electric_share_pct is None:
+                ev_m = re.search(r'([0-9.]+)\s*%\s*(?:ev|electric)', desc, re.I)
+                electric_share_pct = float(ev_m.group(1)) if ev_m else (profile["fuel_mix"].get("electric", 0.1) * 100.0)
+            else:
+                electric_share_pct = float(electric_share_pct)
+
+            transit_share_pct = hp.get("transit_share_pct")
+            if transit_share_pct is None:
+                tr_m = re.search(r'([0-9.]+)\s*%\s*(?:transit|bus|public\s*transport)', desc, re.I)
+                transit_share_pct = float(tr_m.group(1)) if tr_m else (profile["mode_share"].get("bus", 0.2) * 100.0)
+            else:
+                transit_share_pct = float(transit_share_pct)
+
+            green_quota_pct = hp.get("green_quota_pct")
+            if green_quota_pct is None:
+                gr_m = re.search(r'([0-9.]+)\s*%\s*(?:green|open\s*space|park)', desc, re.I)
+                green_quota_pct = float(gr_m.group(1)) if gr_m else (35.0 if "green" in name_sc.lower() else 15.0)
+            else:
+                green_quota_pct = float(green_quota_pct)
+
+            # Apply fuel mix override if electric_share_pct is provided
+            ev_ratio = min(1.0, max(0.0, electric_share_pct / 100.0))
+            non_ev = max(0.0, 1.0 - ev_ratio)
+            fuel_mix = sc.get("fuel_mix") or {
+                "electric": round(ev_ratio, 3),
+                "petrol": round(non_ev * 0.60, 3),
+                "diesel": round(non_ev * 0.25, 3),
+                "cng": round(non_ev * 0.15, 3),
+            }
+
+            # Apply mode share override if transit_share_pct is provided
+            tr_ratio = min(0.85, max(0.05, transit_share_pct / 100.0))
+            rem_mode = max(0.0, 1.0 - tr_ratio)
+            mode_share = sc.get("mode_share") or {
+                "bus": round(tr_ratio, 3),
+                "car": round(rem_mode * 0.45, 3),
+                "two_wheeler": round(rem_mode * 0.30, 3),
+                "auto_rickshaw": round(rem_mode * 0.10, 3),
+                "walk_cycle": round(rem_mode * 0.15, 3),
+            }
+
+            daily_trips = sc.get("daily_trips") or profile["daily_trips"]
+            avg_trip_length_km = sc.get("avg_trip_length_km") or profile["avg_trip_length_km"]
+
             emissions_scenarios.append({
                 "name": name_sc,
-                "daily_trips": sc.get("daily_trips") or profile["daily_trips"],
-                "avg_trip_length_km": sc.get("avg_trip_length_km") or profile["avg_trip_length_km"],
-                "mode_share": sc.get("mode_share") or profile["mode_share"],
-                "fuel_mix": sc.get("fuel_mix") or profile["fuel_mix"],
+                "daily_trips": daily_trips,
+                "avg_trip_length_km": avg_trip_length_km,
+                "mode_share": mode_share,
+                "fuel_mix": fuel_mix,
+            })
+
+            # Derive mathematical planning numbers
+            net_dev_m2 = max(area_m2 * 0.1, area_m2 * (1.0 - (green_quota_pct / 100.0) - 0.18))
+            est_gfa_m2 = round(net_dev_m2 * target_far, 0)
+            res_gfa_m2 = est_gfa_m2 * 0.65
+            comm_gfa_m2 = est_gfa_m2 * 0.35
+            est_pop = int(round((res_gfa_m2 / 90.0) * 3.8))
+            water_mld = round((est_pop * 135.0) / 1_000_000.0, 2)
+            est_trips = int(round((comm_gfa_m2 / 100.0 * 1.8) + (est_pop * 0.35)))
+
+            tradeoff_matrix.append({
+                "name": name_sc,
+                "target_far": round(target_far, 2),
+                "gfa_m2": est_gfa_m2,
+                "population": est_pop,
+                "water_mld": water_mld,
+                "daily_trips": est_trips,
+                "transit_share_pct": round(tr_ratio * 100.0, 1),
+                "electric_share_pct": round(ev_ratio * 100.0, 1),
+                "green_space_pct": round(green_quota_pct, 1),
             })
             
         u = float(args.get("wind_speed_m_s", 3.0))
@@ -1060,6 +1321,11 @@ out geom;
         if em_res.get("status") == "success":
             for em_item in em_res.get("results", []):
                 em_map[em_item["name"]] = em_item
+
+        for item in tradeoff_matrix:
+            sc_em = em_map.get(item["name"]) or {}
+            item["co2_kg_day"] = round(sc_em.get("co2_kg", 0.0), 1)
+            item["delta_pm25_ug_m3"] = round(sc_em.get("delta_pm25_ug_m3", 0.0), 4)
 
         results = []
         for sc in scenarios:
@@ -1160,15 +1426,35 @@ out geom;
                 table += f"| {item['name']} | {profile} | {item['daily_trips']:,.0f} | {item['avg_trip_length_km']:.1f} | {item['mode_share'].get('walk_cycle', 0) * 100:.0f}% | {item['mode_share'].get('bus', 0) * 100:.0f}% |\n"
             table += "> *These are scenario assumptions inferred from the scenario name and description, not observed counts. Replace them with survey or traffic-count data when available.*"
 
+        # Build Side-by-Side Trade-off Balance Sheet
+        tb_header = "### Scenario Comparative Balance Sheet (Objective Planning Indicators)\n\n"
+        tb_cols = "| Indicator | " + " | ".join(t["name"] for t in tradeoff_matrix) + " |\n"
+        tb_sep = "|---| " + " | ".join(["---:"] * len(tradeoff_matrix)) + " |\n"
+        tb_rows = [
+            "| **Target FAR** | " + " | ".join(f"{t['target_far']:.1f}" for t in tradeoff_matrix) + " |\n",
+            "| **Est. Built GFA** | " + " | ".join(f"{t['gfa_m2']:,.0f} m²" for t in tradeoff_matrix) + " |\n",
+            "| **Est. Population** | " + " | ".join(f"{t['population']:,}" for t in tradeoff_matrix) + " |\n",
+            "| **Water Demand (MLD)** | " + " | ".join(f"{t['water_mld']:.2f} MLD" for t in tradeoff_matrix) + " |\n",
+            "| **Daily Vehicle Trips** | " + " | ".join(f"{t['daily_trips']:,}" for t in tradeoff_matrix) + " |\n",
+            "| **Transit Mode Share** | " + " | ".join(f"{t['transit_share_pct']:.0f}%" for t in tradeoff_matrix) + " |\n",
+            "| **Electric Fleet Share** | " + " | ".join(f"{t['electric_share_pct']:.0f}%" for t in tradeoff_matrix) + " |\n",
+            "| **Open Space Ratio** | " + " | ".join(f"{t['green_space_pct']:.0f}%" for t in tradeoff_matrix) + " |\n",
+            "| **Tailpipe CO₂ (kg/day)** | " + " | ".join(f"{t['co2_kg_day']:,.1f}" for t in tradeoff_matrix) + " |\n",
+            "| **Ambient ΔPM₂.₅** | " + " | ".join(f"{t['delta_pm25_ug_m3']:.3f} μg/m³" for t in tradeoff_matrix) + " |\n",
+        ]
+        balance_sheet_table = tb_header + tb_cols + tb_sep + "".join(tb_rows)
+        full_comparison_table = balance_sheet_table + "\n\n### Multi-Criteria Evaluation Matrix\n" + table
+
         return {
             "status": "success",
             "recommended_scenario": winner,
             "ranking": [r["name"] for r in results],
-            "comparison_table_markdown": table,
+            "comparison_table_markdown": full_comparison_table,
+            "tradeoff_matrix": tradeoff_matrix,
             "emissions_assumptions": emissions_scenarios,
             "scoring_method": scoring_method,
             "disclaimer": disclaimer,
-            "note": f"Based on scoring across {len(criteria)} criteria ({scoring_method}). '{winner}' scored highest overall.",
+            "note": f"Comparative evaluation across {len(criteria)} criteria ({scoring_method}).",
         }
 
     # ── Overpass helper ───────────────────────────────────────────────────────

@@ -10,14 +10,14 @@ import { Scenario } from './ScenarioPanel'
 import BookmarkPanel from './BookmarkPanel'
 import ScenarioPanel from './ScenarioPanel'
 import ScenarioBuilderPanel from './ScenarioBuilderPanel'
-import ExportPanel from './ExportPanel'
+import MapExportModal from './MapExportModal'
+import SpatialClipModal from './SpatialClipModal'
 import FileTree from './FileTree'
 import './FloatingLayerCard.css'
 import * as turf from '@turf/turf'
 import layersIcon from '../assets/icons/layers_icons.png'
 import filesIcon from '../assets/icons/files_icon.png'
 import scenariosIcon from '../assets/icons/scenarios_icon.png'
-import exportIcon from '../assets/icons/export_icon.png'
 
 const calculateLayerArea = (layer: GeoJSONLayer): string | null => {
   try {
@@ -47,7 +47,7 @@ const calculateLayerArea = (layer: GeoJSONLayer): string | null => {
   }
 }
 
-export type FloatingTab = 'layers' | 'files' | 'bookmarks' | 'scenarios' | 'export'
+export type FloatingTab = 'layers' | 'files' | 'bookmarks' | 'scenarios'
 
 interface FloatingLayerCardProps {
   layers: GeoJSONLayer[]
@@ -65,6 +65,7 @@ interface FloatingLayerCardProps {
   onAttributesLayer: (id: string) => void
   onRenameLayer: (id: string, newName: string) => void
   onReorderLayers?: (layers: GeoJSONLayer[]) => void
+  onUpdateLayerQuickStyle?: (layerId: string, style: { color?: string; opacity?: number }) => void
   onExportLayerFile?: (layerId: string, format: string) => void
 
   // Bookmarks
@@ -116,6 +117,7 @@ interface FloatingLayerCardProps {
   canRedoZoom?: boolean
   onUndoZoom?: () => void
   onRedoZoom?: () => void
+  onAddToMap?: (geojson: any, name: string) => void
 }
 
 export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
@@ -132,6 +134,8 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
   onStyleLayer,
   onAttributesLayer,
   onRenameLayer,
+  onReorderLayers,
+  onUpdateLayerQuickStyle,
   onExportLayerFile,
   bookmarks,
   onGoToBookmark,
@@ -173,6 +177,7 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
   canRedoZoom = false,
   onUndoZoom,
   onRedoZoom,
+  onAddToMap,
 }) => {
   const [internalTab, setInternalTab] = useState<FloatingTab>('layers')
   const activeTab = activeTabProp ?? internalTab
@@ -193,6 +198,50 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
     y: number
   } | null>(null)
   const workspaceMenuRef = useRef<HTMLDivElement>(null)
+
+  // Export & Spatial Clip Modals
+  const [showMapExportModal, setShowMapExportModal] = useState(false)
+  const [showSpatialClipModal, setShowSpatialClipModal] = useState(false)
+
+  // Drag and drop layer reordering state
+  const [draggedIdx, setDraggedIdx] = useState<number | null>(null)
+  const [dropTargetIdx, setDropTargetIdx] = useState<number | null>(null)
+
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    setDraggedIdx(index)
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', String(index))
+  }
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    if (dropTargetIdx !== index) {
+      setDropTargetIdx(index)
+    }
+  }
+
+  const handleDrop = (e: React.DragEvent, index: number) => {
+    e.preventDefault()
+    if (draggedIdx === null || draggedIdx === index) {
+      setDraggedIdx(null)
+      setDropTargetIdx(null)
+      return
+    }
+    const reordered = [...layers]
+    const [moved] = reordered.splice(draggedIdx, 1)
+    reordered.splice(index, 0, moved)
+    if (onReorderLayers) {
+      onReorderLayers(reordered)
+    }
+    setDraggedIdx(null)
+    setDropTargetIdx(null)
+  }
+
+  const handleDragEnd = () => {
+    setDraggedIdx(null)
+    setDropTargetIdx(null)
+  }
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -233,12 +282,11 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
     layers: { label: 'Layers', icon: layersIcon, count: layers.length },
     files: { label: 'Workspace Files', icon: filesIcon },
     scenarios: { label: 'Scenarios', icon: scenariosIcon, count: scenarios.length },
-    export: { label: 'Export Map', icon: exportIcon },
     bookmarks: { label: 'Bookmarks', icon: layersIcon, count: bookmarks.length },
   }
 
   return (
-    <div className={`floating-layer-card left-category-pane ${activeTab === 'scenarios' ? 'is-scenarios' : ''} ${scenarioDraft ? 'is-scenario-review' : ''}`}>
+    <div className={`floating-layer-card left-category-pane ${activeTab === 'scenarios' ? 'is-scenarios-tab' : ''} ${scenarioDraft ? 'is-scenario-review' : ''}`}>
       {/* Dedicated Floating Category Pane Header */}
       <div className="flc-header">
         <div className="flc-category-title-group">
@@ -256,6 +304,39 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
         </div>
 
         <div className="flc-header-actions">
+          {activeTab === 'layers' && (
+            <>
+              <button
+                type="button"
+                className="flc-header-action-btn flc-export-map-btn"
+                onClick={() => setShowMapExportModal(true)}
+                title="Export Map Figure (PNG, JPEG, PDF, Save As)"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" style={{ marginRight: 4 }}>
+                  <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                  <circle cx="12" cy="13" r="4" />
+                </svg>
+                <span>Export Map</span>
+              </button>
+
+              <button
+                type="button"
+                className="flc-header-action-btn"
+                onClick={() => setShowSpatialClipModal(true)}
+                title="Clip layers to map extent or city boundary"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" style={{ marginRight: 4 }}>
+                  <circle cx="6" cy="6" r="3" />
+                  <circle cx="6" cy="18" r="3" />
+                  <line x1="20" y1="4" x2="8.12" y2="15.88" />
+                  <line x1="14.47" y1="14.48" x2="20" y2="20" />
+                  <line x1="8.12" y1="8.12" x2="12" y2="12" />
+                </svg>
+                <span>Clip</span>
+              </button>
+            </>
+          )}
+
           {activeTab === 'layers' && bookmarks.length > 0 && (
             <button
               type="button"
@@ -305,17 +386,26 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
                     <p className="flc-empty-hint">Drop GeoJSON or Shapefiles, or click <strong>+ Data</strong></p>
                   </div>
                 ) : (
-                  layers.map((layer) => {
+                  layers.map((layer, index) => {
                     const isVisible = layer.visible !== false
                     const featureCount = layer.data?.features?.length ?? 0
                     const isRaster = Boolean(layer.wmsSpec || layer.geeSpec || layer.rasterOverlaySpec)
                     const countBadge = isRaster ? 'Raster' : `${featureCount}`
                     const swatchColor = layer.color || '#00b4d8'
 
+                    const isDragging = draggedIdx === index
+                    const isDropAbove = dropTargetIdx === index && draggedIdx !== null && draggedIdx > index
+                    const isDropBelow = dropTargetIdx === index && draggedIdx !== null && draggedIdx < index
+
                     return (
                       <div
                         key={layer.id}
-                        className={`flc-layer-item ${selectedLayerIds.includes(layer.id) ? 'is-selected' : ''}`}
+                        className={`flc-layer-item ${selectedLayerIds.includes(layer.id) ? 'is-selected' : ''} ${isDragging ? 'is-dragging' : ''} ${isDropAbove ? 'drop-above' : ''} ${isDropBelow ? 'drop-below' : ''}`}
+                        draggable={true}
+                        onDragStart={(e) => handleDragStart(e, index)}
+                        onDragOver={(e) => handleDragOver(e, index)}
+                        onDrop={(e) => handleDrop(e, index)}
+                        onDragEnd={handleDragEnd}
                         onClick={() => onHoverFeature && onHoverFeature(layer.id)}
                         onContextMenu={(e) => handleContextMenu(e, layer.id)}
                         onMouseEnter={(e) => {
@@ -426,6 +516,8 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
                     scenarioDraft={scenarioDraft}
                     onScenarioDraftClear={onScenarioDraftClear}
                     onScenariosCreated={onScenariosCreated}
+                    layers={layers}
+                    onAddToMap={onAddToMap}
                   />
                 </div>
                 <div className="flc-scenario-section flc-scenario-list-section">
@@ -444,25 +536,6 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
               </div>
             )}
 
-            {activeTab === 'export' && (
-              <div className="flc-tab-view">
-                <ExportPanel
-                  layers={layers}
-                  workspacePath={workspacePath}
-                  onExportMapPng={onExportMapPng}
-                  onExportMapJpeg={onExportMapJpeg}
-                  onExportLayer={onExportLayerFile || (() => {})}
-                  onExportPdf={onExportPdf}
-                  onExportClippedRegion={onExportClippedRegion}
-                  onPreviewBoundary={onPreviewBoundary}
-                  onSaveByRegion={onSaveByRegion}
-                  onSavePngToArtifact={onSavePngToArtifact}
-                  onSaveJpgToArtifact={onSaveJpgToArtifact}
-                  onSavePdfToArtifact={onSavePdfToArtifact}
-                  onSuggestExportTitle={onSuggestExportTitle}
-                />
-              </div>
-            )}
           </div>
 
       {hoveredLayerTooltip && (
@@ -486,8 +559,8 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
         if (!menuLayer) return null
         const isRaster = Boolean(menuLayer.type === 'raster' || (menuLayer as any).isRaster || menuLayer.wmsSpec || menuLayer.geeSpec || menuLayer.rasterOverlaySpec)
 
-        const menuWidth = 190
-        const menuHeight = 220
+        const menuWidth = 205
+        const menuHeight = 330
         const posX = Math.max(10, Math.min(contextMenu.x, window.innerWidth - menuWidth - 10))
         const posY = Math.max(10, Math.min(contextMenu.y, window.innerHeight - menuHeight - 10))
 
@@ -500,7 +573,48 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
             <div className="flc-context-header">
               <span className="flc-context-layer-name" title={menuLayer.name}>{menuLayer.name}</span>
             </div>
+
+            {/* Quick Styling Colors */}
+            {!isRaster && (
+              <div className="flc-context-quick-colors">
+                <span className="flc-cqc-label">Quick Color:</span>
+                <div className="flc-cqc-swatches">
+                  {['#00b4d8', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#3b82f6', '#64748b'].map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      className={`flc-cqc-swatch ${menuLayer.color === c ? 'active' : ''}`}
+                      style={{ backgroundColor: c }}
+                      onClick={() => {
+                        onUpdateLayerQuickStyle?.(menuLayer.id, { color: c })
+                        setContextMenu(null)
+                      }}
+                      title={c}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Quick Opacity Slider */}
+            <div className="flc-context-quick-opacity">
+              <span className="flc-cqo-label">Opacity: {Math.round((menuLayer.opacity ?? 1) * 100)}%</span>
+              <input
+                type="range"
+                min="0.1"
+                max="1"
+                step="0.05"
+                value={menuLayer.opacity ?? 1}
+                onChange={(e) => {
+                  onUpdateLayerQuickStyle?.(menuLayer.id, { opacity: parseFloat(e.target.value) })
+                }}
+              />
+            </div>
+
+            <div className="flc-dropdown-divider" />
+
             <button
+              type="button"
               className="flc-dropdown-item"
               onClick={() => {
                 onZoomToLayer(menuLayer.id)
@@ -517,6 +631,7 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
             </button>
             {!isRaster && (
               <button
+                type="button"
                 className="flc-dropdown-item"
                 onClick={() => {
                   onAttributesLayer(menuLayer.id)
@@ -531,6 +646,7 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
               </button>
             )}
             <button
+              type="button"
               className="flc-dropdown-item"
               onClick={() => {
                 onStyleLayer(menuLayer.id)
@@ -544,10 +660,11 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
                 <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
                 <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z" />
               </svg>
-              <span>Symbology & Style</span>
+              <span>Advanced Symbology…</span>
             </button>
             {onExportLayerFile && !isRaster && (
               <button
+                type="button"
                 className="flc-dropdown-item"
                 onClick={() => {
                   onExportLayerFile(menuLayer.id, 'geojson')
@@ -564,6 +681,7 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
             )}
             <div className="flc-dropdown-divider" />
             <button
+              type="button"
               className="flc-dropdown-item item-danger"
               onClick={() => {
                 onRemoveLayer(menuLayer.id)
@@ -579,6 +697,34 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
           </div>
         )
       })()}
+
+      {/* Map Export Modal */}
+      {showMapExportModal && (
+        <MapExportModal
+          isOpen={showMapExportModal}
+          onClose={() => setShowMapExportModal(false)}
+          onExportMapPng={onExportMapPng || (() => {})}
+          onExportMapJpeg={onExportMapJpeg}
+          onExportPdf={onExportPdf || (() => {})}
+          onSavePngToArtifact={onSavePngToArtifact}
+          onSaveJpgToArtifact={onSaveJpgToArtifact}
+          onSavePdfToArtifact={onSavePdfToArtifact}
+          onSuggestExportTitle={onSuggestExportTitle || (() => 'Map Export')}
+          layersCount={layers.filter((l) => l.visible !== false).length}
+        />
+      )}
+
+      {/* Spatial Clip Modal */}
+      {showSpatialClipModal && (
+        <SpatialClipModal
+          isOpen={showSpatialClipModal}
+          onClose={() => setShowSpatialClipModal(false)}
+          layersCount={layers.length}
+          onExportClippedRegion={onExportClippedRegion || (() => {})}
+          onPreviewBoundary={onPreviewBoundary || (() => {})}
+          onSaveByRegion={onSaveByRegion || (() => {})}
+        />
+      )}
     </div>
   )
 }

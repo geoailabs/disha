@@ -309,6 +309,7 @@ interface MapViewProps {
   selectedFeatures?: SelectedFeatureEntry[]
   onSelectFeature?: (entry: SelectedFeatureEntry | null, shiftKey: boolean) => void
   onHoverFeature?: (entry: SelectedFeatureEntry | null) => void
+  onExportFeatures?: (features: any[], options?: { saveAs?: boolean; promoteToLayer?: boolean; layerName?: string }) => void
 }
 
 type DrawMode = 'point' | 'line' | 'polygon' | null
@@ -345,12 +346,15 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
     selectedFeatures = [],
     onSelectFeature,
     onHoverFeature,
+    onExportFeatures,
   },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
   const onHoverFeatureRef = useRef(onHoverFeature)
   onHoverFeatureRef.current = onHoverFeature
+  const onExportFeaturesRef = useRef(onExportFeatures)
+  onExportFeaturesRef.current = onExportFeatures
   const [zoomTooLow, setZoomTooLow] = useState(false)
   const [compassBearing, setCompassBearing] = useState(initialState.bearing || 0)
   // Each off-screen indicator: position on edge + angle + the entry it refers to
@@ -467,14 +471,39 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
     map.on('contextmenu', (e) => {
       e.preventDefault?.()
       const ids = renderLayerIds()
-      const feats = ids.length ? map.queryRenderedFeatures(e.point, { layers: ids }) : []
-      const feature = feats[0]
-        ? {
-            type: 'Feature' as const,
-            geometry: JSON.parse(JSON.stringify(feats[0].geometry)) as Geometry,
-            properties: { ...(feats[0].properties || {}) },
+      const box = 6
+      const queryTarget: [maplibregl.PointLike, maplibregl.PointLike] = [
+        [e.point.x - box, e.point.y - box],
+        [e.point.x + box, e.point.y + box],
+      ]
+      const feats = ids.length ? map.queryRenderedFeatures(queryTarget, { layers: ids }) : []
+      let feature: Feature | undefined
+      if (feats.length > 0) {
+        const feat = feats[0]
+        const matchingLayer = layersRef.current.find((l) => {
+          for (const suffix of ['-fill', '-outline', '-line', '-circle']) {
+            if (feat.layer?.id === `${l.id}${suffix}`) return true
           }
-        : undefined
+          return false
+        })
+        if (matchingLayer && matchingLayer.data?.features) {
+          const original = matchingLayer.data.features.find((f) => {
+            if (f.id !== undefined && feat.id !== undefined && f.id === feat.id) return true
+            if (f.properties?.name && feat.properties?.name && f.properties.name === feat.properties.name) return true
+            return false
+          })
+          if (original) {
+            feature = JSON.parse(JSON.stringify(original))
+          }
+        }
+        if (!feature) {
+          feature = {
+            type: 'Feature' as const,
+            geometry: JSON.parse(JSON.stringify(feat.geometry)) as Geometry,
+            properties: { ...(feat.properties || {}) },
+          }
+        }
+      }
       setCtxMenu({ x: e.point.x, y: e.point.y, lng: e.lngLat.lng, lat: e.lngLat.lat, feature })
     })
     map.on('movestart', () => setCtxMenu(null))
@@ -1101,7 +1130,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       )
       const boundaryId = boundaryLayer ? boundaryLayer.id : undefined
 
-      for (const layer of layers) {
+      for (const layer of [...layers].reverse()) {
         for (const suffix of ['-raster', '-fill', '-outline', '-line', '-circle', '-label']) {
           const subId = `${layer.id}${suffix}`
           if (map.getLayer(subId)) {
@@ -2773,6 +2802,138 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
             </svg>
             Ask chat about this place
           </button>
+
+          {/* Feature Export Options */}
+          {(ctxMenu.feature || (selectedFeatures && selectedFeatures.length > 0)) && (
+            <>
+              <div className="ctx-divider" />
+              {selectedFeatures && selectedFeatures.length > 1 ? (
+                <>
+                  <button
+                    type="button"
+                    className="ctx-item"
+                    onClick={() => {
+                      const targetFeatures = selectedFeatures.map((sf) => sf.feature).filter(Boolean)
+                      onExportFeaturesRef.current?.(targetFeatures, { saveAs: false })
+                      setCtxMenu(null)
+                    }}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6 }}>
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                    Export {selectedFeatures.length} Selected as GeoJSON
+                  </button>
+
+                  <button
+                    type="button"
+                    className="ctx-item"
+                    onClick={() => {
+                      const targetFeatures = selectedFeatures.map((sf) => sf.feature).filter(Boolean)
+                      onExportFeaturesRef.current?.(targetFeatures, { saveAs: true })
+                      setCtxMenu(null)
+                    }}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6 }}>
+                      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                      <polyline points="17 21 17 13 7 13 7 21" />
+                      <polyline points="7 3 7 8 15 8" />
+                    </svg>
+                    Save Selection ({selectedFeatures.length}) As…
+                  </button>
+
+                  <button
+                    type="button"
+                    className="ctx-item"
+                    onClick={() => {
+                      const targetFeatures = selectedFeatures.map((sf) => sf.feature).filter(Boolean)
+                      onExportFeaturesRef.current?.(targetFeatures, { promoteToLayer: true })
+                      setCtxMenu(null)
+                    }}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6 }}>
+                      <polygon points="12 2 2 7 12 12 22 7 12 2" />
+                      <polyline points="2 17 12 22 22 17" />
+                      <polyline points="2 12 12 17 22 12" />
+                    </svg>
+                    Promote Selection ({selectedFeatures.length}) to New Layer
+                  </button>
+
+                  {ctxMenu.feature && (
+                    <button
+                      type="button"
+                      className="ctx-item"
+                      onClick={() => {
+                        onExportFeaturesRef.current?.([ctxMenu.feature!], { saveAs: false })
+                        setCtxMenu(null)
+                      }}
+                    >
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6 }}>
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="7 10 12 15 17 10" />
+                        <line x1="12" y1="15" x2="12" y2="3" />
+                      </svg>
+                      Export Clicked Feature Only as GeoJSON
+                    </button>
+                  )}
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="ctx-item"
+                    onClick={() => {
+                      const target = ctxMenu.feature || selectedFeatures[0]?.feature
+                      if (target) onExportFeaturesRef.current?.([target], { saveAs: false })
+                      setCtxMenu(null)
+                    }}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6 }}>
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                    Export Feature as GeoJSON
+                  </button>
+
+                  <button
+                    type="button"
+                    className="ctx-item"
+                    onClick={() => {
+                      const target = ctxMenu.feature || selectedFeatures[0]?.feature
+                      if (target) onExportFeaturesRef.current?.([target], { saveAs: true })
+                      setCtxMenu(null)
+                    }}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6 }}>
+                      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                      <polyline points="17 21 17 13 7 13 7 21" />
+                      <polyline points="7 3 7 8 15 8" />
+                    </svg>
+                    Save Feature As…
+                  </button>
+
+                  <button
+                    type="button"
+                    className="ctx-item"
+                    onClick={() => {
+                      const target = ctxMenu.feature || selectedFeatures[0]?.feature
+                      if (target) onExportFeaturesRef.current?.([target], { promoteToLayer: true })
+                      setCtxMenu(null)
+                    }}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6 }}>
+                      <polygon points="12 2 2 7 12 12 22 7 12 2" />
+                      <polyline points="2 17 12 22 22 17" />
+                      <polyline points="2 12 12 17 22 12" />
+                    </svg>
+                    Promote Feature to New Layer
+                  </button>
+                </>
+              )}
+            </>
+          )}
         </div>
         </>
       )}

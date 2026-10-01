@@ -122,6 +122,45 @@ function writeLastWorkspace(p: string | null): void {
   } catch { /* ignore */ }
 }
 
+function getSystemDefaultDishaFolder(): string {
+  try {
+    const documentsDir = app.getPath('documents')
+    return path.join(documentsDir, 'Disha')
+  } catch {
+    return path.join(os.homedir(), 'Documents', 'Disha')
+  }
+}
+
+function readDefaultWorkspace(): string | null {
+  try {
+    for (const p of getConfigCandidates('default-workspace.json')) {
+      if (fs.existsSync(p)) {
+        const val = JSON.parse(fs.readFileSync(p, 'utf-8')).path
+        if (val) return val
+      }
+    }
+    return null
+  } catch { return null }
+}
+
+function writeDefaultWorkspace(p: string): void {
+  try {
+    const primary = getPrimaryConfigPath('default-workspace.json')
+    fs.mkdirSync(path.dirname(primary), { recursive: true })
+    fs.writeFileSync(primary, JSON.stringify({ path: p }))
+    fs.mkdirSync(p, { recursive: true })
+    if (isDev) {
+      const rootTmp = path.resolve(__dirname, '../../../../.tmp', 'default-workspace.json')
+      if (rootTmp !== primary) {
+        try {
+          fs.mkdirSync(path.dirname(rootTmp), { recursive: true })
+          fs.writeFileSync(rootTmp, JSON.stringify({ path: p }))
+        } catch { /* ignore */ }
+      }
+    }
+  } catch { /* ignore */ }
+}
+
 // API Key persistence with safeStorage encryption
 function readAndDecryptKey(): string {
   try {
@@ -446,6 +485,35 @@ async function waitForBackend(retries = 30, delay = 500): Promise<boolean> {
 // Workspace persistence IPC
 ipcMain.handle('get-last-workspace', () => readLastWorkspace())
 ipcMain.handle('set-last-workspace', (_e, p: string | null) => writeLastWorkspace(p))
+ipcMain.handle('get-default-disha-folder', () => getSystemDefaultDishaFolder())
+ipcMain.handle('get-default-workspace', () => readDefaultWorkspace())
+ipcMain.handle('set-default-workspace', (_e, p: string) => {
+  writeDefaultWorkspace(p)
+  writeLastWorkspace(p)
+  return p
+})
+ipcMain.handle('select-folder', async (_e, title?: string) => {
+  const result = await dialog.showOpenDialog(mainWindow!, {
+    properties: ['openDirectory', 'createDirectory'],
+    title: title || 'Select Folder',
+  })
+  if (result.canceled || result.filePaths.length === 0) return null
+  return result.filePaths[0]
+})
+ipcMain.handle('show-item-in-folder', (_e, filePath: string) => {
+  if (filePath && fs.existsSync(filePath)) {
+    shell.showItemInFolder(filePath)
+    return true
+  }
+  return false
+})
+ipcMain.handle('show-save-dialog', async (_e, opts: { defaultPath?: string; filters?: { name: string; extensions: string[] }[] }) => {
+  const result = await dialog.showSaveDialog(mainWindow!, {
+    defaultPath: opts?.defaultPath,
+    filters: opts?.filters,
+  })
+  return result.canceled ? null : result.filePath ?? null
+})
 ipcMain.handle('get-api-key', () => readAndDecryptKey())
 ipcMain.handle('set-api-key', (_e, key: string) => encryptAndSaveKey(key))
 ipcMain.handle('get-key-status', () => getKeyStatus())
@@ -604,7 +672,20 @@ ipcMain.handle('write-file', async (_event, filePath: string, content: string) =
   }
 })
 
+ipcMain.handle('write-binary-file', async (_event, filePath: string, base64Content: string) => {
+  try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true })
+    const buf = Buffer.from(base64Content, 'base64')
+    fs.writeFileSync(filePath, buf)
+    return true
+  } catch {
+    return false
+  }
+})
+
 ipcMain.handle('import-spatial-files', async (_e, workspacePath: string) => {
+  const targetWs = workspacePath || readDefaultWorkspace() || getSystemDefaultDishaFolder()
+  try { fs.mkdirSync(targetWs, { recursive: true }) } catch { /* ignore */ }
   const result = await dialog.showOpenDialog(mainWindow!, {
     properties: ['openFile', 'multiSelections'],
     filters: [
@@ -617,7 +698,7 @@ ipcMain.handle('import-spatial-files', async (_e, workspacePath: string) => {
   const importedPaths: string[] = []
   for (const fp of result.filePaths) {
     const filename = path.basename(fp)
-    const targetPath = path.join(workspacePath, filename)
+    const targetPath = path.join(targetWs, filename)
     
     // Check if the file is already in the workspace
     const isInside = fp.startsWith(workspacePath)

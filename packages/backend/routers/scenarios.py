@@ -17,6 +17,8 @@ _server = ScenarioServer()
 class AnalyzeRequest(BaseModel):
     bbox: dict[str, float]
     metric_toggles: dict[str, bool] | None = None
+    workspace: str | None = None
+    layers: list[dict[str, Any]] | None = None
 
 
 class GenerateRequest(BaseModel):
@@ -24,6 +26,7 @@ class GenerateRequest(BaseModel):
     scenario_types: list[str] | None = None
     focus_area: str = "mixed"
     baseline_metrics: dict[str, Any] | None = None
+    hyperparameters: dict[str, Any] | None = None
 
 
 class CompareRequest(BaseModel):
@@ -44,10 +47,14 @@ class BuildReportRequest(BaseModel):
 
 @router.post("/analyze")
 async def analyze_area(body: AnalyzeRequest):
-    """Fetch real OSM geospatial metrics for a bounding box."""
-    args = {"bbox": body.bbox}
+    """Fetch real geospatial metrics for a bounding box, prioritizing local layers."""
+    args: dict[str, Any] = {"bbox": body.bbox}
     if body.metric_toggles:
         args["metric_toggles"] = body.metric_toggles
+    if body.workspace:
+        args["workspace"] = body.workspace
+    if body.layers:
+        args["layers"] = body.layers
     result = await _server.execute("analyze_area_for_scenarios", args)
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
@@ -57,7 +64,7 @@ async def analyze_area(body: AnalyzeRequest):
 @router.post("/generate")
 async def generate_scenarios(body: GenerateRequest):
     """Generate structured planning scenarios for a study area."""
-    args = {
+    args: dict[str, Any] = {
         "context": body.context,
         "focus_area": body.focus_area,
     }
@@ -65,6 +72,8 @@ async def generate_scenarios(body: GenerateRequest):
         args["scenario_types"] = body.scenario_types
     if body.baseline_metrics:
         args["baseline_metrics"] = body.baseline_metrics
+    if body.hyperparameters:
+        args["hyperparameters"] = body.hyperparameters
     result = await _server.execute("generate_planning_scenarios", args)
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])

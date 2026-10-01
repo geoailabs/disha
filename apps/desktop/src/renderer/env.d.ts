@@ -24,9 +24,16 @@ declare global {
     readDirectory: (dirPath: string) => Promise<FileEntry[]>
     readFile: (filePath: string) => Promise<string | null>
     writeFile: (filePath: string, content: string) => Promise<boolean>
+    writeBinaryFile: (filePath: string, base64Content: string) => Promise<boolean>
     onAppBeforeQuit: (handler: () => void | Promise<void>) => void
     getLastWorkspace: () => Promise<string | null>
     setLastWorkspace: (path: string | null) => Promise<void>
+    getDefaultDishaFolder: () => Promise<string>
+    getDefaultWorkspace: () => Promise<string | null>
+    setDefaultWorkspace: (path: string) => Promise<string>
+    selectFolder: (title?: string) => Promise<string | null>
+    showItemInFolder: (filePath: string) => Promise<boolean>
+    showSaveDialog: (opts: { defaultPath?: string; filters?: { name: string; extensions: string[] }[] }) => Promise<string | null>
     openFile: (opts: { filters?: { name: string; extensions: string[] }[] }) => Promise<string | null>
     readFileBase64: (filePath: string) => Promise<string | null>
     getModels: () => Promise<ModelInfo[]>
