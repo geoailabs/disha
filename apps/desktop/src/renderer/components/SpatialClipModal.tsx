@@ -248,7 +248,12 @@ export const SpatialClipModal: React.FC<SpatialClipModalProps> = ({
 
         {feedback && (
           <div className="scm-feedback">
-            <span>✓ {feedback}</span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+              {feedback}
+            </span>
           </div>
         )}
       </div>

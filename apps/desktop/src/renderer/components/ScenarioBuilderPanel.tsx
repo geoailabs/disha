@@ -162,9 +162,9 @@ function HyperparameterSliders({ hp, onChange, isOpen, onToggle }: Hyperparamete
         onClick={onToggle}
       >
         <span className="sb-hp-toggle-label">
-          ⚙ Levers: {hp.electric_share_pct}% EV · {hp.transit_share_pct}% Transit · {hp.target_far.toFixed(1)} FAR · {hp.green_quota_pct}% Green
+          Levers: {hp.electric_share_pct}% EV · {hp.transit_share_pct}% Transit · {hp.target_far.toFixed(1)} FAR · {hp.green_quota_pct}% Green
         </span>
-        <span className="sb-chevron">{isOpen ? '▲ Hide' : '▼ Tweak'}</span>
+        <span className="sb-chevron">{isOpen ? 'Hide' : 'Tweak'}</span>
       </button>
 
       {isOpen && (
@@ -183,7 +183,7 @@ function HyperparameterSliders({ hp, onChange, isOpen, onToggle }: Hyperparamete
               onChange={(e) => onChange('electric_share_pct', Number(e.target.value))}
             />
             <div className="sb-hp-sub">
-              ⚡ {hp.electric_share_pct}% Electric vs ⛽ {100 - hp.electric_share_pct}% Petrol / ICE
+              {hp.electric_share_pct}% Electric vs. {100 - hp.electric_share_pct}% Petrol / ICE
             </div>
           </div>
 
@@ -201,7 +201,7 @@ function HyperparameterSliders({ hp, onChange, isOpen, onToggle }: Hyperparamete
               onChange={(e) => onChange('transit_share_pct', Number(e.target.value))}
             />
             <div className="sb-hp-sub">
-              🚌 {hp.transit_share_pct}% Transit vs 🚗 {100 - hp.transit_share_pct}% Private Trips
+              {hp.transit_share_pct}% Transit vs. {100 - hp.transit_share_pct}% Private Trips
             </div>
           </div>
 
@@ -237,7 +237,7 @@ function HyperparameterSliders({ hp, onChange, isOpen, onToggle }: Hyperparamete
               onChange={(e) => onChange('green_quota_pct', Number(e.target.value))}
             />
             <div className="sb-hp-sub">
-              🌳 Preserved open space, tree canopy, &amp; permeable realm
+              Preserved open space, tree canopy, &amp; permeable realm
             </div>
           </div>
         </div>
@@ -665,7 +665,7 @@ export default function ScenarioBuilderPanel({
             {buildError && <div className="sb-error">{buildError}</div>}
             {reportBuilt && <div className="sb-success">Report created and opened in Artifacts.</div>}
             <button className="sb-approve-btn" onClick={buildApprovedReport} disabled={buildingReport || approvedScenarios.length < 2}>
-              {buildingReport ? <><span className="sb-spinner" /> Building report…</> : <>✓ Accept plan &amp; build report</>}
+              {buildingReport ? <><span className="sb-spinner" /> Building report…</> : <>Accept plan &amp; build report</>}
             </button>
             <button className="sb-secondary-btn" onClick={onScenarioDraftClear}>Keep editing later</button>
           </div>
@@ -773,7 +773,12 @@ export default function ScenarioBuilderPanel({
                   className="sb-visualize-btn"
                   onClick={handleVisualizeFootprint}
                 >
-                  🗺️ Visualize Study Footprint on Map
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6 }}>
+                    <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6" />
+                    <line x1="8" y1="2" x2="8" y2="18" />
+                    <line x1="16" y1="6" x2="16" y2="22" />
+                  </svg>
+                  Visualize Study Footprint on Map
                 </button>
               )}
             </div>
@@ -980,123 +985,23 @@ export default function ScenarioBuilderPanel({
             {compareResult && (
               <div className="sb-result-card">
                 <div className="sb-result-header">
-                  <span className="sb-result-badge comparative">
-                    Trade-Off Matrix Ready
+                  <span className="sb-result-badge recommended">
+                    RECOMMENDED: {compareResult.recommended_scenario}
                   </span>
                   {savedToArtifacts && (
                     <button className="sb-view-artifacts-btn" onClick={onOpenArtifacts}>
-                      View in Artifacts →
+                      View in Artifacts
                     </button>
                   )}
                 </div>
-
-                <div className="sb-eval-notice">
-                  Empirical multi-criteria evaluation across capacity, mobility, resources, and carbon emissions. Final planning decisions rest with the urban planning authority.
+                <div className="sb-ranking">
+                  {compareResult.ranking.map((name, i) => (
+                    <div key={i} className={`sb-ranking-row ${i === 0 ? 'top' : ''}`}>
+                      <span className="sb-rank-num">#{i + 1}</span>
+                      <span className="sb-rank-name">{name}</span>
+                    </div>
+                  ))}
                 </div>
-
-                {compareResult.tradeoff_matrix && compareResult.tradeoff_matrix.length > 0 ? (
-                  <div className="sb-tradeoff-container">
-                    <table className="sb-tradeoff-table">
-                      <thead>
-                        <tr>
-                          <th className="sb-col-metric">Indicator</th>
-                          {compareResult.tradeoff_matrix.map((s, idx) => (
-                            <th key={idx} className="sb-col-scenario">
-                              <div className="sb-th-name">{s.name}</div>
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr className="sb-group-row">
-                          <td colSpan={compareResult.tradeoff_matrix.length + 1}>Policy Levers</td>
-                        </tr>
-                        <tr>
-                          <td>Target FAR</td>
-                          {compareResult.tradeoff_matrix.map((s, idx) => (
-                            <td key={idx}>{s.hyperparameters?.target_far?.toFixed(1) ?? '—'}</td>
-                          ))}
-                        </tr>
-                        <tr>
-                          <td>Green Space Quota</td>
-                          {compareResult.tradeoff_matrix.map((s, idx) => (
-                            <td key={idx}>{s.hyperparameters?.green_quota_pct ?? '—'}%</td>
-                          ))}
-                        </tr>
-                        <tr>
-                          <td>Transit Mode Share</td>
-                          {compareResult.tradeoff_matrix.map((s, idx) => (
-                            <td key={idx}>{s.hyperparameters?.transit_share_pct ?? '—'}%</td>
-                          ))}
-                        </tr>
-                        <tr>
-                          <td>Electric Vehicle Share</td>
-                          {compareResult.tradeoff_matrix.map((s, idx) => (
-                            <td key={idx}>{s.hyperparameters?.electric_share_pct ?? '—'}% EV</td>
-                          ))}
-                        </tr>
-
-                        <tr className="sb-group-row">
-                          <td colSpan={compareResult.tradeoff_matrix.length + 1}>Spatial &amp; Resource Balance Sheet</td>
-                        </tr>
-                        <tr>
-                          <td>Gross Floor Area</td>
-                          {compareResult.tradeoff_matrix.map((s, idx) => (
-                            <td key={idx}>{s.metrics?.gross_floor_area_m2?.toLocaleString()} m²</td>
-                          ))}
-                        </tr>
-                        <tr>
-                          <td>Population Capacity</td>
-                          {compareResult.tradeoff_matrix.map((s, idx) => (
-                            <td key={idx}>{s.metrics?.population_capacity?.toLocaleString()} residents</td>
-                          ))}
-                        </tr>
-                        <tr>
-                          <td>Daily Water Demand</td>
-                          {compareResult.tradeoff_matrix.map((s, idx) => (
-                            <td key={idx}>{s.metrics?.daily_water_demand_mld} MLD</td>
-                          ))}
-                        </tr>
-                        <tr>
-                          <td>Est. Mobility CO₂</td>
-                          {compareResult.tradeoff_matrix.map((s, idx) => (
-                            <td key={idx}>{s.metrics?.annual_co2_tons?.toLocaleString()} t/yr</td>
-                          ))}
-                        </tr>
-
-                        <tr className="sb-group-row">
-                          <td colSpan={compareResult.tradeoff_matrix.length + 1}>Criteria Scores (out of 10)</td>
-                        </tr>
-                        {compareCriteria.map((c) => (
-                          <tr key={c}>
-                            <td>{c}</td>
-                            {compareResult.tradeoff_matrix!.map((s, idx) => (
-                              <td key={idx}>{s.scores?.[c] ?? '—'}</td>
-                            ))}
-                          </tr>
-                        ))}
-                        <tr className="sb-composite-row">
-                          <td>Composite Score</td>
-                          {compareResult.tradeoff_matrix.map((s, idx) => (
-                            <td key={idx}>
-                              <strong>{s.composite_score?.toFixed(1) ?? '—'} / 10</strong>
-                            </td>
-                          ))}
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="sb-ranking">
-                    {compareResult.ranking?.map((name, i) => (
-                      <div key={i} className="sb-ranking-row">
-                        <span className="sb-rank-num">#{i + 1}</span>
-                        <span className="sb-rank-name">{name}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
                 <div className={`sb-disclaimer ${compareResult.scoring_method === 'real_data' ? 'real-data' : ''}`}>
                   {compareResult.disclaimer}
                 </div>

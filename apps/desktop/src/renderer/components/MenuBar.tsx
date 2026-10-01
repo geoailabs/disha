@@ -172,7 +172,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
     disha: [
       { label: 'About Disha Spatial Studio', onClick: () => setAboutModalOpen(true) },
       { label: 'Preferences & AI Models...', shortcut: '⌘,', onClick: onOpenDiagnostics },
-      { label: 'Check for Updates...', onClick: () => alert('Disha Spatial Studio is up to date (v0.1.0).') },
+      { label: 'Check for Updates...', onClick: () => alert('Disha Spatial Studio is up to date (v0.1.5).') },
       { type: 'separator' },
       { label: isSidebarCollapsed ? 'Show Sidebar' : 'Hide Sidebar', shortcut: '⌘B', onClick: onToggleSidebar },
       { label: isChatOpen ? 'Close AI Assistant' : 'Open AI Assistant', shortcut: '⌘J', onClick: onToggleChat },
@@ -498,7 +498,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
               </svg>
             </div>
             <h2 className="about-app-title">Disha Spatial Studio</h2>
-            <p className="about-app-version">Version 0.1.0 (Developer Preview)</p>
+            <p className="about-app-version">Version 0.1.5 (Developer Preview)</p>
             <p className="about-app-desc">
               AI-driven geospatial data intelligence, real-time spatial analysis, interactive 360° visualization, and map document generation.
             </p>

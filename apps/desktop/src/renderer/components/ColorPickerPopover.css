@@ -1,0 +1,210 @@
+/* ColorPickerPopover.css - Ultra-Modern Glassmorphic Color Picker */
+
+.disha-color-picker-popover {
+  position: fixed;
+  z-index: 10001;
+  width: 248px;
+  background: rgba(14, 20, 32, 0.96);
+  backdrop-filter: blur(36px) saturate(200%) contrast(105%);
+  -webkit-backdrop-filter: blur(36px) saturate(200%) contrast(105%);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 16px;
+  box-shadow:
+    0 24px 60px -10px rgba(0, 0, 0, 0.8),
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.25);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-family: 'Canva Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  user-select: none;
+  animation: dcpFadeIn 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  box-sizing: border-box;
+}
+
+@keyframes dcpFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* 2D Saturation / Value Gradient Canvas */
+.dcp-saturation-canvas {
+  position: relative;
+  width: 100%;
+  height: 124px;
+  border-radius: 10px;
+  cursor: crosshair;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.dcp-saturation-white {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to right, #fff, transparent);
+}
+
+.dcp-saturation-black {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, transparent, #000);
+}
+
+.dcp-canvas-handle {
+  position: absolute;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.6), inset 0 0 2px rgba(0, 0, 0, 0.4);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+/* Hue Slider Bar */
+.dcp-hue-bar {
+  position: relative;
+  width: 100%;
+  height: 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  background: linear-gradient(
+    to right,
+    #ff0000 0%,
+    #ffff00 17%,
+    #00ff00 33%,
+    #00ffff 50%,
+    #0000ff 67%,
+    #ff00ff 83%,
+    #ff0000 100%
+  );
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.dcp-hue-handle {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 16px;
+  border-radius: 4px;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+/* Presets Grid */
+.dcp-presets-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 5px;
+  padding: 2px 0;
+}
+
+.dcp-preset-btn {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 6px;
+  border: 1.5px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.12s ease, border-color 0.12s ease;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
+}
+
+.dcp-preset-btn:hover {
+  transform: scale(1.15);
+  border-color: #ffffff;
+  z-index: 2;
+}
+
+.dcp-preset-btn.active {
+  border-color: #ffffff;
+  box-shadow: 0 0 0 2px #38bdf8, inset 0 0 0 1px rgba(0, 0, 0, 0.3);
+  transform: scale(1.1);
+}
+
+/* Bottom Controls: Eyedropper, Swatch, Hex Input */
+.dcp-bottom-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.dcp-eyedropper-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #94a3b8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.dcp-eyedropper-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.3);
+  color: #ffffff;
+}
+
+.dcp-current-swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  border: 1.5px solid rgba(255, 255, 255, 0.25);
+  box-shadow: inset 0 0 3px rgba(0, 0, 0, 0.3);
+  flex-shrink: 0;
+}
+
+.dcp-hex-input-wrap {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  background: rgba(10, 14, 23, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  padding: 0 8px;
+  height: 28px;
+  gap: 4px;
+  transition: border-color 0.15s ease;
+}
+
+.dcp-hex-input-wrap:focus-within {
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 1px #38bdf8;
+}
+
+.dcp-hex-prefix {
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+  user-select: none;
+}
+
+.dcp-hex-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: #f8fafc;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 600;
+  outline: none;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0;
+}

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import './FileTree.css'
 
 interface FileTreeProps {
@@ -167,8 +168,12 @@ export default function FileTree({ workspacePath, onFileClick, onImportClick, re
             className="file-tree-path"
             title={`${workspacePath} (Right-click to reveal)`}
             onContextMenu={(e) => handleContextMenu(e, { name: 'Workspace', path: workspacePath, isDirectory: true })}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
           >
-            📁 {workspacePath.includes('/') ? workspacePath.split('/').pop() : workspacePath.split('\\').pop()}
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ opacity: 0.75, flexShrink: 0 }}>
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+            </svg>
+            {workspacePath.includes('/') ? workspacePath.split('/').pop() : workspacePath.split('\\').pop()}
           </span>
           <div className="file-tree-actions">
             <button className="file-tree-import-btn" onClick={onImportClick} title="Import spatial files">
@@ -214,7 +219,7 @@ export default function FileTree({ workspacePath, onFileClick, onImportClick, re
       </div>
 
       {/* Right-click Context Menu */}
-      {contextMenu && (
+      {contextMenu && createPortal(
         <div
           ref={menuRef}
           className="file-tree-context-menu"
@@ -246,9 +251,10 @@ export default function FileTree({ workspacePath, onFileClick, onImportClick, re
               <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
               <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
             </svg>
-            <span>{copiedNotice ? '✓ Copied!' : 'Copy Path'}</span>
+            <span>{copiedNotice ? 'Copied!' : 'Copy Path'}</span>
           </button>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )

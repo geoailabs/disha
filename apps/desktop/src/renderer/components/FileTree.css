@@ -154,8 +154,9 @@
 /* ── Right-click Context Menu ── */
 .file-tree-context-menu {
   position: fixed;
-  z-index: 99999;
-  min-width: 170px;
+  z-index: 10001;
+  width: 190px;
+  box-sizing: border-box;
   background: rgba(18, 24, 38, 0.96);
   border: 1px solid rgba(137, 180, 250, 0.25);
   border-radius: 8px;

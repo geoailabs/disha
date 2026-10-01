@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import {
   GeoJSONLayer,
   MapBookmark,
@@ -286,7 +287,7 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
   }
 
   return (
-    <div className={`floating-layer-card left-category-pane ${activeTab === 'scenarios' ? 'is-scenarios-tab' : ''} ${scenarioDraft ? 'is-scenario-review' : ''}`}>
+    <div className={`floating-layer-card left-category-pane ${activeTab === 'scenarios' ? 'is-scenarios' : ''} ${scenarioDraft ? 'is-scenario-review' : ''}`}>
       {/* Dedicated Floating Category Pane Header */}
       <div className="flc-header">
         <div className="flc-category-title-group">
@@ -559,12 +560,12 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
         if (!menuLayer) return null
         const isRaster = Boolean(menuLayer.type === 'raster' || (menuLayer as any).isRaster || menuLayer.wmsSpec || menuLayer.geeSpec || menuLayer.rasterOverlaySpec)
 
-        const menuWidth = 205
+        const menuWidth = 210
         const menuHeight = 330
         const posX = Math.max(10, Math.min(contextMenu.x, window.innerWidth - menuWidth - 10))
         const posY = Math.max(10, Math.min(contextMenu.y, window.innerHeight - menuHeight - 10))
 
-        return (
+        return createPortal(
           <div
             className="flc-floating-context-menu"
             style={{ top: posY, left: posX }}
@@ -694,12 +695,13 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
               </svg>
               <span>Delete Layer</span>
             </button>
-          </div>
+          </div>,
+          document.body
         )
       })()}
 
       {/* Map Export Modal */}
-      {showMapExportModal && (
+      {showMapExportModal && createPortal(
         <MapExportModal
           isOpen={showMapExportModal}
           onClose={() => setShowMapExportModal(false)}
@@ -711,11 +713,12 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
           onSavePdfToArtifact={onSavePdfToArtifact}
           onSuggestExportTitle={onSuggestExportTitle || (() => 'Map Export')}
           layersCount={layers.filter((l) => l.visible !== false).length}
-        />
+        />,
+        document.body
       )}
 
       {/* Spatial Clip Modal */}
-      {showSpatialClipModal && (
+      {showSpatialClipModal && createPortal(
         <SpatialClipModal
           isOpen={showSpatialClipModal}
           onClose={() => setShowSpatialClipModal(false)}
@@ -723,7 +726,8 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
           onExportClippedRegion={onExportClippedRegion || (() => {})}
           onPreviewBoundary={onPreviewBoundary || (() => {})}
           onSaveByRegion={onSaveByRegion || (() => {})}
-        />
+        />,
+        document.body
       )}
     </div>
   )

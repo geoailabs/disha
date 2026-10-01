@@ -844,6 +844,13 @@ select option {
 .flc-inspector-card.flc-symbology-inspector {
   width: 440px;
   max-width: calc(100vw - var(--sidebar-width, 58px) - 420px);
+  height: auto;
+  bottom: auto;
+  max-height: calc(100vh - 28px);
+}
+
+.flc-inspector-card.flc-symbology-inspector .flc-inspector-content {
+  flex: 0 1 auto;
 }
 
 .flc-inspector-card.flc-attribute-inspector {

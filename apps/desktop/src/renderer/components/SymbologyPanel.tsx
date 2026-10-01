@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import type { Feature } from 'geojson'
 import { GeoJSONLayer, LayerStyleSpec, ClassificationMethod } from '../types'
 import {
@@ -8,6 +8,7 @@ import {
   computeBreaks,
   rampColorsForClasses,
 } from '../lib/classify'
+import ColorPickerPopover from './ColorPickerPopover'
 import './SymbologyPanel.css'
 
 interface SymbologyPanelProps {
@@ -275,6 +276,13 @@ export default function SymbologyPanel({ layer, onChange, onClose, onUpdateLayer
     )
   }
 
+  const [activePicker, setActivePicker] = useState<{
+    type: 'base' | 'text' | 'halo' | 'cat'
+    catValue?: string
+    anchorRect: DOMRect | null
+    color: string
+  } | null>(null)
+
   // ── Helpers for base color tint updates ──
   const applyBaseColorToCategorized = (baseColor: string, currentSpec: LayerStyleSpec) => {
     if (!currentSpec.categories || currentSpec.categories.length === 0) return currentSpec
@@ -475,20 +483,36 @@ export default function SymbologyPanel({ layer, onChange, onClose, onUpdateLayer
           <div className="sym-row" style={{ margin: 0, padding: 0, height: 'auto', border: 'none', justifyContent: 'flex-start', gap: '16px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <label className="sym-label" style={{ fontSize: '11px', margin: 0 }}>Text Color</label>
-              <input
-                type="color"
-                value={spec.label.color ?? '#1f2937'}
-                onChange={(e) => setLabel({ color: e.target.value })}
-                style={{ width: '22px', height: '18px', border: 'none', background: 'none', cursor: 'pointer', padding: 0 }}
+              <button
+                type="button"
+                className="sym-color-swatch-btn"
+                style={{ backgroundColor: spec.label.color ?? '#1f2937' }}
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  setActivePicker({
+                    type: 'text',
+                    color: spec.label?.color ?? '#1f2937',
+                    anchorRect: rect,
+                  })
+                }}
+                title="Choose text color"
               />
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <label className="sym-label" style={{ fontSize: '11px', margin: 0 }}>Halo Color</label>
-              <input
-                type="color"
-                value={spec.label.haloColor ?? '#ffffff'}
-                onChange={(e) => setLabel({ haloColor: e.target.value })}
-                style={{ width: '22px', height: '18px', border: 'none', background: 'none', cursor: 'pointer', padding: 0 }}
+              <button
+                type="button"
+                className="sym-color-swatch-btn"
+                style={{ backgroundColor: spec.label.haloColor ?? '#ffffff' }}
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  setActivePicker({
+                    type: 'halo',
+                    color: spec.label?.haloColor ?? '#ffffff',
+                    anchorRect: rect,
+                  })
+                }}
+                title="Choose halo color"
               />
             </div>
           </div>
@@ -543,18 +567,21 @@ export default function SymbologyPanel({ layer, onChange, onClose, onUpdateLayer
           <div className="sym-categories">
             {(spec.categories || []).map((c) => (
               <div key={c.value} className="sym-cat">
-                <label className="sym-cat-swatch-label" title="Change colour">
-                  <span
-                    className="sym-cat-swatch"
-                    style={{ background: c.color }}
-                  />
-                  <input
-                    type="color"
-                    value={c.color}
-                    onChange={(e) => setCategoryColor(c.value, e.target.value)}
-                    className="sym-cat-color-input"
-                  />
-                </label>
+                <button
+                  type="button"
+                  className="sym-cat-swatch-btn"
+                  title="Change colour"
+                  style={{ background: c.color }}
+                  onClick={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect()
+                    setActivePicker({
+                      type: 'cat',
+                      catValue: c.value,
+                      color: c.color,
+                      anchorRect: rect,
+                    })
+                  }}
+                />
                 <span className="sym-cat-value" title={c.value}>{c.value || '(empty)'}</span>
               </div>
             ))}
@@ -710,18 +737,48 @@ export default function SymbologyPanel({ layer, onChange, onClose, onUpdateLayer
             );
           })}
         </div>
-        <div className="sym-color-picker-wrapper">
-          <input
-            type="color"
-            className="sym-color-picker"
-            value={layer.color || layer.fillColor || layer.lineColor || '#3b82f6'}
-            onChange={(e) => handleBaseColorChange(e.target.value)}
+        <button
+          type="button"
+          className="sym-color-picker-wrapper"
+          onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect()
+            const curColor = layer.color || layer.fillColor || layer.lineColor || '#3b82f6'
+            setActivePicker({
+              type: 'base',
+              color: curColor,
+              anchorRect: rect,
+            })
+          }}
+          title="Custom Color"
+        >
+          <span
+            className="sym-color-picker-dot"
+            style={{ backgroundColor: layer.color || layer.fillColor || layer.lineColor || '#3b82f6' }}
           />
           <span className="sym-color-picker-label">
             Custom
           </span>
-        </div>
+        </button>
       </div>
+
+      {activePicker && (
+        <ColorPickerPopover
+          color={activePicker.color}
+          anchorRect={activePicker.anchorRect}
+          onChange={(newColor) => {
+            if (activePicker.type === 'base') {
+              handleBaseColorChange(newColor)
+            } else if (activePicker.type === 'text') {
+              setLabel({ color: newColor })
+            } else if (activePicker.type === 'halo') {
+              setLabel({ haloColor: newColor })
+            } else if (activePicker.type === 'cat' && activePicker.catValue !== undefined) {
+              setCategoryColor(activePicker.catValue, newColor)
+            }
+          }}
+          onClose={() => setActivePicker(null)}
+        />
+      )}
     </div>
   );
 }
