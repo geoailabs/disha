@@ -112,6 +112,7 @@
 
 .diag-item {
   display: flex;
+  flex-direction: column;
   justify-content: space-between;
   align-items: flex-start;
   gap: 14px;
@@ -149,6 +150,7 @@
 
 .diag-badge {
   flex: 0 0 auto;
+  align-self: flex-start;
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 4px;
@@ -163,7 +165,7 @@
 }
 
 .diag-badge.warn {
-  max-width: 108px;
+  max-width: none;
   text-align: center;
   line-height: 1.15;
   background: rgba(255, 214, 186, 0.16);

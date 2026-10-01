@@ -535,7 +535,7 @@
   line-height: 1.4;
   min-width: 0;
   word-break: normal;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
 .chat-error-dismiss {
@@ -1886,4 +1886,3 @@
   color: #93c5fd;
   font-weight: bold;
 }
-

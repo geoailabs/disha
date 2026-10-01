@@ -5,6 +5,7 @@ import fs from 'fs'
 import os from 'os'
 
 const BACKEND_PORT = 8765
+const BACKEND_HOST = '127.0.0.1'
 const isDev = !app.isPackaged
 
 function envFileCandidates(): string[] {
@@ -399,7 +400,7 @@ let quitFlushTimer: ReturnType<typeof setTimeout> | null = null
 async function startBackend(): Promise<void> {
   // Reuse a backend started manually or by another app instance.
   try {
-    const response = await fetch(`http://localhost:${BACKEND_PORT}/health`)
+    const response = await fetch(`http://${BACKEND_HOST}:${BACKEND_PORT}/health`)
     if (response.ok) {
       console.log(`[backend] already running on port ${BACKEND_PORT}`)
       return
@@ -415,6 +416,7 @@ async function startBackend(): Promise<void> {
   if (isDev) {
     const backendCandidates = [
       path.resolve(process.cwd(), 'packages/backend'),
+      path.resolve(app.getAppPath(), '../../packages/backend'),
       path.resolve(__dirname, '../../../../packages/backend'),
       path.resolve(__dirname, '../../../packages/backend'),
     ]
@@ -429,12 +431,25 @@ async function startBackend(): Promise<void> {
       ? path.join(backendDir, '.buildenv', 'Scripts', 'python.exe')
       : path.join(backendDir, '.buildenv', 'bin', 'python')
     command = fs.existsSync(venvPython) ? venvPython : (process.platform === 'win32' ? 'python' : 'python3')
-    args = ['-m', 'uvicorn', 'main:app', '--port', String(BACKEND_PORT)]
+    args = ['-m', 'uvicorn', 'main:app', '--host', BACKEND_HOST, '--port', String(BACKEND_PORT)]
     cwd = backendDir
   } else {
     const backendBinary = process.platform === 'win32' ? 'backend.exe' : 'backend'
     command = path.join(process.resourcesPath, 'backend', backendBinary)
-    args = ['--port', String(BACKEND_PORT)]
+    args = ['--host', BACKEND_HOST, '--port', String(BACKEND_PORT)]
+    if (!fs.existsSync(command)) {
+      console.error(`[backend] bundled executable not found at ${command}. Build the packaged app with \\`pnpm run build:backend\\` first.`)
+      return
+    }
+    // Preserve launchability when an archive/extraction step drops the Unix
+    // executable bit from the bundled PyInstaller binary.
+    if (process.platform !== 'win32') {
+      try {
+        fs.chmodSync(command, 0o755)
+      } catch (err) {
+        console.error('[backend] could not mark bundled executable as runnable', err)
+      }
+    }
   }
 
   const env = { ...process.env }
@@ -456,7 +471,7 @@ async function startBackend(): Promise<void> {
 
   backendProcess.stdout?.on('data', (d) => console.log(`[backend] ${d}`))
   backendProcess.stderr?.on('data', (d) => console.error(`[backend] ${d}`))
-  backendProcess.on('error', (err) => console.error('[backend] failed to start', err))
+  backendProcess.on('error', (err) => console.error(`[backend] failed to start with ${command}:`, err))
   backendProcess.on('exit', (code) => console.log(`[backend] exited ${code}`))
 }
 
@@ -470,7 +485,7 @@ function stopBackend(): void {
 async function waitForBackend(retries = 30, delay = 500): Promise<boolean> {
   for (let i = 0; i < retries; i++) {
     try {
-      const res = await fetch(`http://localhost:${BACKEND_PORT}/health`)
+      const res = await fetch(`http://${BACKEND_HOST}:${BACKEND_PORT}/health`)
       if (res.ok) return true
     } catch {
       /* not ready yet */

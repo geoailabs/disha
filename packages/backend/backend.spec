@@ -2,6 +2,8 @@
 # Build with: source .buildenv/bin/activate && pyinstaller backend.spec --noconfirm
 
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
+import sys
+from pathlib import Path
 
 block_cipher = None
 
@@ -56,9 +58,28 @@ exe = EXE(
     console=True,
 )
 
+# Fiona ships its own SQLite dylib. On macOS it can take precedence over
+# Python's sqlite3 extension and cause an unresolved sqlite3_deserialize
+# symbol before FastAPI starts. The top-level PyInstaller SQLite library is
+# retained; remove only Fiona's duplicate from the collected bundle.
+collected_binaries = [
+    item for item in a.binaries
+    if Path(item[0]).name not in {'libsqlite3.0.dylib', 'libsqlite3.dylib'}
+]
+
+if sys.platform == 'darwin':
+    sqlite_candidates = [
+        Path(sys.base_prefix) / 'lib' / 'libsqlite3.0.dylib',
+        Path(sys.base_prefix) / 'lib' / 'libsqlite3.dylib',
+        Path(sys.prefix) / 'lib' / 'libsqlite3.0.dylib',
+    ]
+    sqlite_source = next((candidate for candidate in sqlite_candidates if candidate.exists()), None)
+    if sqlite_source:
+        collected_binaries.append(('libsqlite3.0.dylib', str(sqlite_source), 'BINARY'))
+
 coll = COLLECT(
     exe,
-    a.binaries,
+    collected_binaries,
     a.zipfiles,
     a.datas,
     strip=False,
