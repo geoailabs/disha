@@ -47,8 +47,8 @@
           <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="vertical-align:-2px; margin-right:4px;"><polyline points="20 6 9 17 4 12"></polyline></svg>Local Workspace Isolation</span>
         </div>
 
-        <!-- Interactive Prompt Simulator -->
-        <div class="prompt-simulator">
+        <!-- App Window Showcase with Live Map & Copilot -->
+        <div class="prompt-simulator app-window-showcase">
           <div class="simulator-topbar">
             <div class="window-dots">
               <span class="window-dot red"></span>
@@ -62,26 +62,8 @@
             <div class="badge badge-emerald" style="font-size:0.7rem;">Active Agent</div>
           </div>
 
-          <div class="simulator-body">
-            <div class="sim-message-user" id="sim-user-text">
-              Buffer this flood zone polygon by 500 meters and clip the roads layer to it
-            </div>
-            <div class="sim-message-agent">
-              <div class="tool-execution-pill" id="sim-tool-badge">
-                gis_buffer → gis_clip
-              </div>
-              <div class="agent-bubble" id="sim-agent-text">
-                Buffered the selected flood risk polygon by 500.0m on WGS84 geodesic ellipsoid and clipped the <code>transportation_roads</code> layer. 41 road segments intersect the hazard perimeter. Created new layer: <span class="mono">roads_flood_hazard_500m</span>.
-              </div>
-            </div>
-          </div>
-
-          <div class="sim-presets-bar">
-            <span style="font-size:0.75rem; color:var(--text-muted); font-family:var(--font-mono); margin-right:4px;">Try prompt:</span>
-            <button class="sim-preset-btn active" data-preset="buffer">Buffer & Clip</button>
-            <button class="sim-preset-btn" data-preset="overture">Overture DuckDB</button>
-            <button class="sim-preset-btn" data-preset="traffic">Traffic Assignment</button>
-            <button class="sim-preset-btn" data-preset="zoning">TOD Zoning</button>
+          <div class="app-window-body">
+            <img src="image.png" alt="Disha Desktop Interface with AI Spatial Agent and Live Map" class="app-screenshot" loading="eager" />
           </div>
         </div>
       </div>
