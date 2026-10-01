@@ -19,7 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
    1. Theme Management (Dark / Light)
    ========================================================================== */
 function initTheme() {
-  const savedTheme = localStorage.getItem('disha-theme') || 'dark';
+  const savedTheme = localStorage.getItem('disha-theme') || 'light';
   document.documentElement.setAttribute('data-theme', savedTheme);
   updateThemeIcon(savedTheme);
 
