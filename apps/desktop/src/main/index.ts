@@ -438,7 +438,7 @@ async function startBackend(): Promise<void> {
     command = path.join(process.resourcesPath, 'backend', backendBinary)
     args = ['--host', BACKEND_HOST, '--port', String(BACKEND_PORT)]
     if (!fs.existsSync(command)) {
-      console.error(`[backend] bundled executable not found at ${command}. Build the packaged app with \\`pnpm run build:backend\\` first.`)
+      console.error(`[backend] bundled executable not found at ${command}. Build the packaged app with 'pnpm run build:backend' first.`)
       return
     }
     // Preserve launchability when an archive/extraction step drops the Unix
