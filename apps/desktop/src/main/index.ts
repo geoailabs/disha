@@ -441,6 +441,7 @@ async function startBackend(): Promise<void> {
       console.error(`[backend] bundled executable not found at ${command}. Build the packaged app with 'pnpm run build:backend' first.`)
       return
     }
+    cwd = path.join(process.resourcesPath, 'backend')
     // Preserve launchability when an archive/extraction step drops the Unix
     // executable bit from the bundled PyInstaller binary.
     if (process.platform !== 'win32') {
@@ -482,7 +483,7 @@ function stopBackend(): void {
   }
 }
 
-async function waitForBackend(retries = 30, delay = 500): Promise<boolean> {
+async function waitForBackend(retries = 60, delay = 500): Promise<boolean> {
   for (let i = 0; i < retries; i++) {
     try {
       const res = await fetch(`http://${BACKEND_HOST}:${BACKEND_PORT}/health`)

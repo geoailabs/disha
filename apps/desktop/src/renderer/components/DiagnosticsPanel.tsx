@@ -142,67 +142,67 @@ export default function DiagnosticsPanel({ onClose, workspacePath }: Diagnostics
             {data && (
               <div className="diag-grid">
                 <div className="diag-item">
-                  <div className="diag-meta">
+                  <div className="diag-item-header">
                     <strong>OpenAI API Connection</strong>
-                    <span>{data.openai_api_key.message}</span>
+                    {getStatusIcon(data.openai_api_key.status)}
                   </div>
-                  {getStatusIcon(data.openai_api_key.status)}
+                  <span className="diag-item-desc">{data.openai_api_key.message}</span>
                 </div>
 
                 <div className="diag-item">
-                  <div className="diag-meta">
+                  <div className="diag-item-header">
                     <strong>Google Maps Street View API</strong>
-                    <span>{data.google_maps_api_key.message}</span>
+                    {getStatusIcon(data.google_maps_api_key.status)}
                   </div>
-                  {getStatusIcon(data.google_maps_api_key.status)}
+                  <span className="diag-item-desc">{data.google_maps_api_key.message}</span>
                 </div>
 
                 <div className="diag-item">
-                  <div className="diag-meta">
+                  <div className="diag-item-header">
                     <strong>OSM Overpass API</strong>
-                    <span>{data.overpass_api.message}</span>
+                    {getStatusIcon(data.overpass_api.status)}
                   </div>
-                  {getStatusIcon(data.overpass_api.status)}
+                  <span className="diag-item-desc">{data.overpass_api.message}</span>
                 </div>
 
                 <div className="diag-item">
-                  <div className="diag-meta">
+                  <div className="diag-item-header">
                     <strong>Nominatim Geocoder API</strong>
-                    <span>{data.nominatim_api.message}</span>
+                    {getStatusIcon(data.nominatim_api.status)}
                   </div>
-                  {getStatusIcon(data.nominatim_api.status)}
+                  <span className="diag-item-desc">{data.nominatim_api.message}</span>
                 </div>
 
                 <div className="diag-item">
-                  <div className="diag-meta">
+                  <div className="diag-item-header">
                     <strong>OSRM Routing Server</strong>
-                    <span>{data.osrm_api.message}</span>
+                    {getStatusIcon(data.osrm_api.status)}
                   </div>
-                  {getStatusIcon(data.osrm_api.status)}
+                  <span className="diag-item-desc">{data.osrm_api.message}</span>
                 </div>
 
                 <div className="diag-item">
-                  <div className="diag-meta">
+                  <div className="diag-item-header">
                     <strong>Open-Meteo Weather Forecast</strong>
-                    <span>{data.open_meteo.message}</span>
+                    {getStatusIcon(data.open_meteo.status)}
                   </div>
-                  {getStatusIcon(data.open_meteo.status)}
+                  <span className="diag-item-desc">{data.open_meteo.message}</span>
                 </div>
 
                 <div className="diag-item">
-                  <div className="diag-meta">
+                  <div className="diag-item-header">
                     <strong>Required Python GIS Libraries</strong>
-                    <span>{data.libraries.message}</span>
+                    {getStatusIcon(data.libraries.status)}
                   </div>
-                  {getStatusIcon(data.libraries.status)}
+                  <span className="diag-item-desc">{data.libraries.message}</span>
                 </div>
 
                 <div className="diag-item">
-                  <div className="diag-meta">
+                  <div className="diag-item-header">
                     <strong>Workspace Write Access</strong>
-                    <span>{data.workspace.message}</span>
+                    {getStatusIcon(data.workspace.status)}
                   </div>
-                  {getStatusIcon(data.workspace.status)}
+                  <span className="diag-item-desc">{data.workspace.message}</span>
                 </div>
               </div>
             )}

@@ -984,14 +984,21 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
     }
   }, [])
 
-  const connectWebSocket = useCallback((retries = 3, delay = 600): Promise<WebSocket> => {
+  const connectWebSocket = useCallback((retries = 8, delay = 800): Promise<WebSocket> => {
     return new Promise((resolve, reject) => {
+      const candidates = [
+        'ws://127.0.0.1:8765/api/chat/ws',
+        'ws://localhost:8765/api/chat/ws',
+      ]
+      let candidateIdx = 0
+
       const attempt = (remaining: number) => {
         if (wsRef.current?.readyState === WebSocket.OPEN) {
           resolve(wsRef.current)
           return
         }
-        const ws = new WebSocket(BACKEND_WS)
+        const wsUrl = candidates[candidateIdx % candidates.length]
+        const ws = new WebSocket(wsUrl)
         historySentRef.current = false
 
         const onOpen = () => {
@@ -1002,6 +1009,7 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
 
         const onError = () => {
           cleanup()
+          candidateIdx++
           if (remaining > 1) {
             setTimeout(() => attempt(remaining - 1), delay)
           } else {
