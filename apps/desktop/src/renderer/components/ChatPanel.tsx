@@ -686,86 +686,105 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
   const onMapActionRef = useRef(onMapAction)
   onMapActionRef.current = onMapAction
 
-  useEffect(() => {
-    let cancelled = false
-    let retryTimer: ReturnType<typeof setTimeout> | null = null
+  const loadKeys = useCallback(async (attempt = 0) => {
+    let storedApiKey = ''
+    let storedGoogleKey = ''
+    let envOpenAI = false
+    let envGoogle = false
+    let envStatusLoaded = false
 
-    const loadKeys = async (attempt = 0) => {
-      let storedApiKey = ''
-      let storedGoogleKey = ''
-      let envOpenAI = false
-      let envGoogle = false
-      let envStatusLoaded = false
-
-      try {
-        storedApiKey = await window.electronAPI.getAPIKey()
-      } catch (err) {
-        console.error('Failed to load API key from secure storage:', err)
-      }
-
-      try {
-        storedGoogleKey = await window.electronAPI.getGoogleMapsKey()
-      } catch (err) {
-        console.error('Failed to load Google Maps API key:', err)
-      }
-
-      try {
-        const status = await window.electronAPI.getKeyStatus()
-        envOpenAI = envOpenAI || !!status.openai
-        envGoogle = envGoogle || !!status.google_maps
-      } catch (err) {
-        console.error('Failed to detect Electron environment API keys:', err)
-      }
-
-      try {
-        const res = await fetch('http://localhost:8765/api/chat/key-status')
-        const status = await res.json()
-        envOpenAI = envOpenAI || !!status.openai
-        envGoogle = envGoogle || !!status.google_maps
-        envStatusLoaded = true
-      } catch (err) {
-        console.error('Failed to detect backend environment API keys:', err)
-      }
-
-      if (!cancelled) {
-        setApiKey(storedApiKey || '')
-        setGoogleKey(storedGoogleKey || '')
-        setHasEnvApiKey(envOpenAI)
-        setHasEnvGoogleKey(envGoogle)
-        setIsKeyLoaded(true)
-        setShowApiKeyInput(!(storedApiKey || envOpenAI))
-        if (storedApiKey || storedGoogleKey) {
-          fetch('http://localhost:8765/api/chat/sync-keys', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              openai_api_key: storedApiKey,
-              google_maps_api_key: storedGoogleKey,
-            }),
-          }).catch(() => {})
-        }
-      }
-
-      if (!cancelled && !storedApiKey && !envStatusLoaded && attempt < 20) {
-        retryTimer = setTimeout(() => loadKeys(attempt + 1), 500)
-      }
+    try {
+      storedApiKey = await window.electronAPI.getAPIKey()
+    } catch (err) {
+      console.error('Failed to load API key from secure storage:', err)
     }
 
+    try {
+      storedGoogleKey = await window.electronAPI.getGoogleMapsKey()
+    } catch (err) {
+      console.error('Failed to load Google Maps API key:', err)
+    }
+
+    try {
+      const status = await window.electronAPI.getKeyStatus()
+      envOpenAI = envOpenAI || !!status.openai
+      envGoogle = envGoogle || !!status.google_maps
+    } catch (err) {
+      console.error('Failed to detect Electron environment API keys:', err)
+    }
+
+    try {
+      const res = await fetch('http://localhost:8765/api/chat/key-status')
+      const status = await res.json()
+      envOpenAI = envOpenAI || !!status.openai
+      envGoogle = envGoogle || !!status.google_maps
+      envStatusLoaded = true
+    } catch (err) {
+      console.error('Failed to detect backend environment API keys:', err)
+    }
+
+    setApiKey(storedApiKey || '')
+    setGoogleKey(storedGoogleKey || '')
+    setHasEnvApiKey(envOpenAI)
+    setHasEnvGoogleKey(envGoogle)
+    setIsKeyLoaded(true)
+    setShowApiKeyInput(!(storedApiKey || envOpenAI))
+    if (storedApiKey || storedGoogleKey) {
+      fetch('http://localhost:8765/api/chat/sync-keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          openai_api_key: storedApiKey,
+          google_maps_api_key: storedGoogleKey,
+        }),
+      }).catch(() => {})
+    }
+
+    if (!storedApiKey && !envStatusLoaded && attempt < 20) {
+      setTimeout(() => loadKeys(attempt + 1), 500)
+    }
+  }, [])
+
+  useEffect(() => {
     loadKeys()
 
     window.electronAPI.getGEEKey()
       .then((key) => {
-        if (!cancelled) setGeeKey(key || '')
+        if (key) setGeeKey(key)
       })
       .catch((err) => {
         console.error('Failed to load GEE credentials:', err)
       })
 
-    return () => {
-      cancelled = true
-      if (retryTimer) clearTimeout(retryTimer)
+    const handleKeysUpdated = (e?: Event) => {
+      const customEvent = e as CustomEvent<{ openai?: string; google?: string }> | undefined
+      if (customEvent?.detail) {
+        if (customEvent.detail.openai !== undefined) {
+          setApiKey(customEvent.detail.openai)
+          if (customEvent.detail.openai.trim()) {
+            setHasEnvApiKey(true)
+            setShowApiKeyInput(false)
+          }
+        }
+        if (customEvent.detail.google !== undefined) {
+          setGoogleKey(customEvent.detail.google)
+          if (customEvent.detail.google.trim()) {
+            setHasEnvGoogleKey(true)
+          }
+        }
+      }
+      loadKeys()
     }
-  }, [])
+
+    window.addEventListener('disha-api-keys-updated', handleKeysUpdated)
+    if (window.electronAPI && typeof window.electronAPI.onAPIKeysUpdated === 'function') {
+      window.electronAPI.onAPIKeysUpdated(handleKeysUpdated)
+    }
+
+    return () => {
+      window.removeEventListener('disha-api-keys-updated', handleKeysUpdated)
+    }
+  }, [loadKeys])
 
   useEffect(() => {
     if (activeConversation && pendingInputRef.current) {
@@ -2127,13 +2146,13 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
                     onClick={importGeeJsonFile}
                     style={{
                       background: 'var(--accent, #3b82f6)',
-                      color: '#ffffff',
+                      color: 'var(--accent-foreground, #0b0d11)',
                       border: 'none',
                       borderRadius: '4px',
                       padding: '3px 8px',
                       fontSize: '11px',
                       cursor: 'pointer',
-                      fontWeight: 600,
+                      fontWeight: 700,
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: '4px'

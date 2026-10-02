@@ -179,12 +179,12 @@ export default function SymbologyPanel({ layer, onChange, onClose, onUpdateLayer
             min="0"
             max="1"
             step="0.05"
-            value={layer.opacity ?? 0.8}
+            value={layer.opacity ?? 0.5}
             onChange={(e) => handleOpacityChange(parseFloat(e.target.value))}
             style={{ flex: 1 }}
           />
           <span style={{ minWidth: '32px', textAlign: 'right' }}>
-            {Math.round((layer.opacity ?? 0.8) * 100)}%
+            {Math.round((layer.opacity ?? 0.5) * 100)}%
           </span>
         </div>
 
@@ -682,12 +682,12 @@ export default function SymbologyPanel({ layer, onChange, onClose, onUpdateLayer
           min="0"
           max="1"
           step="0.05"
-          value={spec.opacity ?? layer.opacity ?? 0.8}
+          value={spec.opacity ?? layer.opacity ?? 0.5}
           onChange={(e) => emit({ ...spec, opacity: parseFloat(e.target.value) })}
           style={{ flex: 1, cursor: 'pointer' }}
         />
         <span style={{ minWidth: '32px', textAlign: 'right', fontSize: '11px' }}>
-          {Math.round((spec.opacity ?? layer.opacity ?? 0.8) * 100)}%
+          {Math.round((spec.opacity ?? layer.opacity ?? 0.5) * 100)}%
         </span>
       </div>
 

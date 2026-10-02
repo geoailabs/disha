@@ -468,6 +468,86 @@ function App() {
   const [showArtifactsSidebar, setShowArtifactsSidebar] = useState(true)
   const [showDocumentSidebar, setShowDocumentSidebar] = useState(true)
 
+  const [floatingCardWidth, setFloatingCardWidth] = useState(370)
+  const [attrTableWidth, setAttrTableWidth] = useState(620)
+  const [attrTableHeight, setAttrTableHeight] = useState(440)
+  const [symbologyWidth, setSymbologyWidth] = useState(440)
+
+  const onFloatingCardResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startW = floatingCardWidth
+    document.body.classList.add('resizing')
+
+    const onMove = (ev: MouseEvent) => {
+      const delta = ev.clientX - startX
+      const maxW = Math.max(300, window.innerWidth - 120)
+      setFloatingCardWidth(Math.max(280, Math.min(maxW, startW + delta)))
+    }
+
+    const onUp = () => {
+      document.body.classList.remove('resizing')
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }, [floatingCardWidth])
+
+  const onAttrInspectorResizeStart = useCallback((direction: 'r' | 'b' | 'br') => (e: React.MouseEvent) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startY = e.clientY
+    const startW = attrTableWidth
+    const startH = attrTableHeight
+    document.body.classList.add('resizing')
+
+    const onMove = (ev: MouseEvent) => {
+      if (direction === 'r' || direction === 'br') {
+        const deltaX = ev.clientX - startX
+        const maxW = Math.max(360, window.innerWidth - 120)
+        setAttrTableWidth(Math.max(360, Math.min(maxW, startW + deltaX)))
+      }
+      if (direction === 'b' || direction === 'br') {
+        const deltaY = ev.clientY - startY
+        const maxH = Math.max(280, window.innerHeight - 56)
+        setAttrTableHeight(Math.max(280, Math.min(maxH, startH + deltaY)))
+      }
+    }
+
+    const onUp = () => {
+      document.body.classList.remove('resizing')
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }, [attrTableWidth, attrTableHeight])
+
+  const onSymbologyResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startW = symbologyWidth
+    document.body.classList.add('resizing')
+
+    const onMove = (ev: MouseEvent) => {
+      const delta = ev.clientX - startX
+      const maxW = Math.max(320, window.innerWidth - 120)
+      setSymbologyWidth(Math.max(320, Math.min(maxW, startW + delta)))
+    }
+
+    const onUp = () => {
+      document.body.classList.remove('resizing')
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }, [symbologyWidth])
+
   const onResizeStart = useCallback(
     (side: 'left' | 'right') => (e: React.MouseEvent) => {
       e.preventDefault()
@@ -875,6 +955,7 @@ function App() {
           name,
           filePath,
           visible: true,
+          opacity: 0.5,
           data,
           color,
           styleSpec: finalStyleSpec,
@@ -1721,6 +1802,7 @@ function App() {
           id: `layer-${genId()}`,
           name: newName,
           visible: true,
+          opacity: 0.5,
           data: {
             type: 'FeatureCollection',
             features: JSON.parse(JSON.stringify(features)),
@@ -1898,6 +1980,7 @@ function App() {
         name: layerName,
         filePath: '',
         visible: true,
+        opacity: 0.5,
         data,
         color: layerColor,
         styleSpec: finalStyleSpec,
@@ -1936,6 +2019,7 @@ function App() {
           name: label || `Marker ${aiMarkerCounterRef.current}`,
           filePath: '',
           visible: true,
+          opacity: 0.5,
           groupId,
           groupName: AI_MARKERS_LAYER,
           data: { type: 'FeatureCollection', features: [feature] },
@@ -1967,6 +2051,7 @@ function App() {
         name: pointFeatureName(feature, `${groupName} ${idx + 1}`),
         filePath: '',
         visible: true,
+        opacity: 0.5,
         groupId,
         groupName,
         data: { type: 'FeatureCollection', features: [feature] },
@@ -2104,6 +2189,7 @@ function App() {
           name: directName,
           filePath: '',
           visible: true,
+          opacity: 0.5,
           color: '#2563eb',
           lineColor: '#2563eb',
           lineWidth: 2.5,
@@ -2154,6 +2240,7 @@ function App() {
               name: routeName,
               filePath: '',
               visible: true,
+              opacity: 0.5,
               color: '#dc2626',
               lineColor: '#dc2626',
               lineWidth: 4,
@@ -2228,6 +2315,7 @@ function App() {
         name,
         filePath: '',
         visible: true,
+        opacity: 0.5,
         color,
         data: {
           type: 'FeatureCollection',
@@ -2446,6 +2534,7 @@ function App() {
         name: title || layer_name,
         filePath: '',
         visible: true,
+        opacity: 0.5,
         data: { type: 'FeatureCollection', features: [] },
         color: '#06b6d4',
         wmsSpec: { url, layer_name }
@@ -2479,6 +2568,7 @@ function App() {
         name: title || dataset,
         filePath: '',
         visible: true,
+        opacity: 0.5,
         data: { type: 'FeatureCollection', features: [] },
         color: '#89b4fa',
         geeSpec: { url, dataset, vis_params }
@@ -2618,7 +2708,7 @@ function App() {
       ]
 
       const directLayer: GeoJSONLayer = {
-        id: `layer-${genId()}`, name: directName, filePath: '', visible: true,
+        id: `layer-${genId()}`, name: directName, filePath: '', visible: true, opacity: 0.5,
         color: '#2563eb', lineColor: '#2563eb', lineWidth: 2.5, lineDasharray: [2, 2],
         data: { type: 'FeatureCollection', features: directFeatures }, styleSpec: labelStyle,
       }
@@ -2631,7 +2721,7 @@ function App() {
         const routeLabel = `Route: ${formatDistance(route_km)}${duration_minutes != null ? ` (~${duration_minutes.toFixed(0)} min)` : ''}`
         const routeName = `Route Distance ${measureNo}`
         const routeLayer: GeoJSONLayer = {
-          id: `layer-${genId()}`, name: routeName, filePath: '', visible: true,
+          id: `layer-${genId()}`, name: routeName, filePath: '', visible: true, opacity: 0.5,
           color: '#dc2626', lineColor: '#dc2626', lineWidth: 4,
           data: {
             type: 'FeatureCollection',
@@ -2807,7 +2897,7 @@ function App() {
               data: { type: 'FeatureCollection', features: [] },
               color: '#10b981',
               rasterOverlaySpec: { url: filePath, corners },
-              opacity: 0.8,
+              opacity: 0.5,
             },
           ]
         }
@@ -3566,6 +3656,8 @@ function App() {
             {/* Floating Top-Left Layer Card (Mundi LayerList style) */}
             <FloatingLayerCard
               isOpen={isLayerCardOpen}
+              width={floatingCardWidth}
+              onResizeStart={onFloatingCardResizeStart}
               activeTab={activeWorkspaceCategory as FloatingTab}
               onTabChange={(tab) => {
                 if (tab === 'layers' || tab === 'files' || tab === 'scenarios') {
@@ -3768,11 +3860,28 @@ function App() {
                   className="flc-inspector-card flc-attribute-inspector"
                   style={{
                     left: isLayerCardOpen
-                      ? 'calc(var(--sidebar-width, 58px) + 26px + 370px + 12px)'
+                      ? `calc(var(--sidebar-width, 58px) + 26px + ${floatingCardWidth}px + 12px)`
                       : 'calc(var(--sidebar-width, 58px) + 26px)',
+                    width: `${attrTableWidth}px`,
+                    height: `${attrTableHeight}px`,
                   }}
                   onClick={(e) => e.stopPropagation()}
                 >
+                  <div
+                    className="flc-inspector-resize-r"
+                    onMouseDown={onAttrInspectorResizeStart('r')}
+                    title="Drag to resize width"
+                  />
+                  <div
+                    className="flc-inspector-resize-b"
+                    onMouseDown={onAttrInspectorResizeStart('b')}
+                    title="Drag to resize height"
+                  />
+                  <div
+                    className="flc-inspector-resize-br"
+                    onMouseDown={onAttrInspectorResizeStart('br')}
+                    title="Drag to resize"
+                  />
                   <div className="flc-inspector-header">
                     <div className="flc-inspector-title-group">
                       <div className="flc-inspector-icon">
@@ -3843,11 +3952,17 @@ function App() {
                   className="flc-inspector-card flc-symbology-inspector"
                   style={{
                     left: isLayerCardOpen
-                      ? 'calc(var(--sidebar-width, 58px) + 26px + 370px + 12px)'
+                      ? `calc(var(--sidebar-width, 58px) + 26px + ${floatingCardWidth}px + 12px)`
                       : 'calc(var(--sidebar-width, 58px) + 26px)',
+                    width: `${symbologyWidth}px`,
                   }}
                   onClick={(e) => e.stopPropagation()}
                 >
+                  <div
+                    className="flc-inspector-resize-r"
+                    onMouseDown={onSymbologyResizeStart}
+                    title="Drag to resize width"
+                  />
                   <div className="flc-inspector-header">
                     <div className="flc-inspector-title-group">
                       <div className="flc-inspector-icon">

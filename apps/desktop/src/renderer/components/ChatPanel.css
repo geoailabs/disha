@@ -1073,19 +1073,21 @@
 
 .api-key-save-btn {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-foreground, #0b0d11);
   border: none;
   border-radius: 6px;
   padding: 6px 12px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.3s ease, color 0.3s ease, opacity 0.15s ease;
+  transition: background 0.2s ease, color 0.2s ease, opacity 0.15s ease;
 }
 
 .api-key-save-btn:hover {
-  opacity: 0.9;
+  background: var(--accent-hover, #faf9f9);
+  color: var(--accent-foreground, #0b0d11);
+  opacity: 1;
 }
 
 .api-key-save-btn.success {
@@ -1739,7 +1741,7 @@
 .chat-question-opt-btn:hover {
   background: var(--accent, #3b82f6);
   border-color: var(--accent, #3b82f6);
-  color: #fff;
+  color: var(--accent-foreground, #0b0d11);
 }
 
 .chat-question-checkboxes {
@@ -1766,12 +1768,12 @@
 .chat-question-submit-btn {
   background: var(--accent, #3b82f6);
   border: none;
-  color: #fff;
+  color: var(--accent-foreground, #0b0d11);
   padding: 8px 16px;
   border-radius: 6px;
   cursor: pointer;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
   align-self: flex-start;
   margin-top: 8px;
   transition: background 0.15s;

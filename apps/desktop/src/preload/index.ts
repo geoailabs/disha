@@ -37,6 +37,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setGoogleMapsKey: (key: string) => ipcRenderer.invoke('set-google-maps-key', key),
   getGEEKey: () => ipcRenderer.invoke('get-gee-key'),
   setGEEKey: (key: string) => ipcRenderer.invoke('set-gee-key', key),
+  onAPIKeysUpdated: (handler: () => void) => {
+    ipcRenderer.removeAllListeners('api-keys-updated')
+    ipcRenderer.on('api-keys-updated', () => handler())
+  },
   savePDF: (htmlContent: string, defaultName: string) => ipcRenderer.invoke('save-pdf', htmlContent, defaultName),
   onFullscreenChange: (handler: (isFullscreen: boolean) => void) => {
     ipcRenderer.removeAllListeners('fullscreen-change')

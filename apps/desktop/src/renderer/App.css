@@ -809,8 +809,6 @@ select option {
 .flc-inspector-card {
   position: absolute;
   top: 14px;
-  bottom: 14px;
-  height: calc(100vh - 28px);
   background: rgba(14, 20, 32, 0.78);
   backdrop-filter: blur(36px) saturate(200%) contrast(105%);
   -webkit-backdrop-filter: blur(36px) saturate(200%) contrast(105%);
@@ -826,7 +824,7 @@ select option {
   color: #faf9f9;
   font-family: 'Canva Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   overflow: hidden;
-  transition: left 0.22s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease, width 0.2s ease;
+  transition: left 0.22s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease;
   animation: flcInspectorSlideIn 0.22s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -854,7 +852,63 @@ select option {
 }
 
 .flc-inspector-card.flc-attribute-inspector {
-  width: clamp(680px, 58vw, calc(100vw - var(--sidebar-width, 58px) - 420px));
+  width: 620px;
+  height: 440px;
+  max-width: calc(100vw - var(--sidebar-width, 58px) - 380px);
+  max-height: calc(100vh - 28px);
+  min-height: 280px;
+  min-width: 360px;
+}
+
+.flc-inspector-resize-r {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 10;
+  transition: background 0.15s ease;
+}
+
+.flc-inspector-resize-b {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 6px;
+  cursor: row-resize;
+  z-index: 10;
+  transition: background 0.15s ease;
+}
+
+.flc-inspector-resize-br {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.flc-inspector-resize-br::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-right: 2px solid rgba(255, 255, 255, 0.4);
+  border-bottom: 2px solid rgba(255, 255, 255, 0.4);
+  margin-bottom: 3px;
+  margin-right: 3px;
+}
+
+.flc-inspector-resize-r:hover,
+.flc-inspector-resize-b:hover,
+.flc-inspector-resize-br:hover {
+  background: var(--accent, #bee3db);
 }
 
 .flc-inspector-header {

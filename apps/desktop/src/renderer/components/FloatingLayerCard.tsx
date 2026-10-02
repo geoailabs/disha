@@ -57,6 +57,8 @@ interface FloatingLayerCardProps {
   onTabChange?: (tab: FloatingTab) => void
   isOpen?: boolean
   onClose?: () => void
+  width?: number
+  onResizeStart?: (e: React.MouseEvent) => void
   onSelectFeature?: (feature: any, layer: GeoJSONLayer) => void
   onHoverFeature?: (entry: SelectedFeatureEntry | null) => void
   onToggleLayer: (id: string) => void
@@ -128,6 +130,8 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
   onTabChange: onTabChangeProp,
   isOpen = true,
   onClose,
+  width,
+  onResizeStart,
   onHoverFeature,
   onToggleLayer,
   onRemoveLayer,
@@ -287,7 +291,17 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
   }
 
   return (
-    <div className={`floating-layer-card left-category-pane ${activeTab === 'scenarios' ? 'is-scenarios' : ''} ${scenarioDraft ? 'is-scenario-review' : ''}`}>
+    <div
+      className={`floating-layer-card left-category-pane ${activeTab === 'scenarios' ? 'is-scenarios' : ''} ${scenarioDraft ? 'is-scenario-review' : ''}`}
+      style={activeTab !== 'scenarios' && width ? { width: `${width}px` } : undefined}
+    >
+      {activeTab !== 'scenarios' && onResizeStart && (
+        <div
+          className="flc-resize-handle"
+          onMouseDown={onResizeStart}
+          title="Drag to resize panel"
+        />
+      )}
       {/* Dedicated Floating Category Pane Header */}
       <div className="flc-header">
         <div className="flc-category-title-group">
@@ -599,13 +613,13 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
 
             {/* Quick Opacity Slider */}
             <div className="flc-context-quick-opacity">
-              <span className="flc-cqo-label">Opacity: {Math.round((menuLayer.opacity ?? 1) * 100)}%</span>
+              <span className="flc-cqo-label">Opacity: {Math.round((menuLayer.opacity ?? 0.5) * 100)}%</span>
               <input
                 type="range"
-                min="0.1"
+                min="0.05"
                 max="1"
                 step="0.05"
-                value={menuLayer.opacity ?? 1}
+                value={menuLayer.opacity ?? 0.5}
                 onChange={(e) => {
                   onUpdateLayerQuickStyle?.(menuLayer.id, { opacity: parseFloat(e.target.value) })
                 }}

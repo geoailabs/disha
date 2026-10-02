@@ -42,32 +42,101 @@
   max-height: 52px;
 }
 
-/* Scenarios are a focused workflow rather than a narrow utility drawer. Give
-   the review enough room for the proposal, alternatives, and approval action
-   to be visible together. */
 .floating-layer-card.is-scenarios {
   position: fixed;
-  inset: 14px;
-  left: 14px;
-  width: auto;
+  top: 14px;
+  bottom: 14px;
+  left: calc(var(--sidebar-width, 58px) + 26px);
+  right: var(--chat-drawer-offset, 14px);
+  width: auto !important;
   height: auto;
   max-width: none;
-  z-index: 120;
+  z-index: 48;
   border-radius: 22px;
   background: rgba(10, 16, 27, 0.94);
   box-shadow: 0 28px 80px rgba(0, 0, 0, 0.62);
 }
 
 .floating-layer-card.is-scenarios .flc-content {
-  overflow: hidden;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 0;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+}
+
+.floating-layer-card.is-scenarios .flc-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.floating-layer-card.is-scenarios .flc-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.floating-layer-card.is-scenarios .flc-content::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 4px;
+}
+
+.floating-layer-card.is-scenarios .flc-content::-webkit-scrollbar-thumb:hover {
+  background: var(--frozen-water, #bee3db);
 }
 
 .floating-layer-card.is-scenarios .flc-tab-view,
 .floating-layer-card.is-scenarios .flc-scenarios-tab {
-  overflow: hidden;
-  padding: 24px clamp(22px, 4vw, 72px) 30px;
-  gap: 18px;
+  flex: none;
+  min-height: 100%;
+  height: auto;
+  overflow: visible;
+  padding: 24px clamp(22px, 4vw, 72px) 36px;
+  gap: 20px;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+.floating-layer-card.is-scenarios .flc-scenario-section {
+  flex-shrink: 0;
+  height: auto;
+}
+
+.floating-layer-card.is-scenarios .flc-scenario-builder-section {
+  flex-shrink: 0;
+  height: auto;
+}
+
+.floating-layer-card.is-scenarios .flc-scenario-list-section {
+  flex: none;
+  min-height: 240px;
+  height: auto;
+}
+
+.floating-layer-card.is-scenarios .scenario-panel {
+  flex: none;
+  overflow: visible;
+}
+
+.floating-layer-card.is-scenarios .scenario-list {
+  flex: none;
+  overflow: visible;
+}
+
+.flc-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 10;
+  transition: background 0.15s ease;
+}
+
+.flc-resize-handle:hover,
+.flc-resize-handle:active {
+  background: var(--accent, #bee3db);
 }
 
 .floating-layer-card.is-scenario-review .flc-scenario-list-section {

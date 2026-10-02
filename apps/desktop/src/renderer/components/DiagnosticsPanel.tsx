@@ -86,6 +86,28 @@ export default function DiagnosticsPanel({ onClose, workspacePath }: Diagnostics
       if (window.electronAPI) {
         await window.electronAPI.setAPIKey(openaiInput.trim())
         await window.electronAPI.setGoogleMapsKey(googleInput.trim())
+
+        // Immediately sync keys to the running Python backend process
+        try {
+          await fetch('http://localhost:8765/api/chat/sync-keys', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              openai_api_key: openaiInput.trim(),
+              google_maps_api_key: googleInput.trim(),
+            }),
+          })
+        } catch (syncErr) {
+          console.warn('Could not sync keys to backend:', syncErr)
+        }
+
+        // Broadcast to ChatPanel and other components
+        window.dispatchEvent(
+          new CustomEvent('disha-api-keys-updated', {
+            detail: { openai: openaiInput.trim(), google: googleInput.trim() },
+          })
+        )
+
         setSaveStatus('Keys saved successfully! Re-running checks...')
         setTimeout(() => setSaveStatus(null), 3000)
         // Trigger check run
