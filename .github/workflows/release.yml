@@ -36,6 +36,10 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
+      - name: Install system dependencies (macOS)
+        run: |
+          brew install sqlite || true
+
       - name: Install Python dependencies
         run: |
           cd packages/backend
