@@ -70,8 +70,10 @@ export default function DiagnosticsPanel({ onClose, workspacePath }: Diagnostics
         window.electronAPI.getAPIKey().catch(() => ''),
         window.electronAPI.getGoogleMapsKey().catch(() => '')
       ]).then(([oKey, gKey]) => {
-        if (oKey) setOpenaiInput(oKey)
-        if (gKey) setGoogleInput(gKey)
+        const cleanO = (oKey || '').replace(/[^\x20-\x7E]/g, '').trim()
+        const cleanG = (gKey || '').replace(/[^\x20-\x7E]/g, '').trim()
+        if (cleanO) setOpenaiInput(cleanO)
+        if (cleanG) setGoogleInput(cleanG)
         runChecks()
       })
     } else {
@@ -82,10 +84,14 @@ export default function DiagnosticsPanel({ onClose, workspacePath }: Diagnostics
   const handleSaveKeys = async (e: React.FormEvent) => {
     e.preventDefault()
     setSaveStatus('Saving keys...')
+    const cleanO = openaiInput.replace(/[^\x20-\x7E]/g, '').trim()
+    const cleanG = googleInput.replace(/[^\x20-\x7E]/g, '').trim()
+    setOpenaiInput(cleanO)
+    setGoogleInput(cleanG)
     try {
       if (window.electronAPI) {
-        await window.electronAPI.setAPIKey(openaiInput.trim())
-        await window.electronAPI.setGoogleMapsKey(googleInput.trim())
+        await window.electronAPI.setAPIKey(cleanO)
+        await window.electronAPI.setGoogleMapsKey(cleanG)
 
         // Immediately sync keys to the running Python backend process
         try {
@@ -93,8 +99,8 @@ export default function DiagnosticsPanel({ onClose, workspacePath }: Diagnostics
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              openai_api_key: openaiInput.trim(),
-              google_maps_api_key: googleInput.trim(),
+              openai_api_key: cleanO,
+              google_maps_api_key: cleanG,
             }),
           })
         } catch (syncErr) {
@@ -104,7 +110,7 @@ export default function DiagnosticsPanel({ onClose, workspacePath }: Diagnostics
         // Broadcast to ChatPanel and other components
         window.dispatchEvent(
           new CustomEvent('disha-api-keys-updated', {
-            detail: { openai: openaiInput.trim(), google: googleInput.trim() },
+            detail: { openai: cleanO, google: cleanG },
           })
         )
 

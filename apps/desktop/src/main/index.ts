@@ -172,6 +172,35 @@ function writeDefaultWorkspace(p: string): void {
   } catch { /* ignore */ }
 }
 
+// Key format and ASCII printable validation helpers
+function isValidOpenAIKey(k: unknown): k is string {
+  if (typeof k !== 'string') return false
+  const trimmed = k.trim()
+  return Boolean(
+    trimmed.length >= 8 &&
+    /^[\x20-\x7E]+$/.test(trimmed)
+  )
+}
+
+function isValidGoogleMapsKey(k: unknown): k is string {
+  if (typeof k !== 'string') return false
+  const trimmed = k.trim()
+  return Boolean(
+    trimmed.length >= 8 &&
+    /^[\x20-\x7E]+$/.test(trimmed)
+  )
+}
+
+function isValidGEEKey(k: unknown): k is string {
+  if (typeof k !== 'string') return false
+  const trimmed = k.trim()
+  return Boolean(
+    trimmed.includes('service_account') &&
+    trimmed.includes('private_key') &&
+    /^[\x20-\x7E\r\n\t]+$/.test(trimmed)
+  )
+}
+
 // API Key persistence with safeStorage encryption
 function readAndDecryptKey(): string {
   try {
@@ -179,24 +208,47 @@ function readAndDecryptKey(): string {
       if (!fs.existsSync(configPath)) continue
       try {
         const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
-        if (!config.key) continue
-        if (config.encrypted && safeStorage.isEncryptionAvailable()) {
+        if (!config || typeof config !== 'object') continue
+
+        // 1. Try safeStorage if marked encrypted
+        if (config.encrypted && config.key && safeStorage.isEncryptionAvailable()) {
           try {
             const encryptedBuffer = Buffer.from(config.key, 'hex')
             const decrypted = safeStorage.decryptString(encryptedBuffer)
-            if (decrypted) return decrypted
+            if (isValidOpenAIKey(decrypted)) return decrypted.trim()
           } catch (decryptErr) {
-            console.warn('safeStorage.decryptString failed:', decryptErr)
+            console.warn('safeStorage.decryptString failed for OpenAI key:', decryptErr)
           }
         }
-        try {
-          const decrypted = Buffer.from(config.key, 'base64').toString('utf-8')
-          if (decrypted && (decrypted.startsWith('sk-') || decrypted.length > 10)) {
-            return decrypted
-          }
-        } catch {}
-        if (typeof config.key === 'string' && config.key.startsWith('sk-')) {
-          return config.key
+
+        // 2. Try explicit fallback if present
+        if (config.fallback && typeof config.fallback === 'string') {
+          try {
+            const decrypted = Buffer.from(config.fallback, 'base64').toString('utf-8')
+            if (isValidOpenAIKey(decrypted)) {
+              // Self-heal safeStorage with current environment
+              try {
+                if (safeStorage.isEncryptionAvailable()) {
+                  const encryptedBuffer = safeStorage.encryptString(decrypted.trim())
+                  fs.writeFileSync(configPath, JSON.stringify({
+                    key: encryptedBuffer.toString('hex'),
+                    encrypted: true,
+                    fallback: config.fallback,
+                  }))
+                }
+              } catch {}
+              return decrypted.trim()
+            }
+          } catch {}
+        }
+
+        // 3. Try legacy base64 or plaintext ONLY if not marked encrypted
+        if (!config.encrypted && config.key && typeof config.key === 'string') {
+          try {
+            const decrypted = Buffer.from(config.key, 'base64').toString('utf-8')
+            if (isValidOpenAIKey(decrypted)) return decrypted.trim()
+          } catch {}
+          if (isValidOpenAIKey(config.key)) return config.key.trim()
         }
       } catch {
         continue
@@ -211,8 +263,9 @@ function readAndDecryptKey(): string {
 
 function encryptAndSaveKey(key: string): boolean {
   try {
+    const cleanKey = (key || '').trim().replace(/[^\x20-\x7E]/g, '')
     const primary = getPrimaryConfigPath('api-key.json')
-    if (!key || !key.trim()) {
+    if (!cleanKey) {
       for (const p of getConfigCandidates('api-key.json')) {
         if (fs.existsSync(p)) {
           try { fs.unlinkSync(p) } catch { /* ignore */ }
@@ -226,17 +279,23 @@ function encryptAndSaveKey(key: string): boolean {
     let useEncryption = false
     try {
       if (safeStorage.isEncryptionAvailable()) {
-        const encryptedBuffer = safeStorage.encryptString(key.trim())
+        const encryptedBuffer = safeStorage.encryptString(cleanKey)
         storedValue = encryptedBuffer.toString('hex')
         useEncryption = true
       } else {
-        storedValue = Buffer.from(key.trim()).toString('base64')
+        storedValue = Buffer.from(cleanKey).toString('base64')
       }
     } catch {
-      storedValue = Buffer.from(key.trim()).toString('base64')
+      storedValue = Buffer.from(cleanKey).toString('base64')
       useEncryption = false
     }
-    const data = JSON.stringify({ key: storedValue, encrypted: useEncryption })
+
+    const fallback = Buffer.from(cleanKey).toString('base64')
+    const data = JSON.stringify({
+      key: storedValue,
+      encrypted: useEncryption,
+      fallback: fallback,
+    })
     fs.mkdirSync(path.dirname(primary), { recursive: true })
     fs.writeFileSync(primary, data)
     if (isDev) {
@@ -248,7 +307,7 @@ function encryptAndSaveKey(key: string): boolean {
         } catch { /* ignore */ }
       }
     }
-    process.env['OPENAI_API_KEY'] = key.trim()
+    process.env['OPENAI_API_KEY'] = cleanKey
     return true
   } catch (err) {
     console.error('Failed to encrypt/save API key:', err)
@@ -263,24 +322,47 @@ function readAndDecryptGoogleMapsKey(): string {
       if (!fs.existsSync(configPath)) continue
       try {
         const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
-        if (!config.key) continue
-        if (config.encrypted && safeStorage.isEncryptionAvailable()) {
+        if (!config || typeof config !== 'object') continue
+
+        // 1. Try safeStorage if marked encrypted
+        if (config.encrypted && config.key && safeStorage.isEncryptionAvailable()) {
           try {
             const encryptedBuffer = Buffer.from(config.key, 'hex')
             const decrypted = safeStorage.decryptString(encryptedBuffer)
-            if (decrypted) return decrypted
+            if (isValidGoogleMapsKey(decrypted)) return decrypted.trim()
           } catch (decryptErr) {
             console.warn('safeStorage.decryptString failed for Google Maps:', decryptErr)
           }
         }
-        try {
-          const decrypted = Buffer.from(config.key, 'base64').toString('utf-8')
-          if (decrypted && (decrypted.startsWith('AIza') || decrypted.length > 5)) {
-            return decrypted
-          }
-        } catch {}
-        if (typeof config.key === 'string' && config.key.startsWith('AIza')) {
-          return config.key
+
+        // 2. Try explicit fallback if present
+        if (config.fallback && typeof config.fallback === 'string') {
+          try {
+            const decrypted = Buffer.from(config.fallback, 'base64').toString('utf-8')
+            if (isValidGoogleMapsKey(decrypted)) {
+              // Self-heal safeStorage with current environment
+              try {
+                if (safeStorage.isEncryptionAvailable()) {
+                  const encryptedBuffer = safeStorage.encryptString(decrypted.trim())
+                  fs.writeFileSync(configPath, JSON.stringify({
+                    key: encryptedBuffer.toString('hex'),
+                    encrypted: true,
+                    fallback: config.fallback,
+                  }))
+                }
+              } catch {}
+              return decrypted.trim()
+            }
+          } catch {}
+        }
+
+        // 3. Try legacy base64 or plaintext ONLY if not marked encrypted
+        if (!config.encrypted && config.key && typeof config.key === 'string') {
+          try {
+            const decrypted = Buffer.from(config.key, 'base64').toString('utf-8')
+            if (isValidGoogleMapsKey(decrypted)) return decrypted.trim()
+          } catch {}
+          if (isValidGoogleMapsKey(config.key)) return config.key.trim()
         }
       } catch {
         continue
@@ -295,8 +377,9 @@ function readAndDecryptGoogleMapsKey(): string {
 
 function encryptAndSaveGoogleMapsKey(key: string): boolean {
   try {
+    const cleanKey = (key || '').trim().replace(/[^\x20-\x7E]/g, '')
     const primary = getPrimaryConfigPath('google-maps-key.json')
-    if (!key || !key.trim()) {
+    if (!cleanKey) {
       for (const p of getConfigCandidates('google-maps-key.json')) {
         if (fs.existsSync(p)) {
           try { fs.unlinkSync(p) } catch { /* ignore */ }
@@ -310,17 +393,23 @@ function encryptAndSaveGoogleMapsKey(key: string): boolean {
     let useEncryption = false
     try {
       if (safeStorage.isEncryptionAvailable()) {
-        const encryptedBuffer = safeStorage.encryptString(key.trim())
+        const encryptedBuffer = safeStorage.encryptString(cleanKey)
         storedValue = encryptedBuffer.toString('hex')
         useEncryption = true
       } else {
-        storedValue = Buffer.from(key.trim()).toString('base64')
+        storedValue = Buffer.from(cleanKey).toString('base64')
       }
     } catch {
-      storedValue = Buffer.from(key.trim()).toString('base64')
+      storedValue = Buffer.from(cleanKey).toString('base64')
       useEncryption = false
     }
-    const data = JSON.stringify({ key: storedValue, encrypted: useEncryption })
+
+    const fallback = Buffer.from(cleanKey).toString('base64')
+    const data = JSON.stringify({
+      key: storedValue,
+      encrypted: useEncryption,
+      fallback: fallback,
+    })
     fs.mkdirSync(path.dirname(primary), { recursive: true })
     fs.writeFileSync(primary, data)
     if (isDev) {
@@ -332,7 +421,7 @@ function encryptAndSaveGoogleMapsKey(key: string): boolean {
         } catch { /* ignore */ }
       }
     }
-    process.env['GOOGLE_MAPS_API_KEY'] = key.trim()
+    process.env['GOOGLE_MAPS_API_KEY'] = cleanKey
     return true
   } catch (err) {
     console.error('Failed to encrypt/save Google Maps API key:', err)
@@ -347,24 +436,47 @@ function readAndDecryptGEEKey(): string {
       if (!fs.existsSync(configPath)) continue
       try {
         const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
-        if (!config.key) continue
-        if (config.encrypted && safeStorage.isEncryptionAvailable()) {
+        if (!config || typeof config !== 'object') continue
+
+        // 1. Try safeStorage if marked encrypted
+        if (config.encrypted && config.key && safeStorage.isEncryptionAvailable()) {
           try {
             const encryptedBuffer = Buffer.from(config.key, 'hex')
             const decrypted = safeStorage.decryptString(encryptedBuffer)
-            if (decrypted) return decrypted
+            if (isValidGEEKey(decrypted)) return decrypted.trim()
           } catch (decryptErr) {
             console.warn('safeStorage.decryptString failed for GEE:', decryptErr)
           }
         }
-        try {
-          const decrypted = Buffer.from(config.key, 'base64').toString('utf-8')
-          if (decrypted && decrypted.includes('service_account')) {
-            return decrypted
-          }
-        } catch {}
-        if (typeof config.key === 'string' && config.key.includes('service_account')) {
-          return config.key
+
+        // 2. Try explicit fallback if present
+        if (config.fallback && typeof config.fallback === 'string') {
+          try {
+            const decrypted = Buffer.from(config.fallback, 'base64').toString('utf-8')
+            if (isValidGEEKey(decrypted)) {
+              // Self-heal safeStorage with current environment
+              try {
+                if (safeStorage.isEncryptionAvailable()) {
+                  const encryptedBuffer = safeStorage.encryptString(decrypted.trim())
+                  fs.writeFileSync(configPath, JSON.stringify({
+                    key: encryptedBuffer.toString('hex'),
+                    encrypted: true,
+                    fallback: config.fallback,
+                  }))
+                }
+              } catch {}
+              return decrypted.trim()
+            }
+          } catch {}
+        }
+
+        // 3. Try legacy base64 or plaintext ONLY if not marked encrypted
+        if (!config.encrypted && config.key && typeof config.key === 'string') {
+          try {
+            const decrypted = Buffer.from(config.key, 'base64').toString('utf-8')
+            if (isValidGEEKey(decrypted)) return decrypted.trim()
+          } catch {}
+          if (isValidGEEKey(config.key)) return config.key.trim()
         }
       } catch {
         continue
@@ -379,8 +491,9 @@ function readAndDecryptGEEKey(): string {
 
 function encryptAndSaveGEEKey(key: string): boolean {
   try {
+    const cleanKey = (key || '').trim().replace(/[^\x20-\x7E\r\n\t]/g, '')
     const primary = getPrimaryConfigPath('gee-credentials.json')
-    if (!key || !key.trim()) {
+    if (!cleanKey) {
       for (const p of getConfigCandidates('gee-credentials.json')) {
         if (fs.existsSync(p)) {
           try { fs.unlinkSync(p) } catch { /* ignore */ }
@@ -394,17 +507,23 @@ function encryptAndSaveGEEKey(key: string): boolean {
     let useEncryption = false
     try {
       if (safeStorage.isEncryptionAvailable()) {
-        const encryptedBuffer = safeStorage.encryptString(key.trim())
+        const encryptedBuffer = safeStorage.encryptString(cleanKey)
         storedValue = encryptedBuffer.toString('hex')
         useEncryption = true
       } else {
-        storedValue = Buffer.from(key.trim()).toString('base64')
+        storedValue = Buffer.from(cleanKey).toString('base64')
       }
     } catch {
-      storedValue = Buffer.from(key.trim()).toString('base64')
+      storedValue = Buffer.from(cleanKey).toString('base64')
       useEncryption = false
     }
-    const data = JSON.stringify({ key: storedValue, encrypted: useEncryption })
+
+    const fallback = Buffer.from(cleanKey).toString('base64')
+    const data = JSON.stringify({
+      key: storedValue,
+      encrypted: useEncryption,
+      fallback: fallback,
+    })
     fs.mkdirSync(path.dirname(primary), { recursive: true })
     fs.writeFileSync(primary, data)
     if (isDev) {
@@ -416,7 +535,7 @@ function encryptAndSaveGEEKey(key: string): boolean {
         } catch { /* ignore */ }
       }
     }
-    process.env['GOOGLE_EARTH_ENGINE_CREDS'] = key.trim()
+    process.env['GOOGLE_EARTH_ENGINE_CREDS'] = cleanKey
     return true
   } catch (err) {
     console.error('Failed to encrypt/save GEE key:', err)

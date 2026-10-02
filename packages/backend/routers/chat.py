@@ -118,15 +118,17 @@ async def _send_action_if_allowed(ws: WebSocket, action: str, payload: dict) -> 
 
 
 def _env_openai_api_key() -> str:
-    return (os.environ.get("OPENAI_API_KEY") or "").strip()
+    raw = (os.environ.get("OPENAI_API_KEY") or "").strip()
+    return "".join(c for c in raw if 32 <= ord(c) <= 126).strip()
 
 
 def _env_google_maps_api_key() -> str:
-    return (
+    raw = (
         os.environ.get("GOOGLE_MAPS_API_KEY")
         or os.environ.get("GOOGLE_API_KEY")
         or ""
     ).strip()
+    return "".join(c for c in raw if 32 <= ord(c) <= 126).strip()
 
 
 _env_key = _env_openai_api_key()
@@ -2111,14 +2113,20 @@ class ValidateKeyRequest(BaseModel):
 
 @router.post("/validate-key")
 async def validate_key(req: ValidateKeyRequest):
+    global _client, _env_key
     try:
-        if not req.api_key or not req.api_key.strip():
-            return {"valid": False, "error": "API Key is empty."}
+        clean_key = "".join(c for c in (req.api_key or "") if 32 <= ord(c) <= 126).strip()
+        if not clean_key:
+            return {"valid": False, "error": "API Key is empty or contains invalid characters."}
         # Lightweight check to validate key
-        temp_client = AsyncOpenAI(api_key=req.api_key.strip())
+        temp_client = AsyncOpenAI(api_key=clean_key)
         await temp_client.models.list()
-        os.environ["OPENAI_API_KEY"] = req.api_key.strip()
+        os.environ["OPENAI_API_KEY"] = clean_key
+        _env_key = clean_key
+        _client = AsyncOpenAI(api_key=clean_key)
         return {"valid": True}
+    except UnicodeEncodeError as ue:
+        return {"valid": False, "error": f"API Key contains invalid characters: {ue}"}
     except Exception as e:
         return {"valid": False, "error": str(e)}
 
@@ -2130,10 +2138,23 @@ class SyncKeysRequest(BaseModel):
 
 @router.post("/sync-keys")
 async def sync_keys(req: SyncKeysRequest):
-    if req.openai_api_key:
-        os.environ["OPENAI_API_KEY"] = req.openai_api_key.strip()
-    if req.google_maps_api_key:
-        os.environ["GOOGLE_MAPS_API_KEY"] = req.google_maps_api_key.strip()
+    global _client, _env_key
+    if req.openai_api_key is not None:
+        clean_oa = "".join(c for c in req.openai_api_key if 32 <= ord(c) <= 126).strip()
+        if clean_oa:
+            os.environ["OPENAI_API_KEY"] = clean_oa
+            _env_key = clean_oa
+            _client = AsyncOpenAI(api_key=clean_oa)
+        else:
+            os.environ.pop("OPENAI_API_KEY", None)
+            _env_key = ""
+            _client = None
+    if req.google_maps_api_key is not None:
+        clean_gm = "".join(c for c in req.google_maps_api_key if 32 <= ord(c) <= 126).strip()
+        if clean_gm:
+            os.environ["GOOGLE_MAPS_API_KEY"] = clean_gm
+        else:
+            os.environ.pop("GOOGLE_MAPS_API_KEY", None)
     return {
         "status": "ok",
         "openai": bool(_env_openai_api_key()),

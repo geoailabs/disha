@@ -694,13 +694,15 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
     let envStatusLoaded = false
 
     try {
-      storedApiKey = await window.electronAPI.getAPIKey()
+      const raw = await window.electronAPI.getAPIKey()
+      storedApiKey = (raw || '').replace(/[^\x20-\x7E]/g, '').trim()
     } catch (err) {
       console.error('Failed to load API key from secure storage:', err)
     }
 
     try {
-      storedGoogleKey = await window.electronAPI.getGoogleMapsKey()
+      const raw = await window.electronAPI.getGoogleMapsKey()
+      storedGoogleKey = (raw || '').replace(/[^\x20-\x7E]/g, '').trim()
     } catch (err) {
       console.error('Failed to load Google Maps API key:', err)
     }
@@ -1338,6 +1340,7 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
   }
 
   const validateAndSaveKey = async (keyToSave: string): Promise<boolean> => {
+    const cleanKey = (keyToSave || '').replace(/[^\x20-\x7E]/g, '').trim()
     setIsSavingKey(true)
     setKeyError(null)
     setKeySuccess(false)
@@ -1345,20 +1348,20 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
       const res = await fetch('http://localhost:8765/api/chat/validate-key', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ api_key: keyToSave }),
+        body: JSON.stringify({ api_key: cleanKey }),
       })
       const data = await res.json()
       if (data.valid) {
-        const ok = await window.electronAPI.setAPIKey(keyToSave)
+        const ok = await window.electronAPI.setAPIKey(cleanKey)
         if (ok) {
-          setApiKey(keyToSave)
+          setApiKey(cleanKey)
           setChatError(null)
           setIsSavingKey(false)
           setKeySuccess(true)
           fetch('http://localhost:8765/api/chat/sync-keys', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ openai_api_key: keyToSave }),
+            body: JSON.stringify({ openai_api_key: cleanKey }),
           }).catch(() => {})
           setTimeout(() => {
             setKeySuccess(false)
@@ -1393,18 +1396,19 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
   }
 
   const saveGoogleKey = async (keyToSave: string): Promise<boolean> => {
+    const cleanKey = (keyToSave || '').replace(/[^\x20-\x7E]/g, '').trim()
     setIsSavingGoogleKey(true)
     setGoogleKeyError(null)
     try {
-      const ok = await window.electronAPI.setGoogleMapsKey(keyToSave)
+      const ok = await window.electronAPI.setGoogleMapsKey(cleanKey)
       if (ok) {
-        setGoogleKey(keyToSave)
+        setGoogleKey(cleanKey)
         setIsSavingGoogleKey(false)
         setGoogleKeySuccess(true)
         fetch('http://localhost:8765/api/chat/sync-keys', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ google_maps_api_key: keyToSave }),
+          body: JSON.stringify({ google_maps_api_key: cleanKey }),
         }).catch(() => {})
         setTimeout(() => setGoogleKeySuccess(false), 2000)
         return true
@@ -1426,13 +1430,14 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
   }
 
   const saveGeeKey = async (keyToSave: string): Promise<boolean> => {
+    const cleanKey = (keyToSave || '').replace(/[^\x20-\x7E\r\n\t]/g, '').trim()
     setIsSavingGeeKey(true)
     setGeeKeyError(null)
     try {
       // 1. Validate structure first if not empty
-      if (keyToSave.trim()) {
+      if (cleanKey) {
         try {
-          const parsed = JSON.parse(keyToSave)
+          const parsed = JSON.parse(cleanKey)
           if (!parsed || parsed.type !== 'service_account') {
             throw new Error("JSON must have type: 'service_account'")
           }
@@ -1444,9 +1449,9 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
       }
 
       // 2. Save locally encrypted in main process
-      const ok = await window.electronAPI.setGEEKey(keyToSave)
+      const ok = await window.electronAPI.setGEEKey(cleanKey)
       if (ok) {
-        setGeeKey(keyToSave)
+        setGeeKey(cleanKey)
         
         // 3. Sync to Python backend process dynamically
         const workspacePath = mapContext.workspace
@@ -1454,7 +1459,7 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
         const response = await fetch(`http://localhost:8765/api/gee/credentials${wsParam}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ credentials: keyToSave }),
+          body: JSON.stringify({ credentials: cleanKey }),
         })
         
         if (response.ok) {
@@ -1652,10 +1657,11 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
   const sendMessageDirect = async (text: string): Promise<void> => {
     if ((!text.trim() && attachments.length === 0) || isStreaming || !activeConversation) return
 
-    let effectiveApiKey = apiKey.trim()
+    let effectiveApiKey = apiKey.replace(/[^\x20-\x7E]/g, '').trim()
     if (!effectiveApiKey && window.electronAPI) {
       try {
-        effectiveApiKey = (await window.electronAPI.getAPIKey()) || ''
+        const raw = await window.electronAPI.getAPIKey()
+        effectiveApiKey = (raw || '').replace(/[^\x20-\x7E]/g, '').trim()
         if (effectiveApiKey) {
           setApiKey(effectiveApiKey)
         }
@@ -1711,8 +1717,8 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
       const payload: Record<string, unknown> = {
         content: userMessage.content,
         map_context: mapContext,
-        api_key: effectiveApiKey || apiKey,
-        google_maps_api_key: googleKey,
+        api_key: effectiveApiKey || apiKey.replace(/[^\x20-\x7E]/g, '').trim(),
+        google_maps_api_key: (googleKey || '').replace(/[^\x20-\x7E]/g, '').trim(),
         image: documentImage
           ? {
               base64: documentImage.base64,

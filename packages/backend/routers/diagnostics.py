@@ -27,7 +27,8 @@ async def run_diagnostics(
     google_maps_api_key: str | None = Query(None),
 ) -> DiagnosticResult:
     # 1. Check OpenAI API Key
-    openai_key = (openai_api_key or os.environ.get("OPENAI_API_KEY", "")).strip()
+    raw_openai_key = (openai_api_key or os.environ.get("OPENAI_API_KEY", "")).strip()
+    openai_key = "".join(c for c in raw_openai_key if 32 <= ord(c) <= 126).strip()
     if not openai_key:
         openai_status = {"status": "missing", "message": "OPENAI_API_KEY is not set."}
     else:
@@ -35,16 +36,19 @@ async def run_diagnostics(
             client = AsyncOpenAI(api_key=openai_key, timeout=5.0)
             await client.models.list()
             openai_status = {"status": "valid", "message": "OpenAI API Key is valid."}
+        except UnicodeEncodeError as ue:
+            openai_status = {"status": "invalid", "message": f"OpenAI API Key contains invalid non-ASCII characters: {ue}"}
         except Exception as e:
             openai_status = {"status": "invalid", "message": f"OpenAI API check failed: {e}"}
 
     # 2. Check Google Maps API Key
-    google_key = (
+    raw_google_key = (
         google_maps_api_key
         or os.environ.get("GOOGLE_MAPS_API_KEY")
         or os.environ.get("GOOGLE_API_KEY")
         or ""
     ).strip()
+    google_key = "".join(c for c in raw_google_key if 32 <= ord(c) <= 126).strip()
     if not google_key:
         google_status = {"status": "missing", "message": "GOOGLE_MAPS_API_KEY is not set."}
     else:
@@ -56,6 +60,8 @@ async def run_diagnostics(
                     google_status = {"status": "valid", "message": "Google Maps API Key is active."}
                 else:
                     google_status = {"status": "invalid", "message": f"Google API returned HTTP {resp.status_code}."}
+        except UnicodeEncodeError as ue:
+            google_status = {"status": "invalid", "message": f"Google Maps API Key contains invalid characters: {ue}"}
         except Exception as e:
             google_status = {"status": "configured", "message": f"Google Maps key set. Verify status: {e}"}
 
