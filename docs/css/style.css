@@ -57,9 +57,13 @@
   --shadow-lg: 0 24px 60px -15px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.04);
   --shadow-glow: 0 0 24px rgba(94, 106, 210, 0.12);
   
-  /* Transitions */
+  /* Transitions (Recordly / Framer Fluid Curves) */
   --transition-fast: 0.15s cubic-bezier(0.16, 1, 0.3, 1);
   --transition-normal: 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-smooth: 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-reveal: 0.75s cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-recordly: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-fluid: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* Optional Dark Mode (Preserved for theme toggle, but light is default) */
@@ -310,7 +314,11 @@ h1, h2, h3, h4, h5, h6 {
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border-bottom: 1px solid var(--border-subtle);
-  transition: background-color var(--transition-normal), border-color var(--transition-normal);
+  transition: background-color 0.3s var(--ease-fluid), border-color 0.3s var(--ease-fluid), box-shadow 0.3s var(--ease-fluid);
+}
+
+.site-header.scrolled {
+  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.06);
 }
 
 .header-inner {
@@ -452,7 +460,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 /* ==========================================================================
-   Buttons & CTAs (Linear Signature Aesthetic)
+   Buttons & CTAs (Linear & Recordly Signature Aesthetic)
    ========================================================================== */
 .btn {
   display: inline-flex;
@@ -465,10 +473,21 @@ h1, h2, h3, h4, h5, h6 {
   font-size: 0.875rem;
   font-weight: 500;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: all 0.25s var(--ease-fluid);
   border: 1px solid transparent;
   white-space: nowrap;
   text-decoration: none;
+  transform: translateY(0);
+  will-change: transform, box-shadow;
+}
+
+.btn:hover {
+  transform: translateY(-2px);
+}
+
+.btn:active {
+  transform: translateY(0) scale(0.98);
+  transition: transform 0.1s ease;
 }
 
 .btn-primary {
@@ -481,8 +500,8 @@ h1, h2, h3, h4, h5, h6 {
 .btn-primary:hover {
   background: #18191C;
   border-color: #18191C;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.24);
 }
 
 [data-theme="dark"] .btn-primary {
@@ -494,6 +513,8 @@ h1, h2, h3, h4, h5, h6 {
 [data-theme="dark"] .btn-primary:hover {
   background: #FFFFFF;
   border-color: #FFFFFF;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px -4px rgba(255, 255, 255, 0.24);
 }
 
 .btn-secondary {
@@ -506,8 +527,8 @@ h1, h2, h3, h4, h5, h6 {
 .btn-secondary:hover {
   background: var(--bg-secondary);
   border-color: var(--border-hover);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-sm);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px -4px rgba(0, 0, 0, 0.08);
 }
 
 [data-theme="dark"] .btn-secondary {
@@ -638,9 +659,9 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 /* ==========================================================================
-   Hero Desktop App Showcase (Video & Window Frame)
+   Hero Desktop App Showcase (Recordly & Linear Style Video Frame)
    ========================================================================== */
-.prompt-simulator, .app-window-showcase, .hero-video-showcase {
+.prompt-simulator, .app-window-showcase {
   margin: 52px auto 0;
   max-width: 1040px;
   background: var(--bg-panel);
@@ -652,15 +673,54 @@ h1, h2, h3, h4, h5, h6 {
   transition: transform var(--transition-normal), box-shadow var(--transition-normal);
 }
 
-.app-window-showcase:hover, .hero-video-showcase:hover {
-  box-shadow: 0 36px 90px -20px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.06);
+.hero-video-showcase {
+  margin: 52px auto 0;
+  max-width: 1040px;
+  background: #000;
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  overflow: hidden;
+  position: relative;
+  box-shadow: 0 24px 60px -15px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.04), 0 0 50px -10px rgba(0, 89, 255, 0.08);
+  line-height: 0;
+  transition: transform 0.45s var(--ease-recordly), box-shadow 0.45s var(--ease-recordly), border-color 0.3s ease;
+  will-change: transform, box-shadow;
+}
+
+.hero-video-showcase:hover {
+  transform: translateY(-4px) scale(1.002);
+  box-shadow: 0 36px 90px -20px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.06), 0 0 70px -5px rgba(0, 89, 255, 0.14);
 }
 
 .hero-video {
   width: 100%;
   height: auto;
   display: block;
-  border-radius: inherit;
+  border-radius: 16px;
+  object-fit: cover;
+}
+
+/* ==========================================================================
+   Recordly-Style Smooth Motion & Scroll Reveal Engine
+   ========================================================================== */
+.motion-reveal {
+  opacity: 0;
+  transform: translateY(22px);
+  transition: opacity 0.75s var(--ease-recordly), transform 0.75s var(--ease-recordly);
+  will-change: opacity, transform;
+}
+
+.motion-reveal.in-view {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .motion-reveal {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
 }
 
 .app-window-body {
@@ -939,14 +999,15 @@ section {
   gap: 8px;
   position: relative;
   box-shadow: none;
-  transition: border-color var(--transition-fast);
+  transition: transform 0.35s var(--ease-recordly), border-color 0.25s ease;
+  will-change: transform;
 }
 
 .feature-card:hover {
   border-top-color: var(--text-primary);
   background: transparent;
   box-shadow: none;
-  transform: none;
+  transform: translateY(-3px);
 }
 
 .feature-card-top {
@@ -1105,12 +1166,13 @@ section {
   align-items: center;
   gap: 8px;
   box-shadow: none;
-  transition: border-color var(--transition-fast);
+  transition: transform 0.35s var(--ease-recordly), border-color 0.25s ease;
+  will-change: transform;
 }
 
 .download-os-card:hover {
   border-top-color: var(--text-primary);
-  transform: none;
+  transform: translateY(-3px);
   box-shadow: none;
 }
 

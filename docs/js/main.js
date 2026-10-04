@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.DishaComponents.init();
   }
   initTheme();
+  initScrollTransitions();
   initMobileMenu();
   initSimulator();
   initChangelogFilters();
@@ -23,6 +24,80 @@ function initTheme() {
   try {
     localStorage.removeItem('disha-theme');
   } catch (e) {}
+}
+
+/* ==========================================================================
+   2. Recordly-Style Smooth Motion & Scroll Transition Engine
+   ========================================================================== */
+function initScrollTransitions() {
+  // Sticky header transition on scroll
+  const siteHeader = document.querySelector('.site-header');
+  const updateHeaderScroll = () => {
+    if (!siteHeader) return;
+    if (window.scrollY > 15) {
+      siteHeader.classList.add('scrolled');
+    } else {
+      siteHeader.classList.remove('scrolled');
+    }
+  };
+  window.addEventListener('scroll', updateHeaderScroll, { passive: true });
+  updateHeaderScroll();
+
+  // If user prefers reduced motion, skip reveal animations
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    return;
+  }
+
+  // Target elements for reveal
+  const revealSelectors = [
+    '.hero-content .eyebrow',
+    '.hero-title',
+    '.hero-description',
+    '.hero-actions',
+    '.hero-specs',
+    '.hero-video-showcase',
+    '.section-header',
+    '.compare-grid > div',
+    '.feature-card',
+    '.download-os-card',
+    '.docs-card',
+    '.step-card'
+  ];
+
+  const elements = document.querySelectorAll(revealSelectors.join(', '));
+  if (!elements.length) return;
+
+  // Stagger delays for sibling grids (features, specs, download cards)
+  const staggerGroups = ['.features-grid', '.download-cards-row', '.hero-specs'];
+  staggerGroups.forEach(groupSel => {
+    const containers = document.querySelectorAll(groupSel);
+    containers.forEach(container => {
+      const children = Array.from(container.children);
+      children.forEach((child, idx) => {
+        child.style.transitionDelay = `${(idx % 6) * 0.07}s`;
+      });
+    });
+  });
+
+  elements.forEach(el => {
+    el.classList.add('motion-reveal');
+  });
+
+  const observer = new IntersectionObserver((entries, obs) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('in-view');
+        obs.unobserve(entry.target);
+      }
+    });
+  }, {
+    threshold: 0.08,
+    rootMargin: '0px 0px -30px 0px'
+  });
+
+  elements.forEach(el => {
+    observer.observe(el);
+  });
 }
 
 /* ==========================================================================
