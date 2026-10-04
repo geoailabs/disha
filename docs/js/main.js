@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.DishaComponents.init();
   }
   initTheme();
+  initHeroVideo();
   initScrollTransitions();
   initMobileMenu();
   initSimulator();
@@ -24,6 +25,37 @@ function initTheme() {
   try {
     localStorage.removeItem('disha-theme');
   } catch (e) {}
+}
+
+/* ==========================================================================
+   Hero Video Continuous Playback Lock
+   ========================================================================== */
+function initHeroVideo() {
+  const video = document.querySelector('.hero-video');
+  if (!video) return;
+
+  const ensurePlaying = () => {
+    if (video.paused) {
+      video.play().catch(() => {});
+    }
+    if (video.playbackRate !== 1) {
+      video.playbackRate = 1;
+    }
+  };
+
+  video.addEventListener('pause', ensurePlaying);
+  video.addEventListener('ratechange', () => {
+    if (video.playbackRate !== 1) {
+      video.playbackRate = 1;
+    }
+  });
+
+  ensurePlaying();
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      ensurePlaying();
+    }
+  });
 }
 
 /* ==========================================================================
