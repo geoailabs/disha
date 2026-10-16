@@ -620,7 +620,7 @@ async function startBackend(): Promise<void> {
       ? path.join(backendDir, '.buildenv', 'Scripts', 'python.exe')
       : path.join(backendDir, '.buildenv', 'bin', 'python')
     command = fs.existsSync(venvPython) ? venvPython : (process.platform === 'win32' ? 'python' : 'python3')
-    args = ['-m', 'uvicorn', 'main:app', '--host', BACKEND_HOST, '--port', String(BACKEND_PORT)]
+    args = ['-m', 'uvicorn', 'main:app', '--reload', '--host', BACKEND_HOST, '--port', String(BACKEND_PORT)]
     cwd = backendDir
   } else {
     const backendBinary = process.platform === 'win32' ? 'backend.exe' : 'backend'
