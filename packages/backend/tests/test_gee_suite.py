@@ -238,3 +238,22 @@ def test_chat_router_system_prompt_and_actions():
     assert "get_dem_layer" in SYSTEM_PROMPT
     assert "38. RASTER & EARTH ENGINE (GEE) EXECUTION MANDATE:" in SYSTEM_PROMPT
 
+    # Temporal Timeline registration & mandate
+    assert "set_timeline" in _ACTION_TOOLS
+    assert "close_timeline" in _ACTION_TOOLS
+    assert "set_timeline" in tool_names
+    assert "close_timeline" in tool_names
+    assert "39. TEMPORAL PLAYBACK TIMELINE MANDATE:" in SYSTEM_PROMPT
+
+
+def test_step_layer_endpoint_validation():
+    """Verify that /api/gee/step_layer validates required parameters properly."""
+    app = FastAPI()
+    app.include_router(gee_router, prefix="/api/gee")
+    client = TestClient(app)
+
+    # 1. Missing tool_name returns 400
+    res = client.post("/api/gee/step_layer", json={"step": "2020"})
+    assert res.status_code == 400
+    assert "tool_name is required" in res.json()["detail"]
+

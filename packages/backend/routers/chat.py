@@ -164,6 +164,7 @@ _ACTION_TOOLS = {
     "highlight_features", "set_layer_style", "style_layer", "toggle_layer", "remove_layer",
     "save_bookmark", "go_to_bookmark", "export_region_clip", "export_map_png", "export_map_jpeg", "export_map_pdf",
     "switch_basemap", "add_geojson_file", "add_gee_layer", "add_raster_overlay",
+    "set_timeline", "close_timeline",
 }
 
 # ── System prompt ─────────────────────────────────────────────────────────────
@@ -356,7 +357,10 @@ SYSTEM_PROMPT = (
     "with dataset_ids, titles, and categories — call this first before importing), "
     "import_public_dataset (download and load a named dataset: national boundaries, states, districts, "
     "railway lines, stations, rivers, highways, urban agglomerations, etc.), "
-    "import_datameet_boundary (fetch state/district/village boundaries by administrative level).\n\n"
+    "import_datameet_boundary (fetch state/district/village boundaries by administrative level).\n"
+    "- Temporal Playback Timeline: "
+    "set_timeline (display an interactive dark floating playback timeline scrubber on the map when the user requests temporal or multi-year data; pass title, start, end, steps, tool_name, and tool_args), "
+    "close_timeline (dismiss/hide the timeline bar).\n\n"
     "MAP CONTEXT:\n"
     "The current map state is appended to every message. It includes:\n"
     "- center: current map center coordinates [longitude, latitude].\n"
@@ -547,6 +551,11 @@ SYSTEM_PROMPT = (
     "  - You MUST execute the corresponding GEE tool (`get_population_layer`, `get_surface_temperature_layer`, `get_dem_layer`, `get_atmospheric_layer`, `get_sentinel_layer`, `get_landsat_layer`, `get_climate_layer`, `get_weather_layer`, `get_agriculture_layer`, `get_geophysical_layer`, `get_modis_layer`, `get_land_cover`).\n"
     "  - Pass `place_name='<City>'` (and coordinates if known from Map Context).\n"
     "  - NEVER claim in chat text that you loaded or added a raster, population map, or Earth Engine layer without actually executing the tool call in that turn.\n"
+    "39. TEMPORAL PLAYBACK TIMELINE MANDATE:\n"
+    "  - Whenever the user asks for time-series, temporal changes, historical comparisons, or data over a range of years or dates for Earth Engine / remote sensing datasets (e.g. 'show land cover change from 2018 to 2023 in <place>', 'display surface temperature between 2015 and 2024', 'Sentinel imagery over the last 5 years', 'hourly temperature from 10 PM to 2 AM'):\n"
+    "  - You MUST execute the initial layer tool (e.g. `get_surface_temperature_layer` or `get_land_cover` or `get_sentinel_layer` for the start or current year/date) AND call `set_timeline`.\n"
+    "  - In `set_timeline`, set `start` and `end` matching the user's prompt (e.g. start='2018', end='2023'), generate `steps` (e.g. ['2018', '2019', '2020', '2021', '2022', '2023']), set `tool_name` to the GEE tool invoked, and provide `tool_args`.\n"
+    "  - The interactive dark floating timeline scrubber will appear on the map allowing the user to play, scrub, and edit the date range.\n"
 )
 
 
@@ -1333,6 +1342,29 @@ def _build_tools() -> list[dict]:
                 "title": {"type": "string", "description": "Display title for the layer in the Layers panel"},
             },
             "required": ["url", "dataset"],
+        }),
+        ("set_timeline", "Display an interactive temporal playback timeline bar on the map for scrubbing through multi-year or time-series data (e.g. 2018-2023, hourly weather, satellite historical series).", {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Title of the temporal dataset (e.g. 'Land Cover Changes (2018-2023)')"},
+                "start": {"type": "string", "description": "Start year or date (e.g. '2018')"},
+                "end": {"type": "string", "description": "End year or date (e.g. '2023')"},
+                "current": {"type": "string", "description": "Initial active year or timestamp (default is start)"},
+                "steps": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of string timestamps/years along the timeline track (e.g. ['2018', '2019', '2020', '2021', '2022', '2023'])"
+                },
+                "step_unit": {"type": "string", "enum": ["year", "month", "day", "hour", "custom"], "description": "Unit between ticks (default 'year')"},
+                "dataset": {"type": "string", "description": "Underlying Earth Engine dataset ID"},
+                "tool_name": {"type": "string", "description": "Name of the GEE tool to call on step change (e.g. 'get_surface_temperature_layer', 'get_land_cover', 'get_sentinel_layer')"},
+                "tool_args": {"type": "object", "description": "Base arguments for the tool to re-execute with new year/date"},
+            },
+            "required": ["title", "start", "end"],
+        }),
+        ("close_timeline", "Dismiss/hide the temporal playback timeline bar from the map.", {
+            "type": "object",
+            "properties": {},
         }),
     ]
     for name, desc, params in action_defs:

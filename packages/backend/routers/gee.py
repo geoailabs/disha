@@ -182,6 +182,20 @@ async def save_gee_credentials(body: dict, workspace: str | None = Query(None)):
 
 # ── Tile proxy ────────────────────────────────────────────────────────────────
 
+_shared_client: httpx.AsyncClient | None = None
+
+
+def _get_shared_client() -> httpx.AsyncClient:
+    global _shared_client
+    if _shared_client is None or _shared_client.is_closed:
+        _shared_client = httpx.AsyncClient(
+            timeout=_TILE_TIMEOUT,
+            follow_redirects=True,
+            limits=httpx.Limits(max_keepalive_connections=50, max_connections=100),
+        )
+    return _shared_client
+
+
 @router.get("/tiles/{map_id:path}/{z}/{x}/{y}")
 async def gee_tile(map_id: str, z: int, x: int, y: int, workspace: str | None = Query(None)):
     """
@@ -202,8 +216,13 @@ async def gee_tile(map_id: str, z: int, x: int, y: int, workspace: str | None = 
     else:
         tile_url = f"{_GEE_TILE_BASE}/{map_id}/tiles/{z}/{x}/{y}"
 
-    async with httpx.AsyncClient(timeout=_TILE_TIMEOUT, follow_redirects=True) as client:
+    client = _get_shared_client()
+    try:
         resp = await client.get(tile_url, headers={"Authorization": f"Bearer {token}"})
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="GEE tile gateway timeout")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"GEE tile fetch error: {exc}")
 
     if resp.status_code == 404:
         import base64
@@ -212,6 +231,7 @@ async def gee_tile(map_id: str, z: int, x: int, y: int, workspace: str | None = 
         )
         return Response(content=empty, media_type="image/png",
                         headers={"Cache-Control": "public, max-age=3600"})
+
 
     if resp.status_code != 200:
         raise HTTPException(status_code=resp.status_code,
@@ -222,3 +242,46 @@ async def gee_tile(map_id: str, z: int, x: int, y: int, workspace: str | None = 
         media_type=resp.headers.get("content-type", "image/png"),
         headers={"Cache-Control": "public, max-age=3600"},
     )
+
+
+# ── Dynamic Temporal Step Layer ───────────────────────────────────────────────
+
+@router.post("/step_layer")
+async def get_gee_step_layer(body: dict, workspace: str | None = Query(None)):
+    """Fetch refreshed tile URL for a specific time step / year / date."""
+    tool_name = body.get("tool_name", "").strip()
+    args = dict(body.get("tool_args") or {})
+    step = str(body.get("step", "")).strip()
+
+    if not tool_name:
+        raise HTTPException(status_code=400, detail="tool_name is required")
+
+    # Inject year or date based on step format
+    if step.isdigit() and len(step) == 4:
+        args["year"] = int(step)
+    elif "-" in step:
+        args["date"] = step
+        parts = step.split("-")
+        if parts[0].isdigit():
+            args["year"] = int(parts[0])
+
+    if workspace and "_workspace" not in args:
+        args["_workspace"] = workspace
+
+    from mcp_servers.gee_server import GEEServer
+    server = GEEServer()
+    res = await server.execute(tool_name, args)
+    if "error" in res or res.get("status") == "error":
+        raise HTTPException(status_code=400, detail=res.get("error", "Failed to fetch step layer"))
+
+    return {
+        "status": "success",
+        "step": step,
+        "tile_url": res.get("tile_url"),
+        "map_id": res.get("map_id"),
+        "vis": res.get("vis") or res.get("vis_params"),
+        "layer_title": res.get("layer_title"),
+        "geojson": res.get("geojson"),
+        "geojson_file": res.get("geojson_file"),
+    }
+

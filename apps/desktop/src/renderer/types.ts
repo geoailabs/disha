@@ -323,6 +323,40 @@ export type MapAction =
         route_error?: string
       }
     }
+  | {
+      type: 'set_timeline'
+      payload: {
+        title: string
+        dataset?: string
+        layer_id?: string
+        start: string | number
+        end: string | number
+        current?: string | number
+        step_unit?: 'year' | 'month' | 'day' | 'hour' | 'custom'
+        steps?: string[]
+        tool_name?: string
+        tool_args?: Record<string, any>
+        playback_speed?: number
+      }
+    }
+  | { type: 'close_timeline'; payload?: Record<string, never> }
+
+export interface TimelineSpec {
+  visible: boolean
+  title: string
+  dataset?: string
+  layerId?: string
+  start: string | number
+  end: string | number
+  current: string | number
+  stepUnit?: 'year' | 'month' | 'day' | 'hour' | 'custom'
+  steps: string[]
+  toolName?: string
+  toolArgs?: Record<string, any>
+  isPlaying?: boolean
+  playbackSpeed?: number
+}
+
 export interface ChatErrorMessage {
   code: string
   message: string

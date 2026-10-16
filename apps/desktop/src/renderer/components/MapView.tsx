@@ -1735,6 +1735,11 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
           break
         }
 
+        case 'set_timeline':
+        case 'close_timeline':
+          // Handled in App.tsx state container
+          break
+
         default:
           break
       }

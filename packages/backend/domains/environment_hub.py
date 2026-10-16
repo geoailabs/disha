@@ -7,6 +7,7 @@ Google environmental intelligence (elevation & rooftop solar), and tailpipe emis
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -138,6 +139,31 @@ class EnvironmentHub(BaseDomainHub):
                     },
                 }
 
+            # Proactively emit set_timeline if temporal range was specified in args or result
+            ws = context.get("_ws")
+            start_yr = args.get("year_start") or args.get("start_year") or res.get("year_start")
+            end_yr = args.get("year_end") or args.get("end_year") or res.get("year_end")
+            if ws and start_yr and end_yr:
+                try:
+                    s_int = int(start_yr)
+                    e_int = int(end_yr)
+                    step_list = [str(y) for y in range(min(s_int, e_int), max(s_int, e_int) + 1)]
+                    await ws.send_text(json.dumps({
+                        "type": "action",
+                        "action": "set_timeline",
+                        "payload": {
+                            "title": display_title,
+                            "dataset": res.get("dataset_id") or res.get("dataset", ""),
+                            "start": str(min(s_int, e_int)),
+                            "end": str(max(s_int, e_int)),
+                            "current": str(min(s_int, e_int)),
+                            "steps": step_list,
+                            "tool_name": tool_name,
+                            "tool_args": {k: v for k, v in args.items() if not k.startswith("_")},
+                        }
+                    }))
+                except Exception as _te:
+                    logger.debug(f"Failed to auto-dispatch set_timeline: {_te}")
             if "geojson" in res and res.get("polygons_extracted", 0) > 0:
                 try:
                     from tools.spatial_registry import spatial_registry

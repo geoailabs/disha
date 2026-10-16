@@ -25,6 +25,7 @@ import DiagnosticsPanel from './components/DiagnosticsPanel'
 import AppSidebar, { type WorkspaceCategory } from './components/AppSidebar'
 import { FloatingLayerCard, type FloatingTab } from './components/FloatingLayerCard'
 import { FloatingPromptBar } from './components/FloatingPromptBar'
+import { TimelineBar } from './components/TimelineBar'
 import { FirstLaunchModal } from './components/FirstLaunchModal'
 import appIcon from './assets/icon.png'
 import {
@@ -42,6 +43,7 @@ import {
   LayerStyleSpec,
   SelectedFeatureEntry,
   ScenarioDraft,
+  TimelineSpec,
 } from './types'
 import {
   computeBreaks,
@@ -339,6 +341,8 @@ function App() {
   const [scenarios, setScenarios] = useState<Scenario[]>([])
   const [activeScenarioId, setActiveScenarioId] = useState<string | null>(null)
   const [scenarioDraft, setScenarioDraft] = useState<ScenarioDraft | null>(null)
+  const [timelineSpec, setTimelineSpec] = useState<TimelineSpec | null>(null)
+  const [isTimelineLoading, setIsTimelineLoading] = useState<boolean>(false)
 
   // Undo/Redo stack states
   const [pastHistory, setPastHistory] = useState<{ layers: GeoJSONLayer[]; bookmarks: MapBookmark[] }[]>([])
@@ -663,6 +667,8 @@ function App() {
     setOpenDocs([])
     setActiveDocId(null)
     setDocumentImage(null)
+    setTimelineSpec(null)
+    setIsTimelineLoading(false)
     setPastHistory([])
     setFutureHistory([])
     lastStateRef.current = { layers: [], bookmarks: [] }
@@ -2575,6 +2581,47 @@ function App() {
       setActiveLeftTab('layers')
       return
     }
+    if (action.type === 'set_timeline') {
+      const p = action.payload
+      const sStr = String(p.start)
+      const eStr = String(p.end)
+      let steps = p.steps
+      if (!steps || steps.length === 0) {
+        const sNum = parseInt(sStr, 10)
+        const eNum = parseInt(eStr, 10)
+        if (!isNaN(sNum) && !isNaN(eNum) && sStr.length === 4 && eStr.length === 4) {
+          steps = []
+          const startYr = Math.min(sNum, eNum)
+          const endYr = Math.max(sNum, eNum)
+          for (let y = startYr; y <= endYr; y++) {
+            steps.push(String(y))
+          }
+        } else {
+          steps = [sStr, eStr]
+        }
+      }
+      setTimelineSpec({
+        visible: true,
+        title: p.title || 'Timeline Playback',
+        dataset: p.dataset,
+        layerId: p.layer_id,
+        start: sStr,
+        end: eStr,
+        current: String(p.current || steps[0]),
+        stepUnit: p.step_unit || 'year',
+        steps,
+        toolName: p.tool_name,
+        toolArgs: p.tool_args,
+        playbackSpeed: p.playback_speed || 1500,
+        isPlaying: false,
+      })
+      setAppMode('map')
+      return
+    }
+    if (action.type === 'close_timeline') {
+      setTimelineSpec(null)
+      return
+    }
     if (action.type === 'add_geojson_file') {
       const { path, name, color, styleSpec } = action.payload
       void addLayer(name, path, color, styleSpec)
@@ -2913,6 +2960,75 @@ function App() {
     mapViewState.zoom,
     buildStyleSpec,
   ])
+
+  // ── Timeline temporal step playback handler ──
+  const handleTimelineStepChange = useCallback(
+    async (step: string) => {
+      setTimelineSpec((prev) => (prev ? { ...prev, current: step } : null))
+      if (!timelineSpec?.toolName) return
+
+      setIsTimelineLoading(true)
+      try {
+        const targetWs = workspacePath || defaultWorkspacePath
+        const query = targetWs ? `?workspace=${encodeURIComponent(targetWs)}` : ''
+        const resp = await fetch(`http://localhost:8765/api/gee/step_layer${query}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tool_name: timelineSpec.toolName,
+            tool_args: timelineSpec.toolArgs || {},
+            step,
+          }),
+        })
+        const data = await resp.json()
+        if (data.status === 'success') {
+          if (data.tile_url) {
+            setLayers((prev) =>
+              prev.map((l) => {
+                const matches =
+                  (timelineSpec.layerId && l.id === timelineSpec.layerId) ||
+                  (timelineSpec.dataset && l.geeSpec?.dataset === timelineSpec.dataset) ||
+                  (l.name === timelineSpec.title) ||
+                  Boolean(l.geeSpec)
+                if (matches && l.geeSpec) {
+                  return {
+                    ...l,
+                    geeSpec: {
+                      ...l.geeSpec,
+                      url: data.tile_url,
+                      vis_params: data.vis || l.geeSpec.vis_params,
+                    },
+                  }
+                }
+                return l
+              }),
+            )
+          } else if (data.geojson) {
+            setLayers((prev) =>
+              prev.map((l) => {
+                const matches =
+                  (timelineSpec.layerId && l.id === timelineSpec.layerId) ||
+                  (l.name === timelineSpec.title)
+                if (matches) {
+                  return { ...l, data: data.geojson }
+                }
+                return l
+              }),
+            )
+          }
+        }
+      } catch (err) {
+        console.error('Failed to update timeline step layer:', err)
+      } finally {
+        setIsTimelineLoading(false)
+      }
+    },
+    [timelineSpec, workspacePath, defaultWorkspacePath],
+  )
+
+  const handleTimelineUpdateSpec = useCallback((updated: Partial<TimelineSpec>) => {
+    setTimelineSpec((prev) => (prev ? { ...prev, ...updated } : null))
+  }, [])
 
   // ── Right-click map actions ──
 
@@ -3797,6 +3913,17 @@ function App() {
                 ])
               }}
             />
+
+            {/* Interactive Temporal Playback Timeline Bar */}
+            {timelineSpec && timelineSpec.visible && (
+              <TimelineBar
+                spec={timelineSpec}
+                onStepChange={handleTimelineStepChange}
+                onUpdateSpec={handleTimelineUpdateSpec}
+                onClose={() => setTimelineSpec(null)}
+                isLoading={isTimelineLoading}
+              />
+            )}
 
             {/* Floating Bottom-Center Prompt Bar */}
             {(() => {
