@@ -95,9 +95,18 @@ class EnvironmentHub(BaseDomainHub):
                 return ToolResult(status="error", error=res.get("error", "GEE execution error"), data=res)
 
             map_action = None
-            target_cls = res.get("target_class", "Land Cover")
+            target_cls = (
+                res.get("target_class")
+                or res.get("product")
+                or res.get("indicator")
+                or res.get("pollutant")
+                or res.get("variable")
+                or res.get("preset")
+                or res.get("source")
+                or "GEE Layer"
+            )
             place_nm = res.get("place_name")
-            display_title = res.get("layer_title") or res.get("layer_name") or (f"{target_cls} - {place_nm}" if place_nm else f"{target_cls} Polygons")
+            display_title = res.get("layer_title") or res.get("layer_name") or (f"{target_cls} - {place_nm}" if place_nm else f"{target_cls}")
             color = res.get("color", "#C4281B")
 
             if res.get("geojson_file"):

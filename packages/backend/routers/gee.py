@@ -38,44 +38,68 @@ _creds = None
 _creds_lock = asyncio.Lock()
 
 
+def parse_gee_credentials_data(creds_input: str | Path | dict | None) -> dict | None:
+    """Parse credentials from a file path, JSON string, or dict, handling base64 fallback wrapper."""
+    if not creds_input:
+        return None
+    try:
+        import base64
+        if isinstance(creds_input, Path) or (isinstance(creds_input, str) and os.path.isfile(str(creds_input))):
+            data = json.loads(Path(creds_input).read_text(encoding="utf-8"))
+        elif isinstance(creds_input, str):
+            data = json.loads(creds_input)
+        elif isinstance(creds_input, dict):
+            data = creds_input
+        else:
+            return None
+
+        if isinstance(data, dict) and "fallback" in data:
+            data = json.loads(base64.b64decode(data["fallback"]).decode("utf-8"))
+
+        if isinstance(data, dict) and data.get("type") == "service_account":
+            return data
+    except Exception:
+        pass
+    return None
+
+
 def _find_creds_file(workspace: str | None = None) -> str | None:
     """Locate service account credentials in priority order."""
     env = os.environ.get("GOOGLE_EARTH_ENGINE_CREDS")
-    if env:
+    if env and parse_gee_credentials_data(env):
         return env
 
     # 1. Workspace-specific hidden file
     if workspace:
         ws_file = Path(workspace) / ".disha" / "ee-service-account.json"
-        if ws_file.exists():
+        if ws_file.exists() and parse_gee_credentials_data(ws_file):
             return str(ws_file)
         for f in sorted(Path(workspace).glob("ee-*.json")):
-            return str(f)
+            if parse_gee_credentials_data(f):
+                return str(f)
 
     # 2. Project dev mode file in .tmp
     here = Path(__file__).resolve()
     repo_root = here.parent.parent.parent.parent
     dev_path = repo_root / ".tmp" / "gee-credentials.json"
-    if dev_path.exists():
+    if dev_path.exists() and parse_gee_credentials_data(dev_path):
         return str(dev_path)
 
     # 3. Standard globs from CWD and project parents
     roots = [Path.cwd()]
     for p in [here.parent, here.parent.parent, here.parent.parent.parent,
-              here.parent.parent.parent.parent]:
-        if p not in roots:
+              here.parent.parent.parent.parent, repo_root]:
+        if p not in roots and p.is_dir():
             roots.append(p)
     for root in roots:
         if not root.is_dir():
             continue
         for f in sorted(root.glob("ee-*.json")):
-            return str(f)
+            if parse_gee_credentials_data(f):
+                return str(f)
         for f in sorted(root.glob("*.json")):
-            try:
-                if json.loads(f.read_text(encoding="utf-8")).get("type") == "service_account":
-                    return str(f)
-            except Exception:
-                pass
+            if parse_gee_credentials_data(f):
+                return str(f)
     return None
 
 
@@ -89,10 +113,10 @@ async def _get_token(workspace: str | None = None) -> str:
                 raise HTTPException(status_code=503,
                                     detail="GEE credentials not found on server")
             from google.oauth2 import service_account
-            if os.path.isfile(creds_path):
-                data = json.loads(Path(creds_path).read_text(encoding="utf-8"))
-            else:
-                data = json.loads(creds_path)
+            data = parse_gee_credentials_data(creds_path)
+            if not data:
+                raise HTTPException(status_code=503,
+                                    detail="Invalid Google Earth Engine service account format")
             _creds = service_account.Credentials.from_service_account_info(
                 data,
                 scopes=["https://www.googleapis.com/auth/earthengine.readonly"],
@@ -131,12 +155,9 @@ async def save_gee_credentials(body: dict, workspace: str | None = Query(None)):
         reset_gee_init()
         return {"status": "cleared"}
         
-    try:
-        data = json.loads(creds_json)
-        if not isinstance(data, dict) or data.get("type") != "service_account":
-            raise ValueError("Credentials must be a Google Service Account JSON")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid service account JSON: {e}")
+    data = parse_gee_credentials_data(creds_json)
+    if not data:
+        raise HTTPException(status_code=400, detail="Credentials must be a Google Service Account JSON")
         
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -161,7 +182,7 @@ async def save_gee_credentials(body: dict, workspace: str | None = Query(None)):
 
 # ── Tile proxy ────────────────────────────────────────────────────────────────
 
-@router.get("/tiles/{map_id}/{z}/{x}/{y}")
+@router.get("/tiles/{map_id:path}/{z}/{x}/{y}")
 async def gee_tile(map_id: str, z: int, x: int, y: int, workspace: str | None = Query(None)):
     """
     Proxy a GEE XYZ tile with server-side Bearer authentication.
@@ -170,11 +191,16 @@ async def gee_tile(map_id: str, z: int, x: int, y: int, workspace: str | None = 
         /api/gee/tiles/{map_id}/{z}/{x}/{y}
 
     We forward to:
-        https://earthengine.googleapis.com/v1/.../maps/{map_id}/tiles/{z}/{x}/{y}
+        https://earthengine.googleapis.com/v1/{map_id}/tiles/{z}/{x}/{y} (for projects/{p}/maps/...)
+        or
+        https://earthengine.googleapis.com/v1/projects/earthengine-legacy/maps/{map_id}/tiles/{z}/{x}/{y}
     with the Authorization header added.
     """
     token = await _get_token(workspace)
-    tile_url = f"{_GEE_TILE_BASE}/{map_id}/tiles/{z}/{x}/{y}"
+    if map_id.startswith("projects/"):
+        tile_url = f"https://earthengine.googleapis.com/v1/{map_id}/tiles/{z}/{x}/{y}"
+    else:
+        tile_url = f"{_GEE_TILE_BASE}/{map_id}/tiles/{z}/{x}/{y}"
 
     async with httpx.AsyncClient(timeout=_TILE_TIMEOUT, follow_redirects=True) as client:
         resp = await client.get(tile_url, headers={"Authorization": f"Bearer {token}"})

@@ -2,29 +2,31 @@
 
 Architecture
 ------------
-* `ee.Initialize()` is called **once per process** (cached in `_EE_READY`).
-  Repeated calls to the same process skip re-auth — avoids the overhead and
-  rate-limit risk of authenticating on every tool call.
-* All synchronous `ee.*` calls (getMapId, getInfo, etc.) are dispatched to a
-  thread pool via `asyncio.get_event_loop().run_in_executor()` so the FastAPI
+* `ee.Initialize()` is called once per process (cached in `_EE_READY`), specifying
+  the GCP project to support both modern and legacy Earth Engine project maps.
+* All synchronous `ee.*` calls (getMapId, getInfo, reduceRegion, etc.) are dispatched
+  to a thread pool via `asyncio.get_event_loop().run_in_executor()` so the FastAPI
   async event loop is never blocked.
-* Tile URL tokens are valid for ~24 h. Each tool call issues a fresh token so
-  the map layer never expires mid-session.
+* Tile URLs are returned pointing to the backend proxy:
+  `http://localhost:{port}/api/gee/tiles/{map_id}/{z}/{x}/{y}`.
+  This ensures that MapLibre GL in Electron/browser receives valid tiles with server-side
+  Bearer authentication without risking 401 Unauthorized errors from direct Google endpoints.
 * Credentials are resolved in priority order:
-    1. GOOGLE_EARTH_ENGINE_CREDS env var (JSON string or file path)
-    2. Explicit workspace path passed by the caller
+    1. GOOGLE_EARTH_ENGINE_CREDS env var (JSON string, file path, or fallback dict)
+    2. Explicit workspace path passed by caller (.disha/ee-service-account.json or *.json)
     3. CWD (backend process working directory)
-    4. Walk up from this file's location to find the project root
-       (handles the case where CWD is packages/backend/ but credentials
-       live in the repo root two levels up)
+    4. Dev credentials in .tmp/gee-credentials.json (supporting base64 fallback wrapper)
+    5. Parent directories up to the repo root
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -33,75 +35,86 @@ from llm.base import ToolDeclaration
 logger = logging.getLogger(__name__)
 
 # ── Process-level GEE init cache ─────────────────────────────────────────────
-# True  → GEE is initialized and ready
-# False → GEE credentials are missing / package not installed
-# None  → not yet attempted
 _EE_READY: bool | None = None
 _EE_ERROR: str | None = None
+_EE_PROJECT_ID: str | None = None
 
 
 def reset_gee_init() -> None:
     """Reset Earth Engine initialization flags to force re-auth on next check."""
-    global _EE_READY, _EE_ERROR
+    global _EE_READY, _EE_ERROR, _EE_PROJECT_ID
     _EE_READY = None
     _EE_ERROR = None
+    _EE_PROJECT_ID = None
+
+
+def parse_gee_credentials_data(creds_input: str | Path | dict | None) -> dict | None:
+    """Parse credentials from a file path, JSON string, or dict, handling base64 fallback wrapper."""
+    if not creds_input:
+        return None
+    try:
+        if isinstance(creds_input, Path) or (isinstance(creds_input, str) and os.path.isfile(str(creds_input))):
+            data = json.loads(Path(creds_input).read_text(encoding="utf-8"))
+        elif isinstance(creds_input, str):
+            data = json.loads(creds_input)
+        elif isinstance(creds_input, dict):
+            data = creds_input
+        else:
+            return None
+
+        if isinstance(data, dict) and "fallback" in data:
+            data = json.loads(base64.b64decode(data["fallback"]).decode("utf-8"))
+
+        if isinstance(data, dict) and data.get("type") == "service_account":
+            return data
+    except Exception as exc:
+        logger.debug(f"Failed to parse GEE credentials data: {exc}")
+    return None
 
 
 def _find_gee_creds(workspace: str | None = None) -> str | None:
-    """Locate service account credentials in priority order."""
-    # 1. Env var (JSON string or path)
+    """Locate service account credentials in priority order, returning path or JSON string."""
     env = os.environ.get("GOOGLE_EARTH_ENGINE_CREDS")
-    if env:
+    if env and parse_gee_credentials_data(env):
         return env
 
-    # 2. Workspace-specific hidden file
+    search_roots: list[Path] = []
     if workspace:
         ws_file = Path(workspace) / ".disha" / "ee-service-account.json"
-        if ws_file.exists():
+        if ws_file.exists() and parse_gee_credentials_data(ws_file):
             return str(ws_file)
-
-    search_roots: list[Path] = []
-
-    # 3. Workspace root supplied by the caller (from chat WebSocket payload)
-    if workspace:
+        for p in sorted(Path(workspace).glob("ee-*.json")):
+            if parse_gee_credentials_data(p):
+                return str(p)
         search_roots.append(Path(workspace))
 
-    # 4. CWD
     search_roots.append(Path.cwd())
 
-    # 5. Project dev mode config file in .tmp
     here = Path(__file__).resolve()
     repo_root = here.parent.parent.parent.parent
     dev_path = repo_root / ".tmp" / "gee-credentials.json"
-    if dev_path.exists():
+    if dev_path.exists() and parse_gee_credentials_data(dev_path):
         return str(dev_path)
 
-    # 6. Walk up from this file: mcp_servers/ → backend/ → packages/ → repo root
-    for parent in [here.parent, here.parent.parent, here.parent.parent.parent,
-                   here.parent.parent.parent.parent]:
-        if parent not in search_roots:
+    for parent in [here.parent, here.parent.parent, here.parent.parent.parent, repo_root]:
+        if parent not in search_roots and parent.is_dir():
             search_roots.append(parent)
 
     for root in search_roots:
         if not root.is_dir():
             continue
-        # Prefer files named ee-*.json (naming convention for this project)
         for p in sorted(root.glob("ee-*.json")):
-            return str(p)
-        # Any *.json that has type: service_account
+            if parse_gee_credentials_data(p):
+                return str(p)
         for p in sorted(root.glob("*.json")):
-            try:
-                data = json.loads(p.read_text(encoding="utf-8"))
-                if data.get("type") == "service_account":
-                    return str(p)
-            except Exception:
-                pass
+            if parse_gee_credentials_data(p):
+                return str(p)
     return None
 
 
 def _sync_init_gee(creds_path: str) -> tuple[bool, str | None]:
     """Synchronous GEE init — run in a thread pool."""
-    global _EE_READY, _EE_ERROR
+    global _EE_READY, _EE_ERROR, _EE_PROJECT_ID
     try:
         import ee
     except ImportError:
@@ -113,23 +126,26 @@ def _sync_init_gee(creds_path: str) -> tuple[bool, str | None]:
         return False, _EE_ERROR
 
     try:
-        if os.path.isfile(creds_path):
-            data = json.loads(Path(creds_path).read_text())
-        else:
-            data = json.loads(creds_path)
+        data = parse_gee_credentials_data(creds_path)
+        if not data:
+            _EE_READY = False
+            _EE_ERROR = "Invalid or missing Google Earth Engine service account credentials."
+            return False, _EE_ERROR
 
         svc_email = data.get("client_email", "")
+        project_id = data.get("project_id")
+        _EE_PROJECT_ID = project_id
 
-        import tempfile
-        if os.path.isfile(creds_path):
-            creds_file = creds_path
-        else:
-            with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as f:
-                json.dump(data, f)
-                creds_file = f.name
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as f:
+            json.dump(data, f)
+            creds_file = f.name
 
         credentials = ee.ServiceAccountCredentials(svc_email, creds_file)
-        ee.Initialize(credentials=credentials)
+        if project_id:
+            ee.Initialize(credentials=credentials, project=project_id)
+        else:
+            ee.Initialize(credentials=credentials)
+
         _EE_READY = True
         _EE_ERROR = None
         return True, None
@@ -144,16 +160,13 @@ async def _ensure_gee(workspace: str | None = None) -> tuple[bool, str | None]:
     global _EE_READY, _EE_ERROR
     if _EE_READY is True:
         return True, None
-    if _EE_READY is False:
-        # Retry on each request in case the creds file appears later
-        pass
 
     creds = _find_gee_creds(workspace)
     if not creds:
         return False, (
             "Google Earth Engine credentials not found. "
-            "Drop your ee-*.json service account file into the workspace root "
-            "or set the GOOGLE_EARTH_ENGINE_CREDS environment variable."
+            "Place your ee-*.json service account file in your workspace root, "
+            "in .tmp/gee-credentials.json, or configure the GOOGLE_EARTH_ENGINE_CREDS environment variable."
         )
 
     loop = asyncio.get_event_loop()
@@ -161,48 +174,120 @@ async def _ensure_gee(workspace: str | None = None) -> tuple[bool, str | None]:
     return ok, err
 
 
-def _sync_get_map_id(image_fn, vis_params: dict) -> str:
-    """Call ee.data.getMapId in a thread (it's synchronous)."""
+def _sync_get_map_id(image_fn, vis_params: dict) -> tuple[str, str]:
+    """Call ee.data.getMapId in a thread. Returns (map_id, proxy_tile_url)."""
     import ee
     img = image_fn()
     result = ee.data.getMapId({"image": img, "visParams": vis_params})
-    return result["tile_fetcher"].url_format
+    map_id = result.get("mapid", "")
+    port = int(os.environ.get("DISHA_BACKEND_PORT", "8765"))
+    proxy_url = f"http://localhost:{port}/api/gee/tiles/{map_id}/{{z}}/{{x}}/{{y}}"
+    return map_id, proxy_url
 
 
-# ── Dataset defaults ──────────────────────────────────────────────────────────
+# ── Dataset Defaults & Catalog Information ────────────────────────────────────
 
 def _get_dataset_defaults(dataset: str) -> tuple[dict, bool]:
+    """Return default vis_params and boolean indicating whether dataset is an ImageCollection."""
     d = dataset.lower()
+    
+    # 1. Sentinel-2
     if "copernicus/s2" in d:
         return {"bands": ["B4", "B3", "B2"], "min": 0, "max": 3000}, True
+
+    # 2. Landsat 8/9
     if "landsat/lc08" in d or "landsat/lc09" in d:
         return {"bands": ["SR_B4", "SR_B3", "SR_B2"], "min": 7000, "max": 30000}, True
-    if "srtm" in d or "copernicus/dem" in d or "nasadem" in d:
+    if "landsat/le07" in d or "landsat/lt05" in d:
+        return {"bands": ["SR_B3", "SR_B2", "SR_B1"], "min": 7000, "max": 30000}, True
+
+    # 3. Elevation & Terrain
+    if "srtm" in d or "copernicus/dem" in d or "nasadem" in d or "aw3d30" in d:
         return {"min": 0, "max": 3000, "palette": ["0000ff", "00ff00", "ffff00", "ff7f00", "ff0000"]}, False
+
+    # 4. Land Cover
     if "worldcover" in d:
         return {"bands": ["Map"]}, True
+    if "dynamicworld" in d:
+        return {
+            "min": 0, "max": 8,
+            "palette": ["419BDF", "397D49", "88B053", "7A87C6", "E49635", "DFC35A", "C4281B", "A59B8F", "B39FE1"],
+        }, True
+    if "mcd12q1" in d:
+        return {"bands": ["LC_Type1"], "min": 1, "max": 17}, True
+
+    # 5. Population
     if "worldpop" in d or "landscan" in d or "gpw" in d:
-        return {"min": 0, "max": 1000, "palette": ["ffffe5", "f7fcb9", "addd8e", "31a354", "006837"]}, False
+        return {"min": 0, "max": 500, "palette": ["ffffe5", "f7fcb9", "addd8e", "31a354", "006837", "ff0000"]}, False
+
+    # 6. Surface Temperature (LST)
+    if "mod11a1" in d or "myd11a1" in d:
+        return {"bands": ["LST_Day_1km"], "min": 13000, "max": 16500, "palette": ["0000ff", "00ffff", "ffff00", "ff7700", "ff0000"]}, True
+
+    # 7. Atmospheric & Pollution (Sentinel-5P)
+    if "s5p" in d:
+        if "no2" in d:
+            return {"bands": ["tropospheric_NO2_column_number_density"], "min": 0, "max": 0.0002, "palette": ["black", "blue", "purple", "cyan", "green", "yellow", "red"]}, True
+        if "co" in d:
+            return {"bands": ["CO_column_number_density"], "min": 0, "max": 0.05, "palette": ["black", "blue", "purple", "cyan", "green", "yellow", "red"]}, True
+        if "so2" in d:
+            return {"bands": ["SO2_column_number_density"], "min": 0, "max": 0.0005, "palette": ["black", "blue", "purple", "cyan", "green", "yellow", "red"]}, True
+        if "o3" in d:
+            return {"bands": ["O3_column_number_density"], "min": 0.12, "max": 0.16, "palette": ["black", "blue", "purple", "cyan", "green", "yellow", "red"]}, True
+        if "aer_ai" in d:
+            return {"bands": ["absorbing_aerosol_index"], "min": -1, "max": 3, "palette": ["black", "blue", "purple", "cyan", "green", "yellow", "red"]}, True
+
+    # 8. Weather & Climate (ERA5-Land & TerraClimate)
+    if "era5" in d:
+        return {"bands": ["temperature_2m"], "min": 260, "max": 315, "palette": ["0000ff", "00ffff", "ffff00", "ff7700", "ff0000"]}, True
+    if "terraclimate" in d:
+        return {"bands": ["pr"], "min": 0, "max": 250, "palette": ["ffffd9", "7fcdbb", "1d91c0", "081d58"]}, True
+
+    # 9. Agriculture & Soil
+    if "cdl" in d:
+        return {"bands": ["cropland"], "min": 1, "max": 254}, True
+    if "smap" in d:
+        return {"bands": ["ssm"], "min": 0, "max": 25, "palette": ["f7fcb9", "addd8e", "41ab5d", "006837", "081d58"]}, True
+
+    # 10. Water & Nighttime Lights
+    if "globalsurfacewater" in d:
+        return {"bands": ["occurrence"], "min": 0, "max": 100, "palette": ["ffffff", "ffddaa", "a6bddb", "3690c0", "081d58"]}, False
+    if "viirs" in d:
+        return {"bands": ["avg_rad"], "min": 0, "max": 60, "palette": ["000000", "111133", "224488", "ffff77", "ffffff"]}, True
+
     return {}, False
 
 
-# ── Main server class ─────────────────────────────────────────────────────────
+# ── Main Server Class ─────────────────────────────────────────────────────────
 
 class GEEServer:
     description = (
-        "Google Earth Engine (GEE) — satellite imagery, elevation models, "
-        "population density, land cover, NDVI, and raster visualization"
+        "Google Earth Engine (GEE) — comprehensive planetary remote sensing, satellite imagery, "
+        "surface temperature, climate, atmospheric chemistry, weather, Landsat, Sentinel, "
+        "high-resolution aerial imagery, MODIS, terrain, land cover, agriculture, and geophysical data."
     )
     tool_names = {
         "add_gee_layer",
+        "get_surface_temperature_layer",
+        "get_climate_layer",
+        "get_atmospheric_layer",
+        "get_weather_layer",
+        "get_landsat_layer",
+        "get_sentinel_layer",
+        "get_high_resolution_imagery",
+        "get_modis_layer",
+        "get_dem_layer",
         "get_land_cover",
+        "get_agriculture_layer",
+        "get_geophysical_layer",
+        "search_gee_datasets",
+        "get_gee_zonal_stats",
+        "get_population_layer",
         "analyze_lulc_change",
         "analyze_land_use_zonal_stats",
         "extract_land_use_polygons",
         "get_ndvi_layer",
-        "get_population_layer",
-        "get_dem_layer",
-        "get_gee_layer",        # kept for backward compat (now returns tile URL)
+        "get_gee_layer",
     }
 
     def get_declarations(self) -> list[ToolDeclaration]:
@@ -210,18 +295,325 @@ class GEEServer:
             ToolDeclaration(
                 name="add_gee_layer",
                 description=(
-                    "Add any Google Earth Engine raster dataset to the map as a tiled imagery layer. "
-                    "Handles Sentinel-2 (RGB/false-colour), Landsat 8/9, SRTM elevation, ESA WorldCover "
-                    "and any other EE ImageCollection or Image. Applies cloud-free median compositing "
-                    "for collections when a year/date is given."
+                    "Add any Google Earth Engine raster dataset to the map as a tiled layer. "
+                    "Supports Sentinel-2, Landsat, SRTM, ESA WorldCover, ERA5, MODIS, and any other "
+                    "EE ImageCollection or Image. Applies cloud-free median compositing when dates are specified."
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
-                        "dataset": {"type": "string", "description": "Earth Engine dataset ID (e.g. 'COPERNICUS/S2_SR_HARMONIZED', 'USGS/SRTMGL1_003')"},
-                        "vis_params": {"type": "object", "description": "GEE visualization params (e.g. {\"min\":0,\"max\":3000,\"bands\":[\"B4\",\"B3\",\"B2\"]})"},
-                        "date": {"type": "string", "description": "Year (e.g. '2023') or date range start for filtering ImageCollections"},
-                        "title": {"type": "string", "description": "Label for the map layer list"},
+                        "dataset": {"type": "string", "description": "Earth Engine dataset ID (e.g. 'COPERNICUS/S2_SR_HARMONIZED', 'LANDSAT/LC09/C02/T1_L2', 'USGS/SRTMGL1_003')."},
+                        "vis_params": {"type": "object", "description": "GEE visualization params (e.g. {\"min\":0,\"max\":3000,\"bands\":[\"B4\",\"B3\",\"B2\"]})."},
+                        "date": {"type": "string", "description": "Year (e.g. '2023') or start date (YYYY-MM-DD) for collection filtering."},
+                        "title": {"type": "string", "description": "Title label for the map layer panel."},
+                    },
+                    "required": ["dataset"],
+                },
+            ),
+            ToolDeclaration(
+                name="get_surface_temperature_layer",
+                description=(
+                    "Add a Land Surface Temperature (LST) raster layer to the map in Celsius. "
+                    "Essential for Urban Heat Island (UHI) analysis, microclimate studies, and heat vulnerability mapping. "
+                    "Sources: 'landsat' (Landsat 8/9 Thermal Band ST_B10, 30m resolution), 'modis' (MODIS Terra/Aqua Daily LST, 1km), "
+                    "or 'era5_land' (ECMWF ERA5-Land 9km skin temperature)."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "source": {
+                            "type": "string",
+                            "enum": ["landsat", "modis", "era5_land"],
+                            "description": "'landsat' (30m high-res), 'modis' (1km daily), or 'era5_land' (9km climate). Default is 'landsat'.",
+                        },
+                        "year": {"type": "integer", "description": "Year to analyze (default 2023)."},
+                        "min_temp": {"type": "number", "description": "Min temperature in Celsius for colour ramp (default 15°C)."},
+                        "max_temp": {"type": "number", "description": "Max temperature in Celsius for colour ramp (default 45°C)."},
+                        "title": {"type": "string", "description": "Custom layer title for map display."},
+                    },
+                },
+            ),
+            ToolDeclaration(
+                name="get_climate_layer",
+                description=(
+                    "Add climate, water balance, and bioclimatic raster layers to the map from TerraClimate, ERA5-Land, WorldClim, or CHIRPS. "
+                    "Use for climate resilience planning, drought risk, water resources, and ecological zoning."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "source": {
+                            "type": "string",
+                            "enum": ["terraclimate", "era5_land", "worldclim", "chirps"],
+                            "description": "'terraclimate' (monthly water balance & drought), 'era5_land' (reanalysis), 'worldclim' (bioclimatic), or 'chirps' (precipitation).",
+                        },
+                        "variable": {
+                            "type": "string",
+                            "enum": ["precipitation", "max_temperature", "min_temperature", "drought_pdsi", "soil_moisture", "runoff", "vapor_pressure_deficit"],
+                            "description": "Climate indicator to visualize. Default is 'precipitation'.",
+                        },
+                        "year": {"type": "integer", "description": "Year to visualize (default 2023)."},
+                        "title": {"type": "string", "description": "Layer title."},
+                    },
+                },
+            ),
+            ToolDeclaration(
+                name="get_atmospheric_layer",
+                description=(
+                    "Add atmospheric composition and air pollutant concentration layers from Sentinel-5P TROPOMI or MODIS. "
+                    "Monitors Nitrogen Dioxide (NO2 from traffic & power generation), Carbon Monoxide (CO), Sulfur Dioxide (SO2), "
+                    "Ozone (O3), Absorbing Aerosol Index (particulate & dust), Formaldehyde (HCHO), Methane (CH4), and MODIS AOD."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "pollutant": {
+                            "type": "string",
+                            "enum": ["no2", "co", "so2", "o3", "aerosol_index", "formaldehyde", "methane", "modis_aod"],
+                            "description": "Air quality indicator or pollutant. Default is 'no2'.",
+                        },
+                        "year": {"type": "integer", "description": "Year to evaluate (default 2023)."},
+                        "title": {"type": "string", "description": "Layer title."},
+                    },
+                },
+            ),
+            ToolDeclaration(
+                name="get_weather_layer",
+                description=(
+                    "Add gridded weather reanalysis or forecast layers from ECMWF ERA5-Land or NOAA GFS. "
+                    "Visualizes 2m air temperature (°C), precipitation (mm), 10m wind velocity (m/s), and incoming solar radiation (W/m²)."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "variable": {
+                            "type": "string",
+                            "enum": ["temperature_2m", "precipitation", "wind_speed", "solar_radiation"],
+                            "description": "Weather variable. Default is 'temperature_2m'.",
+                        },
+                        "source": {"type": "string", "enum": ["era5_land", "gfs"], "description": "Weather source (default 'era5_land')."},
+                        "year": {"type": "integer", "description": "Year (default 2023)."},
+                        "title": {"type": "string", "description": "Layer title."},
+                    },
+                },
+            ),
+            ToolDeclaration(
+                name="get_landsat_layer",
+                description=(
+                    "Add multispectral Landsat imagery (Landsat 9, Landsat 8, Landsat 7, or Landsat 5) with calibrated band combinations. "
+                    "Presets: 'true_color' (natural RGB), 'false_color_nir' (vegetation/urban), 'swir_geology' (moisture/burn scars), "
+                    "'agriculture' (crop vigor), 'thermal' (surface temperature ST_B10 in °C), and 'ndvi'."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "satellite": {
+                            "type": "string",
+                            "enum": ["landsat_9", "landsat_8", "landsat_7", "landsat_5"],
+                            "description": "Landsat satellite mission. Default is 'landsat_9'.",
+                        },
+                        "preset": {
+                            "type": "string",
+                            "enum": ["true_color", "false_color_nir", "swir_geology", "agriculture", "thermal", "ndvi"],
+                            "description": "Band combination preset. Default is 'true_color'.",
+                        },
+                        "year": {"type": "integer", "description": "Year to visualize (default 2023)."},
+                        "max_cloud_cover": {"type": "number", "description": "Maximum cloudy pixel percentage (default 15)."},
+                        "title": {"type": "string", "description": "Layer title."},
+                    },
+                },
+            ),
+            ToolDeclaration(
+                name="get_sentinel_layer",
+                description=(
+                    "Add European Space Agency (ESA) Sentinel imagery: Sentinel-2 optical multispectral (10m-20m) "
+                    "or Sentinel-1 Synthetic Aperture Radar (SAR, 10m all-weather radar backscatter). "
+                    "Presets for Sentinel-2: 'true_color', 'false_color_nir', 'agriculture', 'swir', 'ndvi', 'ndwi'. "
+                    "Presets for Sentinel-1: 'sar_vv', 'sar_vh', 'sar_dual' (flood and structural roughness mapping)."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "mission": {
+                            "type": "string",
+                            "enum": ["sentinel_2", "sentinel_1_sar"],
+                            "description": "'sentinel_2' (optical 10m) or 'sentinel_1_sar' (radar 10m). Default is 'sentinel_2'.",
+                        },
+                        "preset": {
+                            "type": "string",
+                            "enum": ["true_color", "false_color_nir", "agriculture", "swir", "ndvi", "ndwi", "sar_vv", "sar_vh", "sar_dual"],
+                            "description": "Band preset. Default is 'true_color'.",
+                        },
+                        "year": {"type": "integer", "description": "Year (default 2023)."},
+                        "title": {"type": "string", "description": "Layer title."},
+                    },
+                },
+            ),
+            ToolDeclaration(
+                name="get_high_resolution_imagery",
+                description=(
+                    "Add high-resolution sub-meter aerial or fine satellite imagery to the map. "
+                    "Sources: 'naip' (USDA NAIP 0.6m-1m true-color & color-infrared aerial orthoimagery across the US) "
+                    "or 'sentinel_10m' (cloudless 10m global composite)."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "source": {"type": "string", "enum": ["naip", "sentinel_10m"], "description": "Imagery source. Default 'naip'."},
+                        "preset": {"type": "string", "enum": ["true_color", "color_infrared"], "description": "Preset for NAIP: 'true_color' (RGB) or 'color_infrared' (CIR)."},
+                        "year": {"type": "integer", "description": "Year (default 2022)."},
+                        "title": {"type": "string", "description": "Layer title."},
+                    },
+                },
+            ),
+            ToolDeclaration(
+                name="get_modis_layer",
+                description=(
+                    "Add moderate-resolution planetary monitoring rasters from NASA MODIS (Terra & Aqua). "
+                    "Products: 'reflectance' (500m true/false color), 'ndvi_evi' (250m vegetation index), "
+                    "'surface_temperature' (1km daily LST in °C), 'active_fires' (thermal anomaly hotspots), "
+                    "'snow_cover' (daily snow extent), 'burned_area' (monthly burn date), and 'land_cover' (IGBP 500m annual)."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "product": {
+                            "type": "string",
+                            "enum": ["reflectance", "ndvi_evi", "surface_temperature", "active_fires", "snow_cover", "burned_area", "land_cover"],
+                            "description": "MODIS product. Default is 'ndvi_evi'.",
+                        },
+                        "year": {"type": "integer", "description": "Year (default 2023)."},
+                        "title": {"type": "string", "description": "Layer title."},
+                    },
+                },
+            ),
+            ToolDeclaration(
+                name="get_dem_layer",
+                description=(
+                    "Add a Digital Elevation Model (DEM) or terrain analysis raster to the map. "
+                    "Sources: 'srtm' (USGS SRTM 30m), 'copernicus' (Copernicus DEM 30m GLO-30), 'nasadem' (NASA DEM void-filled), "
+                    "or 'alos' (JAXA ALOS AW3D30 30m).\n\n"
+                    "Modes:\n"
+                    "  • 'elevation': Colour-ramped from sea level to peaks.\n"
+                    "  • 'hillshade': 3D shaded relief displaying ridges, valleys, and slope textures.\n"
+                    "  • 'slope': Terrain steepness in degrees (0° flat to 45°+ steep).\n"
+                    "  • 'aspect': Compass facing orientation in degrees (0°–360°) for solar exposure and microclimate planning."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "source": {
+                            "type": "string",
+                            "enum": ["srtm", "copernicus", "nasadem", "alos"],
+                            "description": "DEM dataset source. Default is 'srtm'.",
+                        },
+                        "mode": {
+                            "type": "string",
+                            "enum": ["elevation", "hillshade", "slope", "aspect"],
+                            "description": "Visualization mode. Default is 'elevation'.",
+                        },
+                        "max_elevation": {"type": "number", "description": "Max elevation in meters for colour ramp (default 3000m)."},
+                        "title": {"type": "string", "description": "Layer name."},
+                    },
+                },
+            ),
+            ToolDeclaration(
+                name="get_land_cover",
+                description=(
+                    "Add a full land-use / land-cover (LULC) raster tile layer showing ALL land classes simultaneously. "
+                    "Sources: 'dynamic_world' (Google 10m, 9 classes), 'esa_worldcover' (ESA 10m, 11 classes), "
+                    "'modis_landcover' (MODIS 500m, 17 IGBP classes for multi-decadal trends), or 'copernicus_landcover' (100m)."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "source": {
+                            "type": "string",
+                            "enum": ["dynamic_world", "esa_worldcover", "modis_landcover", "copernicus_landcover"],
+                            "description": "Land cover dataset. Default is 'dynamic_world'.",
+                        },
+                        "year": {"type": "integer", "description": "Year to visualize (default 2023)."},
+                        "title": {"type": "string", "description": "Layer title."},
+                    },
+                },
+            ),
+            ToolDeclaration(
+                name="get_agriculture_layer",
+                description=(
+                    "Add specialized agricultural monitoring and crop intelligence raster layers. "
+                    "Indicators: 'cropland_classes' (USDA NASS CDL 30m detailed crop classification: Corn, Soybeans, Wheat, Cotton, Rice, etc.), "
+                    "'soil_moisture' (NASA-USDA SMAP 10km soil moisture), 'evapotranspiration' (MODIS 500m water consumption), "
+                    "'crop_health_ndre' (Sentinel-2 Normalized Difference Red Edge index for chlorophyll/nitrogen vigor), "
+                    "'crop_water_stress' (NDWI canopy moisture), and 'enhanced_vegetation_index' (EVI)."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "indicator": {
+                            "type": "string",
+                            "enum": ["cropland_classes", "soil_moisture", "evapotranspiration", "crop_health_ndre", "crop_water_stress", "enhanced_vegetation_index"],
+                            "description": "Agricultural indicator. Default is 'cropland_classes'.",
+                        },
+                        "year": {"type": "integer", "description": "Year (default 2023)."},
+                        "title": {"type": "string", "description": "Layer title."},
+                    },
+                },
+            ),
+            ToolDeclaration(
+                name="get_geophysical_layer",
+                description=(
+                    "Add key planetary geophysical and socio-economic Earth observation datasets from the Earth Engine catalog. "
+                    "Types: 'surface_water' (JRC Global Surface Water occurrence 0-100%), 'water_seasonality' (permanent vs seasonal water), "
+                    "'nighttime_lights' (NOAA VIIRS Nighttime DNB luminosity), 'forest_canopy_cover' (Hansen Tree Canopy Cover % 0-100), "
+                    "'forest_loss' (Hansen Global Forest Loss), and 'active_fires' (FIRMS fire hotspots)."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "dataset_type": {
+                            "type": "string",
+                            "enum": ["surface_water", "water_seasonality", "nighttime_lights", "forest_canopy_cover", "forest_loss", "active_fires"],
+                            "description": "Geophysical dataset type. Default is 'surface_water'.",
+                        },
+                        "year": {"type": "integer", "description": "Year (default 2021)."},
+                        "title": {"type": "string", "description": "Layer title."},
+                    },
+                },
+            ),
+            ToolDeclaration(
+                name="search_gee_datasets",
+                description=(
+                    "Search and discover datasets from the Google Earth Engine catalog. "
+                    "Returns dataset asset IDs, descriptions, spatial resolution, temporal availability, and recommended visualization parameters."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Keyword search (e.g. 'temperature', 'sentinel', 'rain', 'elevation', 'flood')."},
+                        "category": {
+                            "type": "string",
+                            "enum": ["surface_temperature", "climate", "atmospheric", "weather", "landsat", "sentinel", "high_resolution", "modis", "terrain", "landcover", "agriculture", "geophysical"],
+                            "description": "Optional category filter.",
+                        },
+                    },
+                },
+            ),
+            ToolDeclaration(
+                name="get_gee_zonal_stats",
+                description=(
+                    "Calculate quantitative zonal summary statistics (mean, min, max, stdDev) for ANY Earth Engine dataset "
+                    "inside a boundary polygon or circular radius (e.g. mean surface temperature, average elevation, total rainfall, mean NDVI)."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "dataset": {"type": "string", "description": "Dataset ID (e.g. 'USGS/SRTMGL1_003', 'LANDSAT/LC09/C02/T1_L2', 'MODIS/061/MOD11A1')."},
+                        "band": {"type": "string", "description": "Band to analyze (e.g. 'elevation', 'ST_B10', 'LST_Day_1km', 'pr')."},
+                        "geojson": {"type": "object", "description": "Optional boundary polygon GeoJSON."},
+                        "lat": {"type": "number", "description": "Latitude for circular study area."},
+                        "lng": {"type": "number", "description": "Longitude for circular study area."},
+                        "radius_km": {"type": "number", "description": "Radius in km for study circle (default 5.0)."},
+                        "year": {"type": "integer", "description": "Year for ImageCollections (default 2023)."},
                     },
                     "required": ["dataset"],
                 },
@@ -230,82 +622,23 @@ class GEEServer:
                 name="get_population_layer",
                 description=(
                     "Add a population density raster layer to the map from WorldPop (100m, 2000-2020) "
-                    "or LandScan (1km, global ambient population). Use for urban density analysis, "
-                    "service area calculations, and disaster risk exposure mapping. "
-                    "Returns a colour-ramped tile layer (green=low → red=high density)."
+                    "or LandScan (1km, global ambient population). Use for urban density analysis and disaster exposure."
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
-                        "source": {
-                            "type": "string",
-                            "enum": ["worldpop", "landscan", "gpw"],
-                            "description": "Dataset: 'worldpop' (100m, by country), 'landscan' (1km global ambient), 'gpw' (UN-adjusted).",
-                        },
-                        "year": {"type": "integer", "description": "Year (WorldPop: 2000–2020; LandScan: 2000–2022; GPW: 2000/2005/2010/2015/2020)"},
-                        "country_iso": {"type": "string", "description": "ISO-3 country code for WorldPop (e.g. 'IND'). Not needed for global sources."},
-                        "title": {"type": "string", "description": "Layer name for the map panel"},
+                        "source": {"type": "string", "enum": ["worldpop", "landscan", "gpw"], "description": "Dataset source."},
+                        "year": {"type": "integer", "description": "Year (default 2020)."},
+                        "country_iso": {"type": "string", "description": "ISO-3 country code for WorldPop (e.g. 'IND')."},
+                        "title": {"type": "string", "description": "Layer title."},
                     },
-                    "required": ["source"],
-                },
-            ),
-            ToolDeclaration(
-                name="get_dem_layer",
-                description=(
-                    "Add a Digital Elevation Model (DEM) or terrain analysis raster to the map. "
-                    "Sources: 'srtm' (USGS SRTM 30m, near-global), 'copernicus' (Copernicus DEM 30m, higher accuracy), "
-                    "'nasadem' (NASA DEM 30m, void-filled SRTM).\n\n"
-                    "Modes:\n"
-                    "  • 'elevation' (default): Colour-ramped from sea level (blue) to peaks (white).\n"
-                    "  • 'hillshade': Shaded relief raster displaying 3D terrain ridges, sun illumination, valleys, and slope textures.\n"
-                    "  • 'slope': Terrain steepness in degrees (0° flat to 45°+ steep).\n\n"
-                    "Use for slope analysis, flood risk, watershed delineation, and 3D terrain visualization."
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "source": {
-                            "type": "string",
-                            "enum": ["srtm", "copernicus", "nasadem"],
-                            "description": "'srtm' = USGS SRTMGL1_003, 'copernicus' = Copernicus DEM GLO-30, 'nasadem' = NASA DEM HGT_001",
-                        },
-                        "mode": {
-                            "type": "string",
-                            "enum": ["elevation", "hillshade", "slope"],
-                            "description": "Visualization mode: 'elevation' (colour ramp), 'hillshade' (3D shaded relief / ridges), 'slope' (steepness in degrees). Default is 'elevation'.",
-                        },
-                        "max_elevation": {"type": "number", "description": "Max elevation (m) for colour ramp. Default 3000."},
-                        "title": {"type": "string", "description": "Layer name for the map panel"},
-                    },
-                    "required": ["source"],
-                },
-            ),
-            ToolDeclaration(
-                name="get_land_cover",
-                description=(
-                    "Add a full land-use / land-cover (LULC) raster tile layer showing ALL land classes simultaneously "
-                    "(Water, Trees, Grass, Flooded Vegetation, Crops, Shrub & Scrub, Built Area, Bare Ground, Snow & Ice) as a colour-coded overlay. "
-                    "Sources: 'dynamic_world' (Google 10m, 2016–present, 9 classes) or 'esa_worldcover' (ESA 10m, 2020/2021, 11 classes). "
-                    "USE THIS ONLY when the user wants to see the complete, multi-class land cover map for the whole area. "
-                    "DO NOT use this to isolate or show a single class (e.g. 'built-up area only', 'water bodies only', 'trees only'). "
-                    "For single-class extraction or vector polygons of one class, use extract_land_use_polygons instead."
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "source": {"type": "string", "enum": ["dynamic_world", "esa_worldcover"]},
-                        "year": {"type": "integer", "description": "Year to visualize (ESA WorldCover: 2020 or 2021)"},
-                        "title": {"type": "string"},
-                    },
-                    "required": ["source"],
                 },
             ),
             ToolDeclaration(
                 name="analyze_lulc_change",
                 description=(
                     "Compare Google Dynamic World land cover composites across two years to detect "
-                    "land-use change. Returns a binary changed/unchanged mask and a class-transition layer. "
-                    "Highlights urban growth, deforestation, wetland loss, or agricultural expansion."
+                    "land-use change. Returns a binary changed/unchanged mask and a class-transition layer."
                 ),
                 parameters={
                     "type": "object",
@@ -321,18 +654,17 @@ class GEEServer:
                 name="analyze_land_use_zonal_stats",
                 description=(
                     "Perform zonal land-use analysis on Google Dynamic World / ESA WorldCover datasets. "
-                    "Calculates exact area in km² and percentage composition breakdown of each land cover category "
-                    "(Built Area, Water, Trees, Crops, Shrub, Grass, Bare Ground) inside a boundary polygon or region."
+                    "Calculates exact area in km² and percentage composition breakdown of each land cover category."
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
-                        "geojson": {"type": "object", "description": "GeoJSON polygon / geometry dict for the study boundary."},
-                        "lat": {"type": "number", "description": "Latitude for circular study area (if geojson not provided)."},
-                        "lng": {"type": "number", "description": "Longitude for circular study area (if geojson not provided)."},
-                        "radius_km": {"type": "number", "description": "Radius in km for circular study area (default 5 km)."},
-                        "year": {"type": "integer", "description": "Year to analyze (default 2023)."},
-                        "source": {"type": "string", "enum": ["dynamic_world", "esa_worldcover"], "description": "Land cover dataset source."},
+                        "geojson": {"type": "object", "description": "GeoJSON polygon for study boundary."},
+                        "lat": {"type": "number", "description": "Latitude for circular study area."},
+                        "lng": {"type": "number", "description": "Longitude for circular study area."},
+                        "radius_km": {"type": "number", "description": "Radius in km (default 5 km)."},
+                        "year": {"type": "integer", "description": "Year (default 2023)."},
+                        "source": {"type": "string", "enum": ["dynamic_world", "esa_worldcover"]},
                     },
                 },
             ),
@@ -340,23 +672,19 @@ class GEEServer:
                 name="extract_land_use_polygons",
                 description=(
                     "Extract a SINGLE specific land cover class as vector GeoJSON polygon features loaded directly on the map canvas. "
-                    "USE THIS TOOL whenever the user asks for: built-up area, urban footprint, impervious surface, built area, "
-                    "trees / forest, water bodies, cropland, grassland, or any other single land class to be shown as a map layer. "
-                    "DO NOT use get_land_cover for single-class requests — this tool produces precise, clipped vector polygons for "
-                    "exactly the requested class, optionally constrained to a city/district boundary via `place_name`. "
-                    "Always pass `place_name` (city/region name) when the user specifies a study area to clip polygons to the official boundary."
+                    "Use whenever the user asks for: built-up area, urban footprint, trees/forest, water bodies, cropland, or grassland."
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
-                        "target_class": {"type": "string", "description": "REQUIRED. The single land cover class to extract as vector polygons. Use exact Dynamic World class names: 'Built Area' (urban/impervious surfaces), 'Trees' (forest/vegetation), 'Water' (rivers/lakes), 'Crops' (agricultural land), 'Grass', 'Shrub & Scrub', 'Bare Ground', 'Flooded Vegetation', 'Snow & Ice'."},
-                        "place_name": {"type": "string", "description": "City or region name to automatically clip extracted polygons to its official administrative boundary (e.g. 'Bengaluru', 'Mumbai', 'Delhi')."},
-                        "geojson": {"type": "object", "description": "Optional explicit boundary polygon GeoJSON to constrain extraction."},
-                        "color": {"type": "string", "description": "Color for the extracted polygon layer (e.g. 'blue', '#2563EB', 'yellow', 'red', 'green')."},
-                        "lat": {"type": "number", "description": "Latitude for circular bounding region (if place_name or geojson is not provided)."},
-                        "lng": {"type": "number", "description": "Longitude for circular bounding region (if place_name or geojson is not provided)."},
-                        "radius_km": {"type": "number", "description": "Radius in km for bounding region (default 5 km)."},
-                        "year": {"type": "integer", "description": "Year to analyze (default 2023)."},
+                        "target_class": {"type": "string", "description": "The land cover class (e.g. 'Built Area', 'Trees', 'Water', 'Crops')."},
+                        "place_name": {"type": "string", "description": "City or region name to clip polygons to official boundary."},
+                        "geojson": {"type": "object", "description": "Optional boundary polygon GeoJSON."},
+                        "color": {"type": "string", "description": "Layer colour."},
+                        "lat": {"type": "number"},
+                        "lng": {"type": "number"},
+                        "radius_km": {"type": "number"},
+                        "year": {"type": "integer"},
                     },
                     "required": ["target_class"],
                 },
@@ -365,8 +693,7 @@ class GEEServer:
                 name="get_ndvi_layer",
                 description=(
                     "Compute and display an NDVI layer from Sentinel-2 SR for a given year. "
-                    "NDVI > 0.4 = dense vegetation; < 0.1 = built-up or bare land. "
-                    "Use for urban heat island analysis, park mapping, and vegetation health monitoring."
+                    "NDVI > 0.4 = dense vegetation; < 0.1 = built-up or bare land."
                 ),
                 parameters={
                     "type": "object",
@@ -380,9 +707,7 @@ class GEEServer:
             ToolDeclaration(
                 name="get_gee_layer",
                 description=(
-                    "Sample pixel values from a GEE dataset at a specific lat/lng point. "
-                    "Also adds the dataset as a tile layer on the map so it can be inspected visually. "
-                    "Use get_dem_layer or get_population_layer for dedicated rasters."
+                    "Sample pixel values from a GEE dataset at a specific lat/lng point and add as a tile layer."
                 ),
                 parameters={
                     "type": "object",
@@ -404,14 +729,39 @@ class GEEServer:
             if isinstance(map_context, dict) and map_context.get("workspace"):
                 args["_workspace"] = map_context.get("workspace")
 
+        # Routing to tool handlers
         if tool_name == "add_gee_layer":
             return await self._add_gee_layer(args)
-        if tool_name == "get_population_layer":
-            return await self._get_population_layer(args)
+        if tool_name == "get_surface_temperature_layer":
+            return await self._get_surface_temperature_layer(args)
+        if tool_name == "get_climate_layer":
+            return await self._get_climate_layer(args)
+        if tool_name == "get_atmospheric_layer":
+            return await self._get_atmospheric_layer(args)
+        if tool_name == "get_weather_layer":
+            return await self._get_weather_layer(args)
+        if tool_name == "get_landsat_layer":
+            return await self._get_landsat_layer(args)
+        if tool_name == "get_sentinel_layer":
+            return await self._get_sentinel_layer(args)
+        if tool_name == "get_high_resolution_imagery":
+            return await self._get_high_resolution_imagery(args)
+        if tool_name == "get_modis_layer":
+            return await self._get_modis_layer(args)
         if tool_name == "get_dem_layer":
             return await self._get_dem_layer(args)
         if tool_name == "get_land_cover":
             return await self._get_land_cover(args)
+        if tool_name == "get_agriculture_layer":
+            return await self._get_agriculture_layer(args)
+        if tool_name == "get_geophysical_layer":
+            return await self._get_geophysical_layer(args)
+        if tool_name == "search_gee_datasets":
+            return await self._search_gee_datasets(args)
+        if tool_name == "get_gee_zonal_stats":
+            return await self._get_gee_zonal_stats(args)
+        if tool_name == "get_population_layer":
+            return await self._get_population_layer(args)
         if tool_name == "analyze_lulc_change":
             return await self._analyze_lulc_change(args)
         if tool_name == "analyze_land_use_zonal_stats":
@@ -422,26 +772,29 @@ class GEEServer:
             return await self._get_ndvi_layer(args)
         if tool_name == "get_gee_layer":
             return await self._get_gee_layer(args)
+
         return {"error": f"Unknown tool: {tool_name}"}
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     async def _send_layer(self, ws, tile_url: str, dataset: str, vis_params: dict, title: str) -> None:
-        """Send add_gee_layer action over the WebSocket."""
+        """Send add_gee_layer action over WebSocket if connected."""
         if ws:
-            import json as _json
-            await ws.send_text(_json.dumps({
-                "type": "action",
-                "action": "add_gee_layer",
-                "payload": {"url": tile_url, "dataset": dataset, "vis_params": vis_params, "title": title},
-            }))
+            try:
+                await ws.send_text(json.dumps({
+                    "type": "action",
+                    "action": "add_gee_layer",
+                    "payload": {"url": tile_url, "dataset": dataset, "vis_params": vis_params, "title": title},
+                }))
+            except Exception as _e:
+                logger.debug(f"Failed to send add_gee_layer over WS: {_e}")
 
-    async def _tile_url(self, image_fn) -> str:
-        """Run synchronous getMapId in thread pool → tile URL string."""
+    async def _tile_proxy(self, image_fn, vis_params: dict) -> tuple[str, str]:
+        """Run synchronous getMapId in thread pool → (map_id, proxy_tile_url)."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, image_fn)
+        return await loop.run_in_executor(None, _sync_get_map_id, image_fn, vis_params)
 
-    # ── Tools ─────────────────────────────────────────────────────────────────
+    # ── 1. Universal GEE Layer ────────────────────────────────────────────────
 
     async def _add_gee_layer(self, args: dict) -> dict:
         dataset = args.get("dataset", "").strip()
@@ -474,22 +827,1061 @@ class GEEServer:
                         coll = coll.filterDate(start, end)
                     d_lower = dataset.lower()
                     if "copernicus/s2" in d_lower:
-                        coll = coll.filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 10))
+                        coll = coll.filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 15))
                     elif "landsat" in d_lower:
-                        coll = coll.filter(ee.Filter.lt("CLOUD_COVER", 10))
+                        coll = coll.filter(ee.Filter.lt("CLOUD_COVER", 20))
+                    return coll.median()
+                return ee.Image(dataset)
+
+            map_id, tile_url = await self._tile_proxy(build_image, final_vis)
+            await self._send_layer(ws, tile_url, dataset, final_vis, title)
+            return {
+                "status": "success",
+                "message": f"GEE layer '{title}' added to map.",
+                "tile_url": tile_url,
+                "map_id": map_id,
+                "dataset_id": dataset,
+                "vis": final_vis,
+                "layer_title": title,
+            }
+
+        except Exception as exc:
+            return {"error": f"GEE layer failed: {exc}", "code": "gee_error"}
+
+    # ── 2. Surface Temperature (LST) ──────────────────────────────────────────
+
+    async def _get_surface_temperature_layer(self, args: dict) -> dict:
+        source = (args.get("source") or "landsat").strip().lower()
+        year = int(args.get("year") or 2023)
+        min_temp = float(args.get("min_temp") or 15.0)
+        max_temp = float(args.get("max_temp") or 45.0)
+        title = args.get("title", "").strip()
+        ws = args.get("_ws")
+        workspace = args.get("_workspace")
+
+        ok, err = await _ensure_gee(workspace)
+        if not ok:
+            return {"error": err, "code": "upstream_unavailable"}
+
+        try:
+            import ee
+
+            thermal_palette = ["0000ff", "00ffff", "ffff00", "ff7700", "ff0000", "770000"]
+            vis = {
+                "min": min_temp,
+                "max": max_temp,
+                "palette": thermal_palette,
+                "palette_labels": [f"{min_temp}°C", f"{(min_temp+max_temp)/2:.1f}°C", f"{max_temp}°C"],
+            }
+
+            def build_lst():
+                if source == "landsat":
+                    dataset_id = "LANDSAT/LC09/C02/T1_L2"
+                    coll = (
+                        ee.ImageCollection(dataset_id)
+                        .filterDate(f"{year}-01-01", f"{year}-12-31")
+                        .filter(ee.Filter.lt("CLOUD_COVER", 20))
+                    )
+                    # Convert Landsat Thermal ST_B10 to Celsius
+                    return (
+                        coll.median()
+                        .select("ST_B10")
+                        .multiply(0.00341802)
+                        .add(149.0)
+                        .subtract(273.15)
+                        .rename("LST_Celsius")
+                    )
+                elif source == "modis":
+                    dataset_id = "MODIS/061/MOD11A1"
+                    coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                    # Convert MODIS Kelvin scale factor (0.02) to Celsius
+                    return (
+                        coll.select("LST_Day_1km")
+                        .mean()
+                        .multiply(0.02)
+                        .subtract(273.15)
+                        .rename("LST_Celsius")
+                    )
+                elif source == "era5_land":
+                    dataset_id = "ECMWF/ERA5_LAND/HOURLY"
+                    coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-06-01", f"{year}-08-31")
+                    return coll.select("skin_temperature").mean().subtract(273.15).rename("LST_Celsius")
+                else:
+                    raise ValueError(f"Unknown source '{source}'. Use: landsat, modis, or era5_land.")
+
+            layer_title = title or f"Surface Temperature ({source.title()} {year})"
+            map_id, tile_url = await self._tile_proxy(build_lst, vis)
+            dataset_id = "LANDSAT/LC09/C02/T1_L2" if source == "landsat" else ("MODIS/061/MOD11A1" if source == "modis" else "ECMWF/ERA5_LAND/HOURLY")
+            await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
+
+            return {
+                "status": "success",
+                "source": source,
+                "year": year,
+                "unit": "Celsius (°C)",
+                "temperature_range": {"min": min_temp, "max": max_temp},
+                "tile_url": tile_url,
+                "map_id": map_id,
+                "dataset_id": dataset_id,
+                "vis": vis,
+                "layer_title": layer_title,
+                "message": (
+                    f"Surface temperature layer '{layer_title}' added to map. "
+                    f"Thermal scale: {min_temp}°C (blue) to {max_temp}°C (dark red). Useful for Urban Heat Island mapping."
+                ),
+            }
+
+        except Exception as exc:
+            return {"error": f"Surface temperature layer failed: {exc}", "code": "gee_error"}
+
+    # ── 3. Climate & Water Balance ────────────────────────────────────────────
+
+    async def _get_climate_layer(self, args: dict) -> dict:
+        source = (args.get("source") or "terraclimate").strip().lower()
+        variable = (args.get("variable") or "precipitation").strip().lower()
+        year = int(args.get("year") or 2023)
+        title = args.get("title", "").strip()
+        ws = args.get("_ws")
+        workspace = args.get("_workspace")
+
+        ok, err = await _ensure_gee(workspace)
+        if not ok:
+            return {"error": err, "code": "upstream_unavailable"}
+
+        try:
+            import ee
+
+            if source == "terraclimate":
+                dataset_id = "IDAHO_EPSCOR/TERRACLIMATE"
+                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                if variable == "precipitation":
+                    vis = {"min": 0, "max": 2000, "palette": ["ffffd9", "7fcdbb", "1d91c0", "081d58"]}
+                    build_fn = lambda: coll.select("pr").sum().rename("annual_precipitation_mm")
+                    unit = "mm/year"
+                elif variable in ["max_temperature", "temperature"]:
+                    vis = {"min": 0, "max": 45, "palette": ["0000ff", "00ffff", "ffff00", "ff7700", "ff0000"]}
+                    build_fn = lambda: coll.select("tmmx").mean().multiply(0.1).rename("max_temp_celsius")
+                    unit = "°C"
+                elif variable == "drought_pdsi":
+                    vis = {"min": -6, "max": 6, "palette": ["d73027", "f46d43", "fdae61", "ffffbf", "abd9e9", "74add1", "4575b4"]}
+                    build_fn = lambda: coll.select("pdsi").mean().multiply(0.01).rename("pdsi_drought_index")
+                    unit = "PDSI index"
+                elif variable == "soil_moisture":
+                    vis = {"min": 0, "max": 250, "palette": ["f7fcb9", "addd8e", "41ab5d", "006837"]}
+                    build_fn = lambda: coll.select("sm").mean().multiply(0.1).rename("soil_moisture_mm")
+                    unit = "mm"
+                else:
+                    vis = {"min": 0, "max": 200, "palette": ["ffffd9", "41b6c4", "225ea8"]}
+                    build_fn = lambda: coll.select("ro").sum().rename("runoff_mm")
+                    unit = "mm"
+
+            elif source == "chirps":
+                dataset_id = "UCSB-CHG/CHIRPS/PENTAD"
+                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                vis = {"min": 0, "max": 2500, "palette": ["ffffd9", "7fcdbb", "1d91c0", "081d58"]}
+                build_fn = lambda: coll.select("precipitation").sum().rename("annual_precipitation_mm")
+                unit = "mm/year"
+
+            elif source == "worldclim":
+                dataset_id = "WORLDCLIM/V1/BIO"
+                img = ee.Image(dataset_id)
+                if variable == "precipitation":
+                    vis = {"bands": ["bio12"], "min": 0, "max": 3000, "palette": ["ffffd9", "7fcdbb", "1d91c0", "081d58"]}
+                    build_fn = lambda: img.select("bio12")
+                    unit = "mm/year"
+                else:
+                    vis = {"bands": ["bio01"], "min": -100, "max": 350, "palette": ["0000ff", "00ffff", "ffff00", "ff7700", "ff0000"]}
+                    build_fn = lambda: img.select("bio01").multiply(0.1)
+                    unit = "°C"
+            else:
+                dataset_id = "ECMWF/ERA5_LAND/HOURLY"
+                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                vis = {"min": 0, "max": 2000, "palette": ["ffffd9", "7fcdbb", "1d91c0", "081d58"]}
+                build_fn = lambda: coll.select("total_precipitation").sum().multiply(1000).rename("precip_mm")
+                unit = "mm"
+
+            layer_title = title or f"Climate: {variable.replace('_', ' ').title()} ({source.title()} {year})"
+            map_id, tile_url = await self._tile_proxy(build_fn, vis)
+            await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
+
+            return {
+                "status": "success",
+                "source": source,
+                "variable": variable,
+                "year": year,
+                "unit": unit,
+                "tile_url": tile_url,
+                "map_id": map_id,
+                "dataset_id": dataset_id,
+                "vis": vis,
+                "layer_title": layer_title,
+                "message": f"Climate layer '{layer_title}' added to map.",
+            }
+
+        except Exception as exc:
+            return {"error": f"Climate layer failed: {exc}", "code": "gee_error"}
+
+    # ── 4. Atmospheric Chemistry & Pollution ──────────────────────────────────
+
+    async def _get_atmospheric_layer(self, args: dict) -> dict:
+        pollutant = (args.get("pollutant") or "no2").strip().lower()
+        year = int(args.get("year") or 2023)
+        title = args.get("title", "").strip()
+        ws = args.get("_ws")
+        workspace = args.get("_workspace")
+
+        ok, err = await _ensure_gee(workspace)
+        if not ok:
+            return {"error": err, "code": "upstream_unavailable"}
+
+        try:
+            import ee
+
+            pal = ["black", "blue", "purple", "cyan", "green", "yellow", "red"]
+
+            if pollutant == "no2":
+                dataset_id = "COPERNICUS/S5P/NRTI/L3_NO2"
+                band = "tropospheric_NO2_column_number_density"
+                vis = {"min": 0, "max": 0.0002, "palette": pal}
+                unit = "mol/m²"
+            elif pollutant == "co":
+                dataset_id = "COPERNICUS/S5P/NRTI/L3_CO"
+                band = "CO_column_number_density"
+                vis = {"min": 0, "max": 0.05, "palette": pal}
+                unit = "mol/m²"
+            elif pollutant == "so2":
+                dataset_id = "COPERNICUS/S5P/NRTI/L3_SO2"
+                band = "SO2_column_number_density"
+                vis = {"min": 0, "max": 0.0005, "palette": pal}
+                unit = "mol/m²"
+            elif pollutant == "o3":
+                dataset_id = "COPERNICUS/S5P/NRTI/L3_O3"
+                band = "O3_column_number_density"
+                vis = {"min": 0.12, "max": 0.16, "palette": pal}
+                unit = "mol/m²"
+            elif pollutant == "aerosol_index":
+                dataset_id = "COPERNICUS/S5P/NRTI/L3_AER_AI"
+                band = "absorbing_aerosol_index"
+                vis = {"min": -1, "max": 3, "palette": pal}
+                unit = "AI index"
+            elif pollutant == "formaldehyde":
+                dataset_id = "COPERNICUS/S5P/NRTI/L3_HCHO"
+                band = "tropospheric_HCHO_column_number_density"
+                vis = {"min": 0, "max": 0.0003, "palette": pal}
+                unit = "mol/m²"
+            elif pollutant == "methane":
+                dataset_id = "COPERNICUS/S5P/OFFL/L3_CH4"
+                band = "CH4_column_volume_mixing_ratio_dry_air"
+                vis = {"min": 1750, "max": 1950, "palette": pal}
+                unit = "ppb"
+            elif pollutant == "modis_aod":
+                dataset_id = "MODIS/061/MCD19A2_GRANULES"
+                band = "Optical_Depth_047"
+                vis = {"min": 0, "max": 1000, "palette": ["blue", "cyan", "green", "yellow", "orange", "red"]}
+                unit = "AOD (scaled 1e-3)"
+            else:
+                raise ValueError(f"Unknown pollutant '{pollutant}'. Use: no2, co, so2, o3, aerosol_index, formaldehyde, methane, modis_aod.")
+
+            def build_atmos():
+                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                return coll.select(band).mean()
+
+            layer_title = title or f"Atmospheric: {pollutant.upper()} Concentration ({year})"
+            map_id, tile_url = await self._tile_proxy(build_atmos, vis)
+            await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
+
+            return {
+                "status": "success",
+                "pollutant": pollutant,
+                "year": year,
+                "unit": unit,
+                "tile_url": tile_url,
+                "map_id": map_id,
+                "dataset_id": dataset_id,
+                "vis": vis,
+                "layer_title": layer_title,
+                "message": f"Atmospheric pollution layer '{layer_title}' added to map.",
+            }
+
+        except Exception as exc:
+            return {"error": f"Atmospheric layer failed: {exc}", "code": "gee_error"}
+
+    # ── 5. Gridded Weather ────────────────────────────────────────────────────
+
+    async def _get_weather_layer(self, args: dict) -> dict:
+        variable = (args.get("variable") or "temperature_2m").strip().lower()
+        source = (args.get("source") or "era5_land").strip().lower()
+        year = int(args.get("year") or 2023)
+        title = args.get("title", "").strip()
+        ws = args.get("_ws")
+        workspace = args.get("_workspace")
+
+        ok, err = await _ensure_gee(workspace)
+        if not ok:
+            return {"error": err, "code": "upstream_unavailable"}
+
+        try:
+            import ee
+
+            dataset_id = "ECMWF/ERA5_LAND/HOURLY"
+            coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-06-01", f"{year}-08-31")
+
+            if variable == "temperature_2m":
+                vis = {"min": 0, "max": 42, "palette": ["0000ff", "00ffff", "ffff00", "ff7700", "ff0000"]}
+                build_fn = lambda: coll.select("temperature_2m").mean().subtract(273.15).rename("temp_celsius")
+                unit = "°C"
+            elif variable == "precipitation":
+                vis = {"min": 0, "max": 50, "palette": ["ffffff", "7fcdbb", "1d91c0", "081d58"]}
+                build_fn = lambda: coll.select("total_precipitation").mean().multiply(1000).rename("precip_mm")
+                unit = "mm/day"
+            elif variable == "wind_speed":
+                vis = {"min": 0, "max": 20, "palette": ["2c7bb6", "abd9e9", "ffffbf", "fdae61", "d7191c"]}
+                def wind_fn():
+                    u = coll.select("u_component_of_wind_10m").mean()
+                    v = coll.select("v_component_of_wind_10m").mean()
+                    return u.hypot(v).rename("wind_speed_ms")
+                build_fn = wind_fn
+                unit = "m/s"
+            else:
+                vis = {"min": 0, "max": 800, "palette": ["000000", "ffff80", "ffaa00", "ff4400", "ffffff"]}
+                build_fn = lambda: coll.select("surface_solar_radiation_downwards_hourly").mean().divide(3600).rename("solar_wm2")
+                unit = "W/m²"
+
+            layer_title = title or f"Weather: {variable.replace('_', ' ').title()} ({year})"
+            map_id, tile_url = await self._tile_proxy(build_fn, vis)
+            await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
+
+            return {
+                "status": "success",
+                "variable": variable,
+                "year": year,
+                "unit": unit,
+                "tile_url": tile_url,
+                "map_id": map_id,
+                "dataset_id": dataset_id,
+                "vis": vis,
+                "layer_title": layer_title,
+                "message": f"Weather layer '{layer_title}' added to map.",
+            }
+
+        except Exception as exc:
+            return {"error": f"Weather layer failed: {exc}", "code": "gee_error"}
+
+    # ── 6. Multispectral Landsat ──────────────────────────────────────────────
+
+    async def _get_landsat_layer(self, args: dict) -> dict:
+        sat = (args.get("satellite") or "landsat_9").strip().lower()
+        preset = (args.get("preset") or "true_color").strip().lower()
+        year = int(args.get("year") or 2023)
+        max_clouds = float(args.get("max_cloud_cover") or 15)
+        title = args.get("title", "").strip()
+        ws = args.get("_ws")
+        workspace = args.get("_workspace")
+
+        ok, err = await _ensure_gee(workspace)
+        if not ok:
+            return {"error": err, "code": "upstream_unavailable"}
+
+        sat_map = {
+            "landsat_9": "LANDSAT/LC09/C02/T1_L2",
+            "landsat_8": "LANDSAT/LC08/C02/T1_L2",
+            "landsat_7": "LANDSAT/LE07/C02/T1_L2",
+            "landsat_5": "LANDSAT/LT05/C02/T1_L2",
+        }
+        dataset_id = sat_map.get(sat, "LANDSAT/LC09/C02/T1_L2")
+
+        try:
+            import ee
+
+            is_modern = sat in ["landsat_9", "landsat_8"]
+            coll = (
+                ee.ImageCollection(dataset_id)
+                .filterDate(f"{year}-01-01", f"{year}-12-31")
+                .filter(ee.Filter.lt("CLOUD_COVER", max_clouds))
+            )
+
+            if preset == "true_color":
+                bands = ["SR_B4", "SR_B3", "SR_B2"] if is_modern else ["SR_B3", "SR_B2", "SR_B1"]
+                vis = {"bands": bands, "min": 7000, "max": 30000}
+                build_fn = lambda: coll.median()
+            elif preset == "false_color_nir":
+                bands = ["SR_B5", "SR_B4", "SR_B3"] if is_modern else ["SR_B4", "SR_B3", "SR_B2"]
+                vis = {"bands": bands, "min": 7000, "max": 35000}
+                build_fn = lambda: coll.median()
+            elif preset == "swir_geology":
+                bands = ["SR_B7", "SR_B6", "SR_B4"] if is_modern else ["SR_B7", "SR_B5", "SR_B3"]
+                vis = {"bands": bands, "min": 7000, "max": 35000}
+                build_fn = lambda: coll.median()
+            elif preset == "agriculture":
+                bands = ["SR_B6", "SR_B5", "SR_B2"] if is_modern else ["SR_B5", "SR_B4", "SR_B1"]
+                vis = {"bands": bands, "min": 7000, "max": 35000}
+                build_fn = lambda: coll.median()
+            elif preset == "thermal":
+                vis = {"min": 15, "max": 45, "palette": ["0000ff", "00ffff", "ffff00", "ff7700", "ff0000"]}
+                build_fn = lambda: coll.median().select("ST_B10").multiply(0.00341802).add(149.0).subtract(273.15)
+            else:
+                vis = {"min": -0.1, "max": 0.8, "palette": ["8B4513", "FFFF00", "228B22", "006400"]}
+                nir = "SR_B5" if is_modern else "SR_B4"
+                red = "SR_B4" if is_modern else "SR_B3"
+                build_fn = lambda: coll.median().normalizedDifference([nir, red]).rename("NDVI")
+
+            layer_title = title or f"{sat.replace('_', ' ').title()} — {preset.replace('_', ' ').title()} ({year})"
+            map_id, tile_url = await self._tile_proxy(build_fn, vis)
+            await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
+
+            return {
+                "status": "success",
+                "satellite": sat,
+                "preset": preset,
+                "year": year,
+                "tile_url": tile_url,
+                "map_id": map_id,
+                "dataset_id": dataset_id,
+                "vis": vis,
+                "layer_title": layer_title,
+                "message": f"Landsat imagery layer '{layer_title}' added to map.",
+            }
+
+        except Exception as exc:
+            return {"error": f"Landsat layer failed: {exc}", "code": "gee_error"}
+
+    # ── 7. Sentinel-1 SAR & Sentinel-2 Optical ────────────────────────────────
+
+    async def _get_sentinel_layer(self, args: dict) -> dict:
+        mission = (args.get("mission") or "sentinel_2").strip().lower()
+        preset = (args.get("preset") or "true_color").strip().lower()
+        year = int(args.get("year") or 2023)
+        title = args.get("title", "").strip()
+        ws = args.get("_ws")
+        workspace = args.get("_workspace")
+
+        ok, err = await _ensure_gee(workspace)
+        if not ok:
+            return {"error": err, "code": "upstream_unavailable"}
+
+        try:
+            import ee
+
+            if mission == "sentinel_1_sar":
+                dataset_id = "COPERNICUS/S1_GRD"
+                coll = (
+                    ee.ImageCollection(dataset_id)
+                    .filter(ee.Filter.eq("instrumentMode", "IW"))
+                    .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VV"))
+                    .filterDate(f"{year}-01-01", f"{year}-12-31")
+                )
+                if preset == "sar_vh":
+                    vis = {"min": -30, "max": -5, "palette": ["000000", "ffffff"]}
+                    build_fn = lambda: coll.select("VH").median()
+                elif preset == "sar_dual":
+                    vis = {"bands": ["VV", "VH", "VV"], "min": [-25, -30, -25], "max": [0, -5, 0]}
+                    build_fn = lambda: coll.select(["VV", "VH"]).median()
+                else:
+                    vis = {"min": -25, "max": 0, "palette": ["000000", "ffffff"]}
+                    build_fn = lambda: coll.select("VV").median()
+
+            else:
+                dataset_id = "COPERNICUS/S2_SR_HARMONIZED"
+                coll = (
+                    ee.ImageCollection(dataset_id)
+                    .filterDate(f"{year}-01-01", f"{year}-12-31")
+                    .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 15))
+                )
+                if preset == "false_color_nir":
+                    vis = {"bands": ["B8", "B4", "B3"], "min": 0, "max": 4000}
+                    build_fn = lambda: coll.median()
+                elif preset == "agriculture":
+                    vis = {"bands": ["B11", "B8", "B2"], "min": 0, "max": 4000}
+                    build_fn = lambda: coll.median()
+                elif preset == "swir":
+                    vis = {"bands": ["B12", "B8", "B4"], "min": 0, "max": 4000}
+                    build_fn = lambda: coll.median()
+                elif preset == "ndwi":
+                    vis = {"min": -0.5, "max": 0.5, "palette": ["0000ff", "00ffff", "ffffff", "ffaa00", "885500"]}
+                    build_fn = lambda: coll.median().normalizedDifference(["B3", "B8"]).rename("NDWI")
+                elif preset == "ndvi":
+                    vis = {"min": -0.1, "max": 0.85, "palette": ["8B4513", "D2691E", "FFFF00", "228B22", "006400"]}
+                    build_fn = lambda: coll.median().normalizedDifference(["B8", "B4"]).rename("NDVI")
+                else:
+                    vis = {"bands": ["B4", "B3", "B2"], "min": 0, "max": 3000}
+                    build_fn = lambda: coll.median()
+
+            layer_title = title or f"{mission.replace('_', ' ').upper()} — {preset.replace('_', ' ').title()} ({year})"
+            map_id, tile_url = await self._tile_proxy(build_fn, vis)
+            await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
+
+            return {
+                "status": "success",
+                "mission": mission,
+                "preset": preset,
+                "year": year,
+                "tile_url": tile_url,
+                "map_id": map_id,
+                "dataset_id": dataset_id,
+                "vis": vis,
+                "layer_title": layer_title,
+                "message": f"Sentinel layer '{layer_title}' added to map.",
+            }
+
+        except Exception as exc:
+            return {"error": f"Sentinel layer failed: {exc}", "code": "gee_error"}
+
+    # ── 8. High-Resolution Aerial & Fine Satellite ────────────────────────────
+
+    async def _get_high_resolution_imagery(self, args: dict) -> dict:
+        source = (args.get("source") or "naip").strip().lower()
+        preset = (args.get("preset") or "true_color").strip().lower()
+        year = int(args.get("year") or 2022)
+        title = args.get("title", "").strip()
+        ws = args.get("_ws")
+        workspace = args.get("_workspace")
+
+        ok, err = await _ensure_gee(workspace)
+        if not ok:
+            return {"error": err, "code": "upstream_unavailable"}
+
+        try:
+            import ee
+
+            if source == "naip":
+                dataset_id = "USDA/NAIP/DOQQ"
+                coll = ee.ImageCollection(dataset_id).filterDate(f"{year-1}-01-01", f"{year+1}-12-31")
+                if preset == "color_infrared":
+                    vis = {"bands": ["N", "R", "G"], "min": 0, "max": 255}
+                else:
+                    vis = {"bands": ["R", "G", "B"], "min": 0, "max": 255}
+                build_fn = lambda: coll.mosaic()
+                desc = "0.6m - 1.0m USDA aerial orthoimagery"
+            else:
+                dataset_id = "COPERNICUS/S2_SR_HARMONIZED"
+                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31").filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 10))
+                vis = {"bands": ["B4", "B3", "B2"], "min": 0, "max": 3000}
+                build_fn = lambda: coll.median()
+                desc = "10m European Space Agency Sentinel-2 optical"
+
+            layer_title = title or f"High-Res Imagery ({source.upper()} {year})"
+            map_id, tile_url = await self._tile_proxy(build_fn, vis)
+            await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
+
+            return {
+                "status": "success",
+                "source": source,
+                "resolution": desc,
+                "year": year,
+                "tile_url": tile_url,
+                "map_id": map_id,
+                "dataset_id": dataset_id,
+                "vis": vis,
+                "layer_title": layer_title,
+                "message": f"High resolution imagery '{layer_title}' ({desc}) added to map.",
+            }
+
+        except Exception as exc:
+            return {"error": f"High-resolution imagery failed: {exc}", "code": "gee_error"}
+
+    # ── 9. MODIS Planetary Suite ──────────────────────────────────────────────
+
+    async def _get_modis_layer(self, args: dict) -> dict:
+        product = (args.get("product") or "ndvi_evi").strip().lower()
+        year = int(args.get("year") or 2023)
+        title = args.get("title", "").strip()
+        ws = args.get("_ws")
+        workspace = args.get("_workspace")
+
+        ok, err = await _ensure_gee(workspace)
+        if not ok:
+            return {"error": err, "code": "upstream_unavailable"}
+
+        try:
+            import ee
+
+            if product == "reflectance":
+                dataset_id = "MODIS/061/MOD09A1"
+                vis = {"bands": ["sur_refl_b01", "sur_refl_b04", "sur_refl_b03"], "min": -100, "max": 8000}
+                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                build_fn = lambda: coll.median()
+
+            elif product == "surface_temperature":
+                dataset_id = "MODIS/061/MOD11A1"
+                vis = {"min": 10, "max": 48, "palette": ["0000ff", "00ffff", "ffff00", "ff7700", "ff0000"]}
+                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                build_fn = lambda: coll.select("LST_Day_1km").mean().multiply(0.02).subtract(273.15)
+
+            elif product == "active_fires":
+                dataset_id = "FIRMS"
+                vis = {"min": 0, "max": 1, "palette": ["ffff00", "ff0000"]}
+                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                build_fn = lambda: coll.select("T21").max().gt(300)
+
+            elif product == "snow_cover":
+                dataset_id = "MODIS/061/MOD10A1"
+                vis = {"bands": ["NDSI_Snow_Cover"], "min": 0, "max": 100, "palette": ["000000", "00ffff", "ffffff"]}
+                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                build_fn = lambda: coll.select("NDSI_Snow_Cover").max()
+
+            elif product == "burned_area":
+                dataset_id = "MODIS/061/MCD64A1"
+                vis = {"bands": ["BurnDate"], "min": 1, "max": 366, "palette": ["ffff00", "ff7700", "ff0000"]}
+                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                build_fn = lambda: coll.select("BurnDate").max()
+
+            elif product == "land_cover":
+                dataset_id = "MODIS/061/MCD12Q1"
+                vis = {"bands": ["LC_Type1"], "min": 1, "max": 17}
+                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                build_fn = lambda: coll.select("LC_Type1").first()
+
+            else:
+                dataset_id = "MODIS/061/MOD13Q1"
+                vis = {"min": 0.0, "max": 0.85, "palette": ["ffffff", "ce7e45", "df923d", "f1b555", "fcd163", "99b718", "74a901", "66a000", "529400", "3e8601", "207401", "056201", "004c00"]}
+                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                build_fn = lambda: coll.select("NDVI").median().multiply(0.0001)
+
+            layer_title = title or f"MODIS {product.replace('_', ' ').title()} ({year})"
+            map_id, tile_url = await self._tile_proxy(build_fn, vis)
+            await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
+
+            return {
+                "status": "success",
+                "product": product,
+                "year": year,
+                "tile_url": tile_url,
+                "map_id": map_id,
+                "dataset_id": dataset_id,
+                "vis": vis,
+                "layer_title": layer_title,
+                "message": f"MODIS layer '{layer_title}' added to map.",
+            }
+
+        except Exception as exc:
+            return {"error": f"MODIS layer failed: {exc}", "code": "gee_error"}
+
+    # ── 10. Digital Elevation Models & Terrain Derivatives ─────────────────────
+
+    async def _get_dem_layer(self, args: dict) -> dict:
+        source = (args.get("source") or "srtm").strip().lower()
+        mode = (args.get("mode") or "").strip().lower()
+        max_elev = float(args.get("max_elevation") or 3000)
+        title = args.get("title", "").strip()
+        ws = args.get("_ws")
+        workspace = args.get("_workspace")
+
+        ok, err = await _ensure_gee(workspace)
+        if not ok:
+            return {"error": err, "code": "upstream_unavailable"}
+
+        _DEM_DATASETS = {
+            "srtm": ("USGS/SRTMGL1_003", "elevation", False),
+            "copernicus": ("COPERNICUS/DEM/GLO30", "DEM", False),
+            "nasadem": ("NASA/NASADEM_HGT/001", "elevation", False),
+            "alos": ("JAXA/ALOS/AW3D30/V3_2", "DSM", True),
+        }
+
+        if source not in _DEM_DATASETS:
+            return {"error": f"Unknown source '{source}'. Use: srtm, copernicus, nasadem, alos."}
+
+        dataset_id, band, is_coll = _DEM_DATASETS[source]
+
+        if not mode:
+            if "hillshade" in title.lower() or "relief" in title.lower():
+                mode = "hillshade"
+            elif "slope" in title.lower():
+                mode = "slope"
+            elif "aspect" in title.lower():
+                mode = "aspect"
+            else:
+                mode = "elevation"
+
+        if mode == "hillshade":
+            vis = {"bands": ["hillshade"], "min": 0, "max": 255, "palette": ["000000", "777777", "ffffff"]}
+        elif mode == "slope":
+            vis = {"bands": ["slope"], "min": 0, "max": 45, "palette": ["2b83ba", "abdda4", "ffffbf", "fdae61", "d7191c"]}
+        elif mode == "aspect":
+            vis = {"bands": ["aspect"], "min": 0, "max": 360, "palette": ["red", "yellow", "green", "cyan", "blue", "magenta", "red"]}
+        else:
+            vis = {
+                "bands": [band],
+                "min": 0,
+                "max": max_elev,
+                "palette": ["0000ff", "00aaff", "00ff00", "ffff00", "ff7f00", "ff0000", "ffffff"],
+            }
+
+        try:
+            import ee
+
+            def build_terrain():
+                raw = ee.ImageCollection(dataset_id).mosaic() if is_coll else ee.Image(dataset_id)
+                dem_band = raw.select(band)
+                if mode == "hillshade":
+                    return ee.Terrain.hillshade(dem_band)
+                if mode == "slope":
+                    return ee.Terrain.slope(dem_band)
+                if mode == "aspect":
+                    return ee.Terrain.aspect(dem_band)
+                return dem_band
+
+            layer_title = title or f"DEM ({source.upper()} {mode.title()})"
+            map_id, tile_url = await self._tile_proxy(build_terrain, vis)
+            await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
+
+            return {
+                "status": "success",
+                "source": source,
+                "mode": mode,
+                "dataset_id": dataset_id,
+                "tile_url": tile_url,
+                "map_id": map_id,
+                "vis": vis,
+                "layer_title": layer_title,
+                "message": f"Terrain layer '{layer_title}' ({mode}) added to map.",
+            }
+
+        except Exception as exc:
+            return {"error": f"DEM layer failed: {exc}", "code": "gee_error"}
+
+    # ── 11. Multi-Class Land Cover (LULC) ─────────────────────────────────────
+
+    async def _get_land_cover(self, args: dict) -> dict:
+        source = (args.get("source") or "dynamic_world").strip().lower()
+        year = int(args.get("year") or 2023)
+        title = args.get("title", "").strip()
+        ws = args.get("_ws")
+        workspace = args.get("_workspace")
+
+        ok, err = await _ensure_gee(workspace)
+        if not ok:
+            return {"error": err, "code": "upstream_unavailable"}
+
+        try:
+            import ee
+
+            if source == "dynamic_world":
+                dw_palette = ["419BDF", "397D49", "88B053", "7A87C6", "E49635", "DFC35A", "C4281B", "A59B8F", "B39FE1"]
+                dw_classes = ["Water", "Trees", "Grass", "Flooded Vegetation", "Crops", "Shrub & Scrub", "Built Area", "Bare Ground", "Snow & Ice"]
+                vis = {"min": 0, "max": 8, "palette": dw_palette, "palette_labels": dw_classes}
+                dataset_id = "GOOGLE/DYNAMICWORLD/V1"
+                build_fn = lambda: ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31").select("label").mode()
+
+            elif source == "esa_worldcover":
+                yr_map = {2020: "ESA/WorldCover/v100/2020", 2021: "ESA/WorldCover/v200/2021"}
+                dataset_id = yr_map.get(year, "ESA/WorldCover/v200/2021")
+                esa_palette = ["006400", "ffbb22", "ffff4c", "f096ff", "fa0000", "b4b4b4", "f0f0f0", "0064c8", "0096a0", "00cf75", "fae6a0"]
+                esa_classes = ["Trees", "Shrubland", "Grassland", "Cropland", "Built-up", "Barren", "Snow & Ice", "Open Water", "Wetland", "Mangroves", "Moss & Lichen"]
+                vis = {"bands": ["Map"], "min": 10, "max": 100, "palette": esa_palette, "palette_labels": esa_classes}
+                build_fn = lambda: ee.ImageCollection(dataset_id).first()
+
+            elif source == "modis_landcover":
+                dataset_id = "MODIS/061/MCD12Q1"
+                vis = {"bands": ["LC_Type1"], "min": 1, "max": 17}
+                build_fn = lambda: ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31").select("LC_Type1").first()
+
+            else:
+                dataset_id = "COPERNICUS/Landcover/100m/Proba-V-C3/Global"
+                vis = {"bands": ["discrete_classification"], "min": 0, "max": 200}
+                build_fn = lambda: ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31").select("discrete_classification").first()
+
+            layer_title = title or f"Land Cover ({source.replace('_', ' ').title()} {year})"
+            map_id, tile_url = await self._tile_proxy(build_fn, vis)
+            await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
+
+            return {
+                "status": "success",
+                "source": source,
+                "year": year,
+                "tile_url": tile_url,
+                "map_id": map_id,
+                "dataset_id": dataset_id,
+                "vis": vis,
+                "layer_title": layer_title,
+                "message": f"Land cover layer '{layer_title}' added to map.",
+            }
+
+        except Exception as exc:
+            return {"error": f"Land cover layer failed: {exc}", "code": "gee_error"}
+
+    # ── 12. Agriculture & Crop Intelligence ───────────────────────────────────
+
+    async def _get_agriculture_layer(self, args: dict) -> dict:
+        indicator = (args.get("indicator") or "cropland_classes").strip().lower()
+        year = int(args.get("year") or 2023)
+        title = args.get("title", "").strip()
+        ws = args.get("_ws")
+        workspace = args.get("_workspace")
+
+        ok, err = await _ensure_gee(workspace)
+        if not ok:
+            return {"error": err, "code": "upstream_unavailable"}
+
+        try:
+            import ee
+
+            if indicator == "cropland_classes":
+                dataset_id = "USDA/NASS/CDL"
+                vis = {"bands": ["cropland"], "min": 1, "max": 254}
+                build_fn = lambda: ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31").first().select("cropland")
+                desc = "USDA NASS Cropland Data Layer 30m detailed crop types"
+
+            elif indicator == "soil_moisture":
+                dataset_id = "NASA_USDA/HSL/SMAP10KM_soil_moisture"
+                vis = {"min": 0, "max": 25, "palette": ["f7fcb9", "addd8e", "41ab5d", "006837", "081d58"]}
+                build_fn = lambda: ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31").select("ssm").mean()
+                desc = "NASA-USDA SMAP 10km Surface Soil Moisture (mm)"
+
+            elif indicator == "evapotranspiration":
+                dataset_id = "MODIS/061/MOD16A2"
+                vis = {"min": 0, "max": 250, "palette": ["ffffff", "a6bddb", "3690c0", "02818a"]}
+                build_fn = lambda: ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31").select("ET").mean().multiply(0.1)
+                desc = "MODIS 500m 8-Day Evapotranspiration"
+
+            elif indicator == "crop_health_ndre":
+                dataset_id = "COPERNICUS/S2_SR_HARMONIZED"
+                vis = {"min": 0, "max": 0.6, "palette": ["d73027", "fdae61", "ffffbf", "a6d96a", "1a9850"]}
+                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31").filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 15))
+                build_fn = lambda: coll.median().normalizedDifference(["B8", "B5"]).rename("NDRE")
+                desc = "Sentinel-2 Normalized Difference Red Edge (chlorophyll & nitrogen vigor)"
+
+            elif indicator == "crop_water_stress":
+                dataset_id = "COPERNICUS/S2_SR_HARMONIZED"
+                vis = {"min": -0.3, "max": 0.5, "palette": ["a50026", "f46d43", "ffffbf", "74add1", "313695"]}
+                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31").filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 15))
+                build_fn = lambda: coll.median().normalizedDifference(["B8", "B11"]).rename("NDWI")
+                desc = "Sentinel-2 NDWI Canopy Water Stress"
+
+            else:
+                dataset_id = "COPERNICUS/S2_SR_HARMONIZED"
+                vis = {"min": 0, "max": 1, "palette": ["ffffff", "ce7e45", "ffff00", "228B22", "006400"]}
+                def evi_fn():
+                    s2 = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31").filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 15)).median()
+                    nir = s2.select("B8").multiply(0.0001)
+                    red = s2.select("B4").multiply(0.0001)
+                    blue = s2.select("B2").multiply(0.0001)
+                    return nir.subtract(red).multiply(2.5).divide(nir.add(red.multiply(6.0)).subtract(blue.multiply(7.5)).add(1.0)).rename("EVI")
+                build_fn = evi_fn
+                desc = "Sentinel-2 Enhanced Vegetation Index (EVI)"
+
+            layer_title = title or f"Agriculture: {indicator.replace('_', ' ').title()} ({year})"
+            map_id, tile_url = await self._tile_proxy(build_fn, vis)
+            await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
+
+            return {
+                "status": "success",
+                "indicator": indicator,
+                "description": desc,
+                "year": year,
+                "tile_url": tile_url,
+                "map_id": map_id,
+                "dataset_id": dataset_id,
+                "vis": vis,
+                "layer_title": layer_title,
+                "message": f"Agricultural layer '{layer_title}' ({desc}) added to map.",
+            }
+
+        except Exception as exc:
+            return {"error": f"Agriculture layer failed: {exc}", "code": "gee_error"}
+
+    # ── 13. Other Geophysical & Planetary Data ────────────────────────────────
+
+    async def _get_geophysical_layer(self, args: dict) -> dict:
+        dataset_type = (args.get("dataset_type") or "surface_water").strip().lower()
+        year = int(args.get("year") or 2021)
+        title = args.get("title", "").strip()
+        ws = args.get("_ws")
+        workspace = args.get("_workspace")
+
+        ok, err = await _ensure_gee(workspace)
+        if not ok:
+            return {"error": err, "code": "upstream_unavailable"}
+
+        try:
+            import ee
+
+            if dataset_type == "water_seasonality":
+                dataset_id = "JRC/GSW1_4/GlobalSurfaceWater"
+                vis = {"bands": ["seasonality"], "min": 0, "max": 12, "palette": ["ffffff", "ffddaa", "a6bddb", "3690c0", "081d58"]}
+                build_fn = lambda: ee.Image(dataset_id).select("seasonality")
+                desc = "JRC Global Surface Water Seasonality (0-12 months)"
+
+            elif dataset_type == "nighttime_lights":
+                dataset_id = "NOAA/VIIRS/DNB/MONTHLY_V1/VCMSLCFG"
+                vis = {"bands": ["avg_rad"], "min": 0, "max": 60, "palette": ["000000", "111133", "224488", "ffff77", "ffffff"]}
+                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                build_fn = lambda: coll.select("avg_rad").median()
+                desc = "NOAA VIIRS Nighttime Lights DNB Radiance"
+
+            elif dataset_type == "forest_canopy_cover":
+                dataset_id = "UMD/hansen/global_forest_change_2024_v1_12"
+                vis = {"bands": ["treecover2000"], "min": 0, "max": 100, "palette": ["ffffff", "d9f0a3", "78c679", "00441b"]}
+                build_fn = lambda: ee.Image(dataset_id).select("treecover2000")
+                desc = "Hansen Global Tree Canopy Cover (0-100%)"
+
+            elif dataset_type == "forest_loss":
+                dataset_id = "UMD/hansen/global_forest_change_2024_v1_12"
+                vis = {"bands": ["loss"], "min": 0, "max": 1, "palette": ["000000", "ff0000"]}
+                build_fn = lambda: ee.Image(dataset_id).select("loss")
+                desc = "Hansen Global Forest Loss Year-by-Year"
+
+            elif dataset_type == "active_fires":
+                dataset_id = "FIRMS"
+                vis = {"min": 0, "max": 1, "palette": ["ffff00", "ff0000"]}
+                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                build_fn = lambda: coll.select("T21").max().gt(300)
+                desc = "NASA FIRMS Active Thermal Fire Hotspots"
+
+            else:
+                dataset_id = "JRC/GSW1_4/GlobalSurfaceWater"
+                vis = {"bands": ["occurrence"], "min": 0, "max": 100, "palette": ["ffffff", "ffddaa", "a6bddb", "3690c0", "081d58"]}
+                build_fn = lambda: ee.Image(dataset_id).select("occurrence")
+                desc = "JRC Global Surface Water Occurrence (0-100%)"
+
+            layer_title = title or f"Geophysical: {dataset_type.replace('_', ' ').title()} ({year})"
+            map_id, tile_url = await self._tile_proxy(build_fn, vis)
+            await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
+
+            return {
+                "status": "success",
+                "dataset_type": dataset_type,
+                "description": desc,
+                "year": year,
+                "tile_url": tile_url,
+                "map_id": map_id,
+                "dataset_id": dataset_id,
+                "vis": vis,
+                "layer_title": layer_title,
+                "message": f"Geophysical layer '{layer_title}' ({desc}) added to map.",
+            }
+
+        except Exception as exc:
+            return {"error": f"Geophysical layer failed: {exc}", "code": "gee_error"}
+
+    # ── 14. Search Earth Engine Catalog ───────────────────────────────────────
+
+    async def _search_gee_datasets(self, args: dict) -> dict:
+        query = (args.get("query") or "").strip().lower()
+        category = (args.get("category") or "").strip().lower()
+
+        _CATALOG = [
+            # Surface Temp
+            {"id": "LANDSAT/LC09/C02/T1_L2", "name": "Landsat 9 Collection 2 Level 2", "category": "surface_temperature", "bands": ["SR_B4", "SR_B3", "SR_B2", "ST_B10"], "res": "30m", "desc": "High-res optical surface reflectance and thermal surface temperature (ST_B10)."},
+            {"id": "MODIS/061/MOD11A1", "name": "MODIS Terra Land Surface Temperature Daily", "category": "surface_temperature", "bands": ["LST_Day_1km", "LST_Night_1km"], "res": "1km", "desc": "Daily global land surface temperature in Kelvin (scale 0.02)."},
+            # Climate & Weather
+            {"id": "IDAHO_EPSCOR/TERRACLIMATE", "name": "TerraClimate Monthly Water Balance", "category": "climate", "bands": ["pr", "tmmx", "tmmn", "pdsi", "sm", "vpd", "ro"], "res": "4km", "desc": "Monthly climate water balance, Palmer Drought Severity Index, and runoff."},
+            {"id": "ECMWF/ERA5_LAND/HOURLY", "name": "ERA5-Land Hourly Climate Reanalysis", "category": "weather", "bands": ["temperature_2m", "total_precipitation", "u_component_of_wind_10m", "v_component_of_wind_10m"], "res": "9km", "desc": "Hourly gridded atmospheric weather and land surface temperature."},
+            {"id": "UCSB-CHG/CHIRPS/PENTAD", "name": "CHIRPS Precipitation Pentad", "category": "climate", "bands": ["precipitation"], "res": "5.5km", "desc": "Quasi-global high-resolution precipitation estimates."},
+            # Atmospheric
+            {"id": "COPERNICUS/S5P/NRTI/L3_NO2", "name": "Sentinel-5P TROPOMI NO2", "category": "atmospheric", "bands": ["tropospheric_NO2_column_number_density"], "res": "3.5km", "desc": "Tropospheric nitrogen dioxide air pollution monitoring."},
+            {"id": "COPERNICUS/S5P/NRTI/L3_CO", "name": "Sentinel-5P TROPOMI Carbon Monoxide", "category": "atmospheric", "bands": ["CO_column_number_density"], "res": "5.5km", "desc": "Total carbon monoxide atmospheric column."},
+            {"id": "COPERNICUS/S5P/NRTI/L3_SO2", "name": "Sentinel-5P TROPOMI Sulfur Dioxide", "category": "atmospheric", "bands": ["SO2_column_number_density"], "res": "3.5km", "desc": "Sulfur dioxide emissions from industry and volcanism."},
+            {"id": "COPERNICUS/S5P/NRTI/L3_AER_AI", "name": "Sentinel-5P Absorbing Aerosol Index", "category": "atmospheric", "bands": ["absorbing_aerosol_index"], "res": "3.5km", "desc": "Atmospheric dust, smoke, smog, and particulate loading."},
+            # Landsat & Sentinel
+            {"id": "COPERNICUS/S2_SR_HARMONIZED", "name": "Sentinel-2 Surface Reflectance Harmonized", "category": "sentinel", "bands": ["B2", "B3", "B4", "B8", "B11", "B12"], "res": "10m-20m", "desc": "Harmonized 10m multispectral optical imagery for land and vegetation."},
+            {"id": "COPERNICUS/S1_GRD", "name": "Sentinel-1 SAR C-Band Synthetic Aperture Radar", "category": "sentinel", "bands": ["VV", "VH"], "res": "10m", "desc": "All-weather day/night radar backscatter for flood mapping and terrain structure."},
+            # High Resolution Aerial
+            {"id": "USDA/NAIP/DOQQ", "name": "USDA National Agriculture Imagery Program (NAIP)", "category": "high_resolution", "bands": ["R", "G", "B", "N"], "res": "0.6m - 1m", "desc": "Sub-meter aerial digital ortho photography covering the US."},
+            # MODIS
+            {"id": "MODIS/061/MOD13Q1", "name": "MODIS Terra Vegetation Indices 16-Day", "category": "modis", "bands": ["NDVI", "EVI"], "res": "250m", "desc": "Global Normalized Difference Vegetation Index and Enhanced Vegetation Index."},
+            {"id": "MODIS/061/MOD14A1", "name": "MODIS Thermal Anomalies & Fire Daily", "category": "modis", "bands": ["FireMask"], "res": "1km", "desc": "Daily active fire hotspots and thermal anomalies."},
+            # Terrain
+            {"id": "USGS/SRTMGL1_003", "name": "NASA Shuttle Radar Topography Mission (SRTM)", "category": "terrain", "bands": ["elevation"], "res": "30m", "desc": "Global digital elevation model between 60°N and 56°S."},
+            {"id": "COPERNICUS/DEM/GLO30", "name": "Copernicus DEM Global 30m", "category": "terrain", "bands": ["DEM"], "res": "30m", "desc": "High-accuracy global 30m digital elevation model from WorldDEM."},
+            # Land Cover
+            {"id": "GOOGLE/DYNAMICWORLD/V1", "name": "Google Dynamic World Land Cover V1", "category": "landcover", "bands": ["label", "water", "trees", "built", "crops"], "res": "10m", "desc": "Near real-time 9-class global land cover from Sentinel-2."},
+            {"id": "ESA/WorldCover/v200/2021", "name": "ESA WorldCover 10m 2021", "category": "landcover", "bands": ["Map"], "res": "10m", "desc": "Global 11-class land cover map produced by ESA."},
+            # Agriculture
+            {"id": "USDA/NASS/CDL", "name": "USDA NASS Cropland Data Layer", "category": "agriculture", "bands": ["cropland"], "res": "30m", "desc": "Crop-specific land cover classification across the US."},
+            {"id": "NASA_USDA/HSL/SMAP10KM_soil_moisture", "name": "NASA-USDA SMAP Global Soil Moisture", "category": "agriculture", "bands": ["ssm", "susm"], "res": "10km", "desc": "Surface and subsurface soil moisture estimates."},
+            # Geophysical
+            {"id": "JRC/GSW1_4/GlobalSurfaceWater", "name": "JRC Global Surface Water Occurrence", "category": "geophysical", "bands": ["occurrence", "seasonality", "change_abs"], "res": "30m", "desc": "Decadal changes in global surface water occurrence and recurrence."},
+            {"id": "NOAA/VIIRS/DNB/MONTHLY_V1/VCMSLCFG", "name": "VIIRS Nighttime Day/Night Band", "category": "geophysical", "bands": ["avg_rad"], "res": "500m", "desc": "Monthly nighttime visible light luminosity from settlements."},
+            {"id": "UMD/hansen/global_forest_change_2024_v1_12", "name": "Hansen Global Forest Change", "category": "geophysical", "bands": ["treecover2000", "loss", "gain"], "res": "30m", "desc": "Global forest extent, loss, and gain from 2000 to 2024."},
+        ]
+
+        matches = []
+        for item in _CATALOG:
+            if category and item["category"] != category:
+                continue
+            if query:
+                haystack = f"{item['id']} {item['name']} {item['category']} {item['desc']}".lower()
+                if query not in haystack:
+                    continue
+            matches.append(item)
+
+        return {
+            "status": "success",
+            "query": query,
+            "category": category or "all",
+            "count": len(matches),
+            "datasets": matches,
+        }
+
+    # ── 15. Generalized Zonal Statistics ──────────────────────────────────────
+
+    async def _get_gee_zonal_stats(self, args: dict) -> dict:
+        dataset = (args.get("dataset") or "").strip()
+        band = (args.get("band") or "").strip()
+        geojson_input = args.get("geojson")
+        lat = args.get("lat")
+        lng = args.get("lng")
+        radius_km = float(args.get("radius_km") or 5.0)
+        year = int(args.get("year") or 2023)
+        workspace = args.get("_workspace")
+
+        if not dataset:
+            return {"error": "dataset parameter is required"}
+
+        ok, err = await _ensure_gee(workspace)
+        if not ok:
+            return {"error": err, "code": "upstream_unavailable"}
+
+        try:
+            import ee
+
+            default_vis, is_collection = _get_dataset_defaults(dataset)
+
+            def run_stats():
+                if geojson_input:
+                    ee_geom = ee.Geometry(geojson_input.get("geometry", geojson_input))
+                elif lat is not None and lng is not None:
+                    ee_geom = ee.Geometry.Point([float(lng), float(lat)]).buffer(radius_km * 1000.0)
+                else:
+                    ee_geom = ee.Geometry.Point([76.7794, 30.7333]).buffer(5000)
+
+                if is_collection:
+                    coll = ee.ImageCollection(dataset).filterDate(f"{year}-01-01", f"{year}-12-31")
                     img = coll.median()
                 else:
                     img = ee.Image(dataset)
 
-                result = ee.data.getMapId({"image": img, "visParams": final_vis})
-                return result["tile_fetcher"].url_format
+                target_img = img.select(band) if band else img
 
-            tile_url = await self._tile_url(build_image)
-            await self._send_layer(ws, tile_url, dataset, final_vis, title)
-            return {"status": "success", "message": f"GEE layer '{title}' added to map.", "tile_url": tile_url}
+                stats = target_img.reduceRegion(
+                    reducer=ee.Reducer.mean().combine(
+                        ee.Reducer.minMax(), sharedInputs=True
+                    ).combine(
+                        ee.Reducer.stdDev(), sharedInputs=True
+                    ),
+                    geometry=ee_geom,
+                    scale=100,
+                    maxPixels=1e9,
+                ).getInfo()
+
+                return stats
+
+            loop = asyncio.get_event_loop()
+            res = await loop.run_in_executor(None, run_stats)
+
+            return {
+                "status": "success",
+                "dataset": dataset,
+                "band": band or "all",
+                "year": year,
+                "statistics": res,
+                "message": f"Zonal statistics for '{dataset}' calculated successfully.",
+            }
 
         except Exception as exc:
-            return {"error": f"GEE layer failed: {exc}", "code": "gee_error"}
+            return {"error": f"Zonal stats failed: {exc}", "code": "gee_error"}
+
+    # ── 16. Existing Tools Preserved ──────────────────────────────────────────
 
     async def _get_population_layer(self, args: dict) -> dict:
         source = args.get("source", "worldpop").strip()
@@ -513,265 +1905,37 @@ class GEEServer:
                 "palette_labels": ["0 (Low)", "83", "166", "250", "333", "416", "500+ (High)"],
             }
 
-            def build_image():
+            def build_pop():
                 if source == "worldpop":
-                    # WorldPop/GP/100m/pop — global annual unconstrained, 2000-2020
-                    # Each image has a 'country' property (ISO-3) and 'year' property.
                     yr = min(max(year, 2000), 2020)
-                    coll = (
-                        ee.ImageCollection("WorldPop/GP/100m/pop")
-                        .filter(ee.Filter.eq("year", yr))
-                    )
+                    coll = ee.ImageCollection("WorldPop/GP/100m/pop").filter(ee.Filter.eq("year", yr))
                     if country_iso:
                         coll = coll.filter(ee.Filter.eq("country", country_iso))
-                        img = coll.mosaic()          # mosaic in case multiple tiles per country
-                    else:
-                        img = coll.mosaic()          # global mosaic for all countries
-
-                elif source == "gpw":
-                    # CIESIN GPWv4 — UN-adjusted population density, 5-year steps
+                    return coll.mosaic()
+                else:
                     valid_years = [2000, 2005, 2010, 2015, 2020]
                     yr = min(valid_years, key=lambda y: abs(y - year))
-                    start = f"{yr}-01-01"
-                    end   = f"{yr}-12-31"
-                    img = (
-                        ee.ImageCollection("CIESIN/GPWv411/GPW_Population_Density")
-                        .filterDate(start, end)
-                        .first()
-                    )
+                    return ee.ImageCollection("CIESIN/GPWv411/GPW_Population_Density").filterDate(f"{yr}-01-01", f"{yr}-12-31").first()
 
-                elif source == "landscan":
-                    # LandScan HD — requires special access, not always public.
-                    # Fall back to GPW as a reliable alternative.
-                    yr_clamp = min(max(year, 2000), 2020)
-                    start = f"{yr_clamp}-01-01"
-                    end   = f"{yr_clamp}-12-31"
-                    img = (
-                        ee.ImageCollection("CIESIN/GPWv411/GPW_Population_Density")
-                        .filterDate(start, end)
-                        .first()
-                    )
-
-                else:
-                    raise ValueError(f"Unknown source: {source}. Use 'worldpop' or 'gpw'.")
-
-                result = ee.data.getMapId({"image": img, "visParams": vis})
-                return result["tile_fetcher"].url_format
-
-            tile_url = await self._tile_url(build_image)
             layer_title = title or f"Population Density ({source.title()} {year})"
-            dataset_id = (
-                "WorldPop/GP/100m/pop" if source == "worldpop"
-                else "CIESIN/GPWv411/GPW_Population_Density"
-            )
+            dataset_id = "WorldPop/GP/100m/pop" if source == "worldpop" else "CIESIN/GPWv411/GPW_Population_Density"
+            map_id, tile_url = await self._tile_proxy(build_pop, vis)
             await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
+
             return {
                 "status": "success",
                 "source": source,
                 "year": year,
-                "message": f"Population density layer '{layer_title}' added to map. Colour ramp: green=low → yellow → red=high density.",
+                "tile_url": tile_url,
+                "map_id": map_id,
+                "dataset_id": dataset_id,
+                "vis": vis,
+                "layer_title": layer_title,
+                "message": f"Population density layer '{layer_title}' added to map.",
             }
 
         except Exception as exc:
             return {"error": f"Population layer failed: {exc}", "code": "gee_error"}
-
-    async def _get_dem_layer(self, args: dict) -> dict:
-        source = args.get("source", "srtm").strip()
-        max_elev = float(args.get("max_elevation") or 3000)
-        title = args.get("title", "").strip()
-        ws = args.get("_ws")
-        workspace = args.get("_workspace")
-
-        ok, err = await _ensure_gee(workspace)
-        if not ok:
-            return {"error": err, "code": "upstream_unavailable"}
-
-        _DEM_DATASETS = {
-            "srtm": ("USGS/SRTMGL1_003", "elevation", False),
-            "copernicus": ("COPERNICUS/DEM/GLO30", "DEM", False),
-            "nasadem": ("NASA/NASADEM_HGT/001", "elevation", False),
-        }
-
-        if source not in _DEM_DATASETS:
-            return {"error": f"Unknown source '{source}'. Use: srtm, copernicus, nasadem."}
-
-        dataset_id, band, is_coll = _DEM_DATASETS[source]
-
-        mode = (args.get("mode") or "").strip().lower()
-        if not mode:
-            if "hillshade" in title.lower() or "relief" in title.lower():
-                mode = "hillshade"
-            elif "slope" in title.lower():
-                mode = "slope"
-            else:
-                mode = "elevation"
-
-        if mode == "hillshade":
-            vis = {
-                "bands": ["hillshade"],
-                "min": 0,
-                "max": 255,
-                "palette": ["000000", "777777", "ffffff"],
-                "palette_labels": ["Deep Shadow (0)", "Midtone (128)", "Illuminated Ridge (255)"],
-            }
-        elif mode == "slope":
-            vis = {
-                "bands": ["slope"],
-                "min": 0,
-                "max": 45,
-                "palette": ["2b83ba", "abdda4", "ffffbf", "fdae61", "d7191c"],
-                "palette_labels": ["0° (Flat)", "10° (Gentle)", "20° (Moderate)", "30° (Steep)", "45°+ (Very Steep)"],
-            }
-        else:
-            vis = {
-                "bands": [band],
-                "min": 0,
-                "max": max_elev,
-                "palette": ["0000ff", "00aaff", "00ff00", "ffff00", "ff7f00", "ff0000", "ffffff"],
-                "palette_labels": ["0m", f"{int(max_elev * 0.16)}m", f"{int(max_elev * 0.33)}m", f"{int(max_elev * 0.5)}m", f"{int(max_elev * 0.66)}m", f"{int(max_elev * 0.83)}m", f"{int(max_elev)}m (Max)"],
-            }
-
-        try:
-            import ee
-
-            def build_image():
-                if is_coll:
-                    raw_img = ee.ImageCollection(dataset_id).mosaic()
-                else:
-                    raw_img = ee.Image(dataset_id)
-
-                dem_band = raw_img.select(band)
-                if mode == "hillshade":
-                    processed = ee.Terrain.hillshade(dem_band)
-                elif mode == "slope":
-                    processed = ee.Terrain.slope(dem_band)
-                else:
-                    processed = dem_band
-
-                result = ee.data.getMapId({"image": processed, "visParams": vis})
-                return result["tile_fetcher"].url_format
-
-            tile_url = await self._tile_url(build_image)
-            if mode == "hillshade":
-                layer_title = title or f"Shaded Relief (Hillshade) — {source.upper()}"
-            elif mode == "slope":
-                layer_title = title or f"Terrain Slope — {source.upper()} (0–45°)"
-            else:
-                layer_title = title or f"DEM — {source.upper()} (0–{int(max_elev)} m)"
-
-            await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
-            return {
-                "status": "success",
-                "source": source,
-                "mode": mode,
-                "dataset": dataset_id,
-                "message": (
-                    f"Terrain layer '{layer_title}' ({mode}) added to map."
-                ),
-            }
-
-        except Exception as exc:
-            return {"error": f"DEM layer failed: {exc}", "code": "gee_error"}
-
-    async def _get_land_cover(self, args: dict) -> dict:
-        source = args.get("source", "dynamic_world").strip()
-        year = int(args.get("year") or 2023)
-        title = args.get("title", "").strip()
-        ws = args.get("_ws")
-        workspace = args.get("_workspace")
-
-        ok, err = await _ensure_gee(workspace)
-        if not ok:
-            return {"error": err, "code": "upstream_unavailable"}
-
-        try:
-            import ee
-
-            if source == "dynamic_world":
-                dw_palette = [
-                    "419BDF", "397D49", "88B053", "7A87C6",
-                    "E49635", "DFC35A", "C4281B", "A59B8F", "B39FE1",
-                ]
-                dw_classes = [
-                    "Water", "Trees", "Grass", "Flooded Vegetation",
-                    "Crops", "Shrub & Scrub", "Built Area", "Bare Ground", "Snow & Ice",
-                ]
-                vis = {
-                    "min": 0,
-                    "max": 8,
-                    "palette": dw_palette,
-                    "palette_labels": dw_classes,
-                }
-                layer_title = title or f"Dynamic World Land Cover {year}"
-                dataset_id = "GOOGLE/DYNAMICWORLD/V1"
-
-                def build_image():
-                    img = (
-                        ee.ImageCollection(dataset_id)
-                        .filterDate(f"{year}-01-01", f"{year}-12-31")
-                        .select("label")
-                        .mode()
-                    )
-                    result = ee.data.getMapId({"image": img, "visParams": vis})
-                    return result["tile_fetcher"].url_format
-
-                tile_url = await self._tile_url(build_image)
-                await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
-                return {
-                    "status": "success",
-                    "source": "Google Dynamic World V1",
-                    "year": year,
-                    "classes": {str(i): {"name": n, "color": f"#{c}"} for i, (n, c) in enumerate(zip(dw_classes, dw_palette))},
-                    "message": f"Land cover layer '{layer_title}' added to map.",
-                    "tile_url": tile_url,
-                    "dataset_id": dataset_id,
-                    "vis": vis,
-                    "layer_title": layer_title,
-                }
-
-            elif source == "esa_worldcover":
-                yr_map = {2020: "ESA/WorldCover/v100/2020", 2021: "ESA/WorldCover/v200/2021"}
-                dataset_id = yr_map.get(year, "ESA/WorldCover/v200/2021")
-                esa_palette = [
-                    "006400", "ffbb22", "ffff4c", "f096ff",
-                    "fa0000", "b4b4b4", "f0f0f0", "0064c8",
-                    "0096a0", "00cf75", "fae6a0",
-                ]
-                esa_classes = [
-                    "Trees", "Shrubland", "Grassland", "Cropland", "Built-up",
-                    "Barren", "Snow & Ice", "Open Water", "Wetland", "Mangroves", "Moss & Lichen"
-                ]
-                vis = {
-                    "bands": ["Map"],
-                    "min": 10,
-                    "max": 100,
-                    "palette": esa_palette,
-                    "palette_labels": esa_classes,
-                }
-                layer_title = title or f"ESA WorldCover {year}"
-
-                def build_image():
-                    img = ee.ImageCollection(dataset_id).first()
-                    result = ee.data.getMapId({"image": img, "visParams": vis})
-                    return result["tile_fetcher"].url_format
-
-                tile_url = await self._tile_url(build_image)
-                await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
-                return {
-                    "status": "success",
-                    "source": "ESA WorldCover",
-                    "dataset": dataset_id,
-                    "message": f"Land cover layer '{layer_title}' added to map.",
-                    "tile_url": tile_url,
-                    "dataset_id": dataset_id,
-                    "vis": vis,
-                    "layer_title": layer_title,
-                }
-
-            return {"error": f"Unknown source '{source}'. Use 'dynamic_world' or 'esa_worldcover'."}
-
-        except Exception as exc:
-            return {"error": f"Land cover layer failed: {exc}", "code": "gee_error"}
 
     async def _analyze_lulc_change(self, args: dict) -> dict:
         year_start = int(args.get("year_start", 2018))
@@ -798,48 +1962,30 @@ class GEEServer:
             }
 
             def build_changed():
-                def mode_for_year(y):
-                    return (
-                        ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1")
-                        .filterDate(f"{y}-01-01", f"{y}-12-31")
-                        .select("label").mode()
-                    )
-                lc_start = mode_for_year(year_start)
-                lc_end = mode_for_year(year_end)
-                changed = lc_start.neq(lc_end)
-                result = ee.data.getMapId({"image": changed.rename("changed"), "visParams": changed_vis})
-                return result["tile_fetcher"].url_format
+                lc_start = ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1").filterDate(f"{year_start}-01-01", f"{year_start}-12-31").select("label").mode()
+                lc_end = ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1").filterDate(f"{year_end}-01-01", f"{year_end}-12-31").select("label").mode()
+                return lc_start.neq(lc_end).rename("changed")
 
             def build_transition():
-                def mode_for_year(y):
-                    return (
-                        ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1")
-                        .filterDate(f"{y}-01-01", f"{y}-12-31")
-                        .select("label").mode()
-                    )
-                lc_start = mode_for_year(year_start)
-                lc_end = mode_for_year(year_end)
+                lc_start = ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1").filterDate(f"{year_start}-01-01", f"{year_start}-12-31").select("label").mode()
+                lc_end = ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1").filterDate(f"{year_end}-01-01", f"{year_end}-12-31").select("label").mode()
                 changed = lc_start.neq(lc_end)
-                transition = lc_start.multiply(10).add(lc_end).updateMask(changed)
-                result = ee.data.getMapId({"image": transition, "visParams": transition_vis})
-                return result["tile_fetcher"].url_format
+                return lc_start.multiply(10).add(lc_end).updateMask(changed)
 
             loop = asyncio.get_event_loop()
-            changed_url, transition_url = await asyncio.gather(
-                loop.run_in_executor(None, build_changed),
-                loop.run_in_executor(None, build_transition),
-            )
+            _, changed_url = await loop.run_in_executor(None, _sync_get_map_id, build_changed, changed_vis)
+            _, transition_url = await loop.run_in_executor(None, _sync_get_map_id, build_transition, transition_vis)
 
             await self._send_layer(ws, changed_url, "GOOGLE/DYNAMICWORLD/V1", changed_vis, f"Changed Areas {year_start}→{year_end}")
             await self._send_layer(ws, transition_url, "GOOGLE/DYNAMICWORLD/V1", transition_vis, title)
 
             return {
                 "status": "success",
-                "year_start": year_start, "year_end": year_end, "layers_added": 2,
-                "message": (
-                    f"LULC change layers added: (1) changed/unchanged mask (red=changed), "
-                    f"(2) class transition map. Transitions encoded as (start_class×10 + end_class)."
-                ),
+                "year_start": year_start,
+                "year_end": year_end,
+                "layers_added": 2,
+                "tile_url": transition_url,
+                "message": f"LULC change layers added: (1) changed mask, (2) class transition map {year_start}→{year_end}.",
             }
 
         except Exception as exc:
@@ -861,7 +2007,7 @@ class GEEServer:
             ndvi_palette = ["8B4513", "D2691E", "F4A460", "FFFF00", "9ACD32", "228B22", "006400"]
             vis = {"min": -0.1, "max": 0.8, "palette": ndvi_palette}
 
-            def build_image():
+            def build_ndvi():
                 s2 = (
                     ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
                     .filterDate(f"{year}-01-01", f"{year}-12-31")
@@ -869,14 +2015,20 @@ class GEEServer:
                     .select(["B8", "B4"])
                     .median()
                 )
-                ndvi = s2.normalizedDifference(["B8", "B4"]).rename("NDVI")
-                result = ee.data.getMapId({"image": ndvi, "visParams": vis})
-                return result["tile_fetcher"].url_format
+                return s2.normalizedDifference(["B8", "B4"]).rename("NDVI")
 
-            tile_url = await self._tile_url(build_image)
+            map_id, tile_url = await self._tile_proxy(build_ndvi, vis)
             await self._send_layer(ws, tile_url, "COPERNICUS/S2_SR_HARMONIZED", vis, title)
+
             return {
-                "status": "success", "year": year, "index": "NDVI",
+                "status": "success",
+                "year": year,
+                "index": "NDVI",
+                "tile_url": tile_url,
+                "map_id": map_id,
+                "dataset_id": "COPERNICUS/S2_SR_HARMONIZED",
+                "vis": vis,
+                "layer_title": title,
                 "interpretation": {
                     "< 0.1": "Built-up / bare land / water",
                     "0.1 – 0.3": "Sparse vegetation / degraded land",
@@ -890,7 +2042,7 @@ class GEEServer:
             return {"error": f"NDVI computation failed: {exc}", "code": "gee_error"}
 
     async def _get_gee_layer(self, args: dict) -> dict:
-        """Backward-compat: sample point values AND add tile layer to map."""
+        """Backward-compat: sample point values and return tile layer."""
         dataset = args.get("dataset", "").strip()
         lat = float(args.get("lat", 0))
         lng = float(args.get("lng", 0))
@@ -911,27 +2063,22 @@ class GEEServer:
 
             def build_and_sample():
                 if is_collection:
-                    img = ee.ImageCollection(dataset).filterBounds(
-                        ee.Geometry.Point([lng, lat])
-                    ).median()
+                    img = ee.ImageCollection(dataset).filterBounds(ee.Geometry.Point([lng, lat])).median()
                 else:
                     img = ee.Image(dataset)
 
-                # Get tile URL
-                result = ee.data.getMapId({"image": img, "visParams": default_vis})
-                tile_url = result["tile_fetcher"].url_format
+                map_id, tile_url = _sync_get_map_id(lambda: img, default_vis)
 
-                # Sample pixel value at point
                 point = ee.Geometry.Point([lng, lat])
                 try:
                     sample = img.sample(point, 30).first().toDictionary().getInfo()
                 except Exception:
                     sample = {}
 
-                return tile_url, sample
+                return map_id, tile_url, sample
 
             loop = asyncio.get_event_loop()
-            tile_url, sample = await loop.run_in_executor(None, build_and_sample)
+            map_id, tile_url, sample = await loop.run_in_executor(None, build_and_sample)
 
             title = f"{dataset.split('/')[-1]} — pixel sample"
             await self._send_layer(ws, tile_url, dataset, default_vis, title)
@@ -940,13 +2087,15 @@ class GEEServer:
                 "status": "success",
                 "dataset": dataset,
                 "pixel_values": sample,
+                "tile_url": tile_url,
+                "map_id": map_id,
+                "vis": default_vis,
+                "layer_title": title,
                 "message": f"Layer '{title}' added to map. Pixel values at ({lat:.4f}, {lng:.4f}): {sample}",
             }
 
         except Exception as exc:
             return {"error": f"GEE execution failed: {exc}", "code": "gee_error"}
-
-    # ── Zonal Land Use Analysis & Vector Extraction ─────────────────────────
 
     async def _analyze_land_use_zonal_stats(self, args: dict) -> dict:
         geojson_input = args.get("geojson")
@@ -954,7 +2103,6 @@ class GEEServer:
         lng = args.get("lng")
         radius_km = float(args.get("radius_km") or 5.0)
         year = int(args.get("year") or 2023)
-        source = (args.get("source") or "dynamic_world").lower()
         workspace = args.get("_workspace")
 
         dw_classes = [
@@ -968,7 +2116,6 @@ class GEEServer:
 
         ok, err = await _ensure_gee(workspace)
         if not ok:
-            # Clean fallback when GEE credentials are not configured
             return {
                 "status": "partial_fallback",
                 "message": f"GEE credentials not active ({err}). Displaying standard Dynamic World class schema for {year}.",
@@ -985,7 +2132,7 @@ class GEEServer:
                 elif lat is not None and lng is not None:
                     ee_geom = ee.Geometry.Point([float(lng), float(lat)]).buffer(radius_km * 1000.0)
                 else:
-                    ee_geom = ee.Geometry.Point([76.7794, 30.7333]).buffer(5000)  # Default Chandigarh center
+                    ee_geom = ee.Geometry.Point([76.7794, 30.7333]).buffer(5000)
 
                 img = (
                     ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1")
@@ -994,7 +2141,6 @@ class GEEServer:
                     .mode()
                 )
 
-                # Pixel area image in m² grouped by land cover class
                 area_img = ee.Image.pixelArea().addBands(img)
                 stats = area_img.reduceRegion(
                     reducer=ee.Reducer.sum().group(groupField=1, groupName="class_id"),
@@ -1092,7 +2238,6 @@ class GEEServer:
             "#E49635", "#DFC35A", "#C4281B", "#A59B8F", "#B39FE1",
         ]
 
-        # Resolve target class index
         target_idx = 6  # default Built Area
         if target_input.isdigit():
             target_idx = int(target_input)
@@ -1103,8 +2248,7 @@ class GEEServer:
                     break
 
         class_name = dw_display_names[target_idx] if 0 <= target_idx < len(dw_display_names) else "Built Area"
-        
-        # Color mapping support (e.g. blue, red, yellow, or hex)
+
         COLOR_MAP = {
             "blue": "#2563EB",
             "darkblue": "#1E40AF",
@@ -1121,7 +2265,6 @@ class GEEServer:
         else:
             class_color = dw_colors[target_idx] if 0 <= target_idx < len(dw_colors) else "#C4281B"
 
-        # If place_name is provided and geojson_input is not, auto-resolve boundary
         if not geojson_input and place_name:
             try:
                 from tools.spatial_registry import spatial_registry
@@ -1170,7 +2313,6 @@ class GEEServer:
                     .mode()
                 )
 
-                # Mask raster for target land cover class
                 masked = img.eq(target_idx).selfMask()
 
                 def extract_geom(g):
@@ -1188,27 +2330,27 @@ class GEEServer:
                 except Exception as e:
                     err_str = str(e).lower()
                     if "5000" in err_str or "limit" in err_str or "aborted" in err_str or "memory" in err_str:
-                        logger.info("Extraction exceeded limit. Splitting geometry into sub-quadrants recursively...")
-                        
+                        logger.info("Extraction exceeded limit. Splitting geometry into sub-quadrants...")
+
                         def split_and_extract(geom, depth=0):
-                            if depth > 2: # Max 3 levels of recursion (64 quadrants)
+                            if depth > 2:
                                 raise Exception("Max recursion depth reached: region is too complex.")
-                            
-                            bounds = geom.bounds().getInfo()['coordinates'][0]
+
+                            bounds = geom.bounds().getInfo()["coordinates"][0]
                             lons = [pt[0] for pt in bounds]
                             lats = [pt[1] for pt in bounds]
                             w, e_lon = min(lons), max(lons)
                             s, n_lat = min(lats), max(lats)
                             mid_lon = (w + e_lon) / 2.0
                             mid_lat = (s + n_lat) / 2.0
-                            
+
                             quads = [
                                 ee.Geometry.Rectangle([w, s, mid_lon, mid_lat]),
                                 ee.Geometry.Rectangle([mid_lon, s, e_lon, mid_lat]),
                                 ee.Geometry.Rectangle([w, mid_lat, mid_lon, n_lat]),
-                                ee.Geometry.Rectangle([mid_lon, mid_lat, e_lon, n_lat])
+                                ee.Geometry.Rectangle([mid_lon, mid_lat, e_lon, n_lat]),
                             ]
-                            
+
                             feats = []
                             for q in quads:
                                 inter = geom.intersection(q, 10)
@@ -1221,7 +2363,7 @@ class GEEServer:
                                         if "5000" in err_msg or "limit" in err_msg or "aborted" in err_msg or "memory" in err_msg:
                                             feats.extend(split_and_extract(inter, depth + 1))
                                         else:
-                                            logger.warning(f"Quadrant extraction failed for non-limit reason: {qe}")
+                                            logger.warning(f"Quadrant extraction failed: {qe}")
                             return feats
 
                         all_features = split_and_extract(ee_geom)
@@ -1236,7 +2378,6 @@ class GEEServer:
 
             features = fc_data.get("features", [])
 
-            # Exact spatial intersection (clipping) against boundary polygon
             if geom_data:
                 try:
                     import shapely.geometry
@@ -1312,4 +2453,3 @@ class GEEServer:
 
         except Exception as exc:
             return {"error": f"Vector polygon extraction failed: {exc}", "code": "gee_error"}
-
