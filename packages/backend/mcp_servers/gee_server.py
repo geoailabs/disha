@@ -178,11 +178,22 @@ def _sync_get_map_id(image_fn, vis_params: dict) -> tuple[str, str]:
     """Call ee.data.getMapId in a thread. Returns (map_id, proxy_tile_url)."""
     import ee
     img = image_fn()
-    result = ee.data.getMapId({"image": img, "visParams": vis_params})
+    if vis_params:
+        valid_keys = {"bands", "min", "max", "gain", "bias", "gamma", "palette", "opacity", "forceRgbOutput"}
+        clean_vis = {k: v for k, v in vis_params.items() if k in valid_keys}
+        try:
+            vis_img = img.visualize(**clean_vis)
+            result = ee.data.getMapId({"image": vis_img})
+        except Exception as exc:
+            logger.debug(f"Direct img.visualize failed, falling back to visParams dict: {exc}")
+            result = ee.data.getMapId({"image": img, "visParams": vis_params})
+    else:
+        result = ee.data.getMapId({"image": img})
     map_id = result.get("mapid", "")
     port = int(os.environ.get("DISHA_BACKEND_PORT", "8765"))
     proxy_url = f"http://localhost:{port}/api/gee/tiles/{map_id}/{{z}}/{{x}}/{{y}}"
     return map_id, proxy_url
+
 
 
 # ── Dataset Defaults & Catalog Information ────────────────────────────────────
@@ -197,9 +208,9 @@ def _get_dataset_defaults(dataset: str) -> tuple[dict, bool]:
 
     # 2. Landsat 8/9
     if "landsat/lc08" in d or "landsat/lc09" in d:
-        return {"bands": ["SR_B4", "SR_B3", "SR_B2"], "min": 7000, "max": 30000}, True
+        return {"bands": ["SR_B4", "SR_B3", "SR_B2"], "min": 7000, "max": 16000}, True
     if "landsat/le07" in d or "landsat/lt05" in d:
-        return {"bands": ["SR_B3", "SR_B2", "SR_B1"], "min": 7000, "max": 30000}, True
+        return {"bands": ["SR_B3", "SR_B2", "SR_B1"], "min": 7000, "max": 16000}, True
 
     # 3. Elevation & Terrain
     if "srtm" in d or "copernicus/dem" in d or "nasadem" in d or "aw3d30" in d:
@@ -1206,19 +1217,19 @@ class GEEServer:
 
             if preset == "true_color":
                 bands = ["SR_B4", "SR_B3", "SR_B2"] if is_modern else ["SR_B3", "SR_B2", "SR_B1"]
-                vis = {"bands": bands, "min": 7000, "max": 30000}
+                vis = {"bands": bands, "min": 7000, "max": 16000}
                 build_fn = lambda: coll.median()
             elif preset == "false_color_nir":
                 bands = ["SR_B5", "SR_B4", "SR_B3"] if is_modern else ["SR_B4", "SR_B3", "SR_B2"]
-                vis = {"bands": bands, "min": 7000, "max": 35000}
+                vis = {"bands": bands, "min": 7000, "max": 18000}
                 build_fn = lambda: coll.median()
             elif preset == "swir_geology":
                 bands = ["SR_B7", "SR_B6", "SR_B4"] if is_modern else ["SR_B7", "SR_B5", "SR_B3"]
-                vis = {"bands": bands, "min": 7000, "max": 35000}
+                vis = {"bands": bands, "min": 7000, "max": 18000}
                 build_fn = lambda: coll.median()
             elif preset == "agriculture":
                 bands = ["SR_B6", "SR_B5", "SR_B2"] if is_modern else ["SR_B5", "SR_B4", "SR_B1"]
-                vis = {"bands": bands, "min": 7000, "max": 35000}
+                vis = {"bands": bands, "min": 7000, "max": 18000}
                 build_fn = lambda: coll.median()
             elif preset == "thermal":
                 vis = {"min": 15, "max": 45, "palette": ["0000ff", "00ffff", "ffff00", "ff7700", "ff0000"]}
@@ -1572,7 +1583,7 @@ class GEEServer:
                 esa_palette = ["006400", "ffbb22", "ffff4c", "f096ff", "fa0000", "b4b4b4", "f0f0f0", "0064c8", "0096a0", "00cf75", "fae6a0"]
                 esa_classes = ["Trees", "Shrubland", "Grassland", "Cropland", "Built-up", "Barren", "Snow & Ice", "Open Water", "Wetland", "Mangroves", "Moss & Lichen"]
                 vis = {"bands": ["Map"], "min": 10, "max": 100, "palette": esa_palette, "palette_labels": esa_classes}
-                build_fn = lambda: ee.ImageCollection(dataset_id).first()
+                build_fn = lambda: ee.Image(dataset_id)
 
             elif source == "modis_landcover":
                 dataset_id = "MODIS/061/MCD12Q1"
