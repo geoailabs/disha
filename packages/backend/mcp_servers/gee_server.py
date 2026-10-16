@@ -1962,27 +1962,33 @@ class GEEServer:
             import ee
 
             vis = {
-                "min": 0,
-                "max": 500,
-                "palette": ["ffffe5", "f7fcb9", "addd8e", "41ab5d", "006837", "ffaa00", "ff0000"],
-                "palette_labels": ["0 (Low)", "83", "166", "250", "333", "416", "500+ (High)"],
+                "min": 1,
+                "max": 100,
+                "palette": ["fef0d9", "fdcc8a", "fc8d59", "e34a33", "b30000", "7a0177"],
+                "palette_labels": ["1 (Rural)", "20", "40", "60", "80", "100+ (High Density)"],
             }
 
             def build_pop():
+                palette = ["fef0d9", "fdcc8a", "fc8d59", "e34a33", "b30000", "7a0177"]
                 if source == "worldpop":
                     yr = min(max(year, 2000), 2020)
                     coll = ee.ImageCollection("WorldPop/GP/100m/pop").filter(ee.Filter.eq("year", yr))
                     if country_iso:
                         coll = coll.filter(ee.Filter.eq("country", country_iso))
-                    return coll.mosaic()
+                    raw_img = coll.mosaic()
+                    colored = raw_img.visualize(min=1, max=100, palette=palette)
+                    # Mask out zeros / unpopulated agricultural lands so basemap shows through cleanly
+                    return colored.updateMask(raw_img.gt(0.5))
                 else:
                     valid_years = [2000, 2005, 2010, 2015, 2020]
                     yr = min(valid_years, key=lambda y: abs(y - year))
-                    return ee.ImageCollection("CIESIN/GPWv411/GPW_Population_Density").filterDate(f"{yr}-01-01", f"{yr}-12-31").first()
+                    raw_img = ee.ImageCollection("CIESIN/GPWv411/GPW_Population_Density").filterDate(f"{yr}-01-01", f"{yr}-12-31").first()
+                    colored = raw_img.visualize(min=5, max=500, palette=palette)
+                    return colored.updateMask(raw_img.gt(1.0))
 
             layer_title = title or (f"Population Density – {place_name} ({year})" if place_name else f"Population Density ({source.title()} {year})")
             dataset_id = "WorldPop/GP/100m/pop" if source == "worldpop" else "CIESIN/GPWv411/GPW_Population_Density"
-            map_id, tile_url = await self._tile_proxy(build_pop, vis)
+            map_id, tile_url = await self._tile_proxy(build_pop, {})
             await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
             return {
