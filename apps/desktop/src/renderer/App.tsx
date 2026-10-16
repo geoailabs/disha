@@ -2545,35 +2545,33 @@ function App() {
     }
     if (action.type === 'add_gee_layer') {
       const { url, dataset, vis_params, title } = action.payload
-      // Deduplicate by dataset name. GEE tile tokens expire after ~24h, so if
+      // Deduplicate by dataset name or title. GEE tile tokens expire after ~24h, so if
       // the same dataset is re-added we update the URL (refresh token) and
       // make the layer visible rather than creating a duplicate entry.
-      const existing = layers.find(
-        (l) => l.geeSpec && l.geeSpec.dataset === dataset,
-      )
-      if (existing) {
-        setLayers((prev) =>
-          prev.map((l) =>
-            l.id === existing.id
-              ? { ...l, visible: true, geeSpec: { url, dataset, vis_params } }
-              : l,
-          ),
+      setLayers((prev) => {
+        const existing = prev.find(
+          (l) => (l.geeSpec && l.geeSpec.dataset === dataset) || (title && l.name === title),
         )
-        setActiveLeftTab('layers')
-        return
-      }
-      const id = `gee-${Date.now()}`
-      const newLayer: GeoJSONLayer = {
-        id,
-        name: title || dataset,
-        filePath: '',
-        visible: true,
-        opacity: 0.5,
-        data: { type: 'FeatureCollection', features: [] },
-        color: '#89b4fa',
-        geeSpec: { url, dataset, vis_params }
-      }
-      setLayers((prev) => [...prev, newLayer])
+        if (existing) {
+          return prev.map((l) =>
+            l.id === existing.id
+              ? { ...l, name: title || l.name, visible: true, opacity: l.opacity ?? 0.85, geeSpec: { url, dataset, vis_params } }
+              : l,
+          )
+        }
+        const id = `gee-${Date.now()}`
+        const newLayer: GeoJSONLayer = {
+          id,
+          name: title || dataset,
+          filePath: '',
+          visible: true,
+          opacity: 0.85,
+          data: { type: 'FeatureCollection', features: [] },
+          color: '#89b4fa',
+          geeSpec: { url, dataset, vis_params },
+        }
+        return [...prev, newLayer]
+      })
       setActiveLeftTab('layers')
       return
     }

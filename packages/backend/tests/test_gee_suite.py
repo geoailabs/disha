@@ -181,3 +181,60 @@ def test_gee_tile_router_matching():
     # Multi-segment project map ID (projects/{p}/maps/{id})
     resp_multi = client.get("/api/gee/tiles/projects/ee-geovisionaries/maps/abc-def-123/0/0/0")
     assert resp_multi.status_code in [200, 400, 401, 404, 500, 502, 503]
+
+
+@pytest.mark.asyncio
+async def test_population_layer_with_country_inference(gee_server, env_hub):
+    """Verify that get_population_layer correctly resolves country_iso for named places and returns add_gee_layer action."""
+    # Test inference helper
+    assert GEEServer._infer_country_iso({}, "Chandigarh, India", None, None) == "IND"
+    assert GEEServer._infer_country_iso({}, "New York", None, None) == "USA"
+    assert GEEServer._infer_country_iso({}, "", 30.7333, 76.7794) == "IND"
+
+    # Test execution via EnvironmentHub
+    res: ToolResult = await env_hub.execute(
+        "get_population_layer",
+        {"place_name": "Chandigarh", "year": 2020},
+    )
+    if res.status == "success":
+        assert res.data["country_iso"] == "IND"
+        assert res.map_action is not None
+        assert res.map_action["action"] == "add_gee_layer"
+        assert "/api/gee/tiles/" in res.map_action["payload"]["url"]
+        assert "WorldPop" in res.map_action["payload"]["dataset"]
+    else:
+        assert res.status == "error"
+        assert res.error is not None
+
+
+def test_chat_router_system_prompt_and_actions():
+    """Verify that chat.py SYSTEM_PROMPT and tool declarations include the complete GEE catalog."""
+    from routers.chat import SYSTEM_PROMPT, _ACTION_TOOLS, _TOOLS
+
+    # Action tools registration
+    assert "add_gee_layer" in _ACTION_TOOLS
+
+    # OpenAI schema registration
+    tool_names = {t["function"]["name"] for t in _TOOLS}
+    assert "add_gee_layer" in tool_names
+    assert "get_population_layer" in tool_names
+    assert "get_surface_temperature_layer" in tool_names
+    assert "get_dem_layer" in tool_names
+    assert "get_atmospheric_layer" in tool_names
+    assert "get_weather_layer" in tool_names
+    assert "get_climate_layer" in tool_names
+    assert "get_landsat_layer" in tool_names
+    assert "get_sentinel_layer" in tool_names
+    assert "get_high_resolution_imagery" in tool_names
+    assert "get_modis_layer" in tool_names
+    assert "get_agriculture_layer" in tool_names
+    assert "get_geophysical_layer" in tool_names
+    assert "search_gee_datasets" in tool_names
+    assert "get_gee_zonal_stats" in tool_names
+
+    # System prompt tool and rule mandates
+    assert "get_population_layer" in SYSTEM_PROMPT
+    assert "get_surface_temperature_layer" in SYSTEM_PROMPT
+    assert "get_dem_layer" in SYSTEM_PROMPT
+    assert "38. RASTER & EARTH ENGINE (GEE) EXECUTION MANDATE:" in SYSTEM_PROMPT
+

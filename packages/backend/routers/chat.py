@@ -327,16 +327,27 @@ SYSTEM_PROMPT = (
     "use only after scenarios are defined; pass scenario names not geometry), "
     "estimate_scenario_emissions (calculate tailpipe CO₂, PM2.5, NOx, CO and ambient PM2.5 using the Gifford-Hanna box model — "
     "use for emissions impact assessment of a transport or land use scenario).\n"
-    "- Google Land Classification (GEE): "
-    "get_land_cover (adds a full multi-class LULC raster tile showing ALL 9 land classes simultaneously as a colour overlay — "
-    "ONLY use this when the user wants the complete land cover map; DO NOT use it to show a single class), "
-    "analyze_lulc_change (compare two years of Dynamic World to detect built-up expansion, deforestation, "
-    "or wetland loss — adds a changed-areas mask + class-transition layer), "
+    "- Earth Engine Remote Sensing & Raster Overlays (GEE): "
+    "get_population_layer (render a 100m WorldPop or CIESIN GPWv4 population density raster tile layer on the map — ALWAYS call this for 'population raster', 'population density map', 'WorldPop', or 'demographic heat map' requests; pass place_name='<place>' or country_iso and year=2020), "
+    "get_surface_temperature_layer (Land Surface Temperature LST in °C from Landsat 8/9 ST_B10, MODIS MOD11A1, or ERA5-Land — use for urban heat islands UHI, thermal mapping, heat risk; supports place_name, year, min_temp, max_temp), "
+    "get_dem_layer (elevation, hillshade, slope, or aspect terrain raster layer from SRTM 30m, Copernicus GLO-30, NASADEM, ALOS — use for topography, slope analysis, flood risk modeling), "
+    "get_atmospheric_layer (Sentinel-5P tropospheric air pollution column density for NO2, CO, SO2, O3, AER_AI aerosol index, HCHO, CH4, and MODIS AOD aerosol optical depth — use for regional air quality and pollution plumes), "
+    "get_weather_layer (ERA5-Land high-resolution weather reanalysis for 2m temperature, total precipitation, 10m wind speed, surface solar radiation), "
+    "get_climate_layer (historical and projected climate water balance: precipitation, max/min temperature, Palmer Drought Severity Index PDSI, soil moisture, runoff from TerraClimate or CHIRPS), "
+    "get_landsat_layer (Landsat 9/8/7/5 multispectral satellite imagery presets: true_color, false_color_nir, swir_geology, agriculture, thermal, ndvi), "
+    "get_sentinel_layer (Sentinel-2 optical RGB/NIR/SWIR/NDVI/NDWI and Sentinel-1 SAR C-band radar backscatter VV/VH for flood mapping and ground texture), "
+    "get_high_resolution_imagery (sub-meter USDA NAIP aerial orthoimagery 0.6m–1m and Sentinel-2 10m optical imagery), "
+    "get_modis_layer (global MODIS products: reflectance, NDVI/EVI vegetation, daily LST, active fires FIRMS thermal anomalies, snow cover, burned area), "
+    "get_land_cover (full 9-class or 11-class LULC raster tile overlay from Dynamic World or ESA WorldCover — ONLY use when the user asks for the complete multi-class land cover map; DO NOT use for a single class), "
+    "analyze_lulc_change (compare two years of Dynamic World to detect built-up expansion, deforestation, or wetland loss — adds a changed-areas mask + class-transition layer), "
     "analyze_land_use_zonal_stats (calculate exact area in km² and percentage composition breakdown of land cover classes inside a study polygon/boundary), "
-    "extract_land_use_polygons (extract exactly ONE land cover class as clipped vector GeoJSON polygon features on the map; "
-    "ALWAYS use this — NOT get_land_cover — when the user asks for built-up area, urban footprint, water bodies, trees, cropland, "
-    "or any other single land class; pass place_name='<city name>' to auto-clip to administrative boundary), "
-    "get_ndvi_layer (compute NDVI from Sentinel-2 to map vegetation density, green space, and urban heat islands). "
+    "extract_land_use_polygons (extract exactly ONE land cover class as clipped vector GeoJSON polygon features on the map; ALWAYS use this — NOT get_land_cover — when the user asks for built-up area, urban footprint, water bodies, trees, cropland, or any other single land class; pass place_name='<city name>' to auto-clip to administrative boundary), "
+    "get_ndvi_layer (compute NDVI from Sentinel-2 to map vegetation density, green space, and urban canopy), "
+    "get_agriculture_layer (crop types from USDA CDL, SMAP soil moisture, MODIS evapotranspiration, Sentinel-2 NDRE chlorophyll vigor, NDWI water stress), "
+    "get_geophysical_layer (JRC Global Surface Water occurrence/seasonality, VIIRS nighttime luminosity, Hansen Global Forest Change canopy & loss), "
+    "search_gee_datasets (search the Earth Engine catalog by keyword and category across all 12 categories), "
+    "get_gee_zonal_stats (calculate quantitative mean, min, max, stdDev summary statistics for ANY GEE dataset over a polygon or radius), "
+    "add_gee_layer (render any GEE dataset as a raster tile overlay on the map). "
     "CRITICAL GEE TOOL SELECTION RULE: 'built-up area' / 'built area' / 'impervious surface' / 'urban area' / "
     "'water bodies' / 'forest' / 'cropland' requests → ALWAYS call extract_land_use_polygons(target_class='Built Area' / 'Water' / 'Trees' / 'Crops'). "
     "NEVER call get_land_cover for single-class requests. "
@@ -531,6 +542,11 @@ SYSTEM_PROMPT = (
     "  - Every quantitative figure, spatial area, demographic count, route metric, environmental score, or planning projection stated in the document must be clearly accounted for: state WHERE it came from (exact tool, API endpoint, dataset title, query tags/scope) and WHAT BASIS it was determined on (geodesic ellipsoidal calculation, per-capita norms, planning regulations, or model formulas).\n"
     "  - Format this section with a structured markdown table containing columns: | Data Source / Tool | Category | Provider / Endpoint | Query Scope & Parameters | Date / Timestamp | Analytical Basis & Assumptions |. Include authoritative markdown hyperlinks for data sources (e.g. [**Open-Meteo Air Quality**](https://open-meteo.com/en/docs/air-quality-api), [**WorldPop**](https://hub.worldpop.org), [**OpenStreetMap**](https://www.openstreetmap.org)).\n"
     "  - Never state unverified or uncited metrics; always specify the factual provenance.\n"
+    "38. RASTER & EARTH ENGINE (GEE) EXECUTION MANDATE:\n"
+    "  When the user asks to 'show', 'load', 'display', 'map', 'plot', or 'add' any raster layer, satellite imagery, population raster, surface temperature, elevation/DEM, atmospheric pollution, climate, or land cover (e.g. 'show population raster for <City>', 'show surface temperature of <City>', 'display DEM for <City>', 'show NO2 pollution for <City>', 'load Landsat imagery of <City>'):\n"
+    "  - You MUST execute the corresponding GEE tool (`get_population_layer`, `get_surface_temperature_layer`, `get_dem_layer`, `get_atmospheric_layer`, `get_sentinel_layer`, `get_landsat_layer`, `get_climate_layer`, `get_weather_layer`, `get_agriculture_layer`, `get_geophysical_layer`, `get_modis_layer`, `get_land_cover`).\n"
+    "  - Pass `place_name='<City>'` (and coordinates if known from Map Context).\n"
+    "  - NEVER claim in chat text that you loaded or added a raster, population map, or Earth Engine layer without actually executing the tool call in that turn.\n"
 )
 
 
@@ -1307,6 +1323,16 @@ def _build_tools() -> list[dict]:
                 }
             },
             "required": ["basemap"],
+        }),
+        ("add_gee_layer", "Render a Google Earth Engine dataset or raster URL directly on the map as an XYZ tile layer", {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "Tile URL template for the GEE layer ({z}/{x}/{y})"},
+                "dataset": {"type": "string", "description": "GEE dataset ID or name"},
+                "vis_params": {"type": "object", "description": "Optional visualization parameters (palette, min, max, bands)"},
+                "title": {"type": "string", "description": "Display title for the layer in the Layers panel"},
+            },
+            "required": ["url", "dataset"],
         }),
     ]
     for name, desc, params in action_defs:

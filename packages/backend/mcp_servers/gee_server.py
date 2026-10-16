@@ -621,16 +621,20 @@ class GEEServer:
             ToolDeclaration(
                 name="get_population_layer",
                 description=(
-                    "Add a population density raster layer to the map from WorldPop (100m, 2000-2020) "
-                    "or LandScan (1km, global ambient population). Use for urban density analysis and disaster exposure."
+                    "Add a high-resolution population density raster layer to the map from WorldPop (100m grid, 2000-2020) "
+                    "or CIESIN GPWv4 / LandScan. ALWAYS use this for 'population raster', 'population density map', 'WorldPop', "
+                    "or urban density visualization requests."
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
-                        "source": {"type": "string", "enum": ["worldpop", "landscan", "gpw"], "description": "Dataset source."},
-                        "year": {"type": "integer", "description": "Year (default 2020)."},
-                        "country_iso": {"type": "string", "description": "ISO-3 country code for WorldPop (e.g. 'IND')."},
-                        "title": {"type": "string", "description": "Layer title."},
+                        "place_name": {"type": "string", "description": "City or region name (e.g. 'Chandigarh', 'Delhi', 'London')."},
+                        "source": {"type": "string", "enum": ["worldpop", "landscan", "gpw"], "description": "Dataset source (default 'worldpop')."},
+                        "year": {"type": "integer", "description": "Year between 2000 and 2020 (default 2020)."},
+                        "country_iso": {"type": "string", "description": "ISO-3 country code for WorldPop (e.g. 'IND', 'USA', 'GBR')."},
+                        "lat": {"type": "number", "description": "Latitude for study area location."},
+                        "lng": {"type": "number", "description": "Longitude for study area location."},
+                        "title": {"type": "string", "description": "Optional custom layer title."},
                     },
                 },
             ),
@@ -1883,13 +1887,72 @@ class GEEServer:
 
     # ── 16. Existing Tools Preserved ──────────────────────────────────────────
 
+    @staticmethod
+    def _infer_country_iso(args: dict, place_name: str, lat: float | None, lng: float | None) -> str:
+        iso = (args.get("country_iso") or args.get("country_code") or "").upper().strip()
+        if len(iso) == 3:
+            return iso
+        if len(iso) == 2:
+            mapping = {
+                "IN": "IND", "US": "USA", "GB": "GBR", "UK": "GBR", "CA": "CAN",
+                "AU": "AUS", "DE": "DEU", "FR": "FRA", "JP": "JPN", "CN": "CHN",
+                "BR": "BRA", "ZA": "ZAF", "IT": "ITA", "ES": "ESP", "MX": "MEX",
+            }
+            if iso in mapping:
+                return mapping[iso]
+
+        if lat is None or lng is None:
+            map_ctx = args.get("_map_context")
+            if isinstance(map_ctx, dict):
+                center = map_ctx.get("center")
+                if isinstance(center, (list, tuple)) and len(center) >= 2:
+                    lng, lat = float(center[0]), float(center[1])
+
+        if lat is not None and lng is not None:
+            try:
+                lat = float(lat)
+                lng = float(lng)
+                if 6.0 <= lat <= 38.0 and 68.0 <= lng <= 98.0:
+                    return "IND"
+                if 24.0 <= lat <= 50.0 and -125.0 <= lng <= -65.0:
+                    return "USA"
+                if 49.0 <= lat <= 61.0 and -8.0 <= lng <= 2.0:
+                    return "GBR"
+                if 42.0 <= lat <= 83.0 and -141.0 <= lng <= -52.0:
+                    return "CAN"
+                if -44.0 <= lat <= -10.0 and 112.0 <= lng <= 154.0:
+                    return "AUS"
+            except (ValueError, TypeError):
+                pass
+
+        p_lower = place_name.lower()
+        if any(k in p_lower for k in ("india", "chandigarh", "delhi", "mumbai", "bengaluru", "bangalore", "punjab", "haryana", "kolkata", "chennai")):
+            return "IND"
+        if any(k in p_lower for k in ("usa", "united states", "new york", "california", "texas", "chicago", "los angeles")):
+            return "USA"
+        if any(k in p_lower for k in ("uk", "united kingdom", "london", "england", "scotland")):
+            return "GBR"
+        return ""
+
     async def _get_population_layer(self, args: dict) -> dict:
-        source = args.get("source", "worldpop").strip()
+        source = args.get("source", "worldpop").strip().lower()
         year = int(args.get("year") or 2020)
         country_iso = (args.get("country_iso") or "").upper().strip()
+        place_name = (
+            args.get("place_name")
+            or args.get("city")
+            or args.get("location")
+            or args.get("study_area")
+            or ""
+        ).strip()
+        lat = args.get("lat")
+        lng = args.get("lng")
         title = args.get("title", "").strip()
         ws = args.get("_ws")
         workspace = args.get("_workspace")
+
+        if not country_iso:
+            country_iso = self._infer_country_iso(args, place_name, lat, lng)
 
         ok, err = await _ensure_gee(workspace)
         if not ok:
@@ -1917,7 +1980,7 @@ class GEEServer:
                     yr = min(valid_years, key=lambda y: abs(y - year))
                     return ee.ImageCollection("CIESIN/GPWv411/GPW_Population_Density").filterDate(f"{yr}-01-01", f"{yr}-12-31").first()
 
-            layer_title = title or f"Population Density ({source.title()} {year})"
+            layer_title = title or (f"Population Density – {place_name} ({year})" if place_name else f"Population Density ({source.title()} {year})")
             dataset_id = "WorldPop/GP/100m/pop" if source == "worldpop" else "CIESIN/GPWv411/GPW_Population_Density"
             map_id, tile_url = await self._tile_proxy(build_pop, vis)
             await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
@@ -1926,6 +1989,8 @@ class GEEServer:
                 "status": "success",
                 "source": source,
                 "year": year,
+                "country_iso": country_iso or "global",
+                "place_name": place_name,
                 "tile_url": tile_url,
                 "map_id": map_id,
                 "dataset_id": dataset_id,

@@ -1017,7 +1017,30 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       }
       } else {
         // Existing source — sync data + visibility + style overrides.
-        if (layer.wmsSpec || layer.geeSpec) {
+        if (layer.geeSpec) {
+          const vis = layer.visible ? 'visible' : 'none'
+          if (map.getLayer(`${layer.id}-raster`)) {
+            map.setLayoutProperty(`${layer.id}-raster`, 'visibility', vis)
+            map.setPaintProperty(`${layer.id}-raster`, 'raster-opacity', (layer.opacity ?? 1.0) * opacityMultiplier)
+          }
+          const src = map.getSource(layer.id) as any
+          if (src && src.tiles && src.tiles[0] !== layer.geeSpec.url) {
+            if (map.getLayer(`${layer.id}-raster`)) map.removeLayer(`${layer.id}-raster`)
+            map.removeSource(layer.id)
+            map.addSource(layer.id, {
+              type: 'raster',
+              tiles: [layer.geeSpec.url],
+              tileSize: 256,
+            })
+            map.addLayer({
+              id: `${layer.id}-raster`,
+              type: 'raster',
+              source: layer.id,
+              layout: { visibility: vis },
+              paint: { 'raster-opacity': (layer.opacity ?? 1.0) * opacityMultiplier },
+            })
+          }
+        } else if (layer.wmsSpec) {
           const vis = layer.visible ? 'visible' : 'none'
           if (map.getLayer(`${layer.id}-raster`)) {
             map.setLayoutProperty(`${layer.id}-raster`, 'visibility', vis)
