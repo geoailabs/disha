@@ -1,27 +1,28 @@
 /* =========================================================
    TimelineBar.css
-   Interactive Temporal Playback Bar & Range Editor
-   Matches the Dark Glassmorphic Pill Reference Design
+   Minimalist & Modern Temporal Playback Bar
+   Apple / Linear Frosted Glassmorphism
    ========================================================= */
 
 .timeline-bar-wrapper {
   position: absolute;
-  bottom: 88px;
+  bottom: 84px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 38;
   display: flex;
   flex-direction: column;
   align-items: center;
+  gap: 6px;
   pointer-events: auto;
   user-select: none;
-  animation: timelineSlideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  animation: timelineFloatUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-@keyframes timelineSlideUp {
+@keyframes timelineFloatUp {
   from {
     opacity: 0;
-    transform: translate(-50%, 14px) scale(0.97);
+    transform: translate(-50%, 12px) scale(0.98);
   }
   to {
     opacity: 1;
@@ -29,38 +30,104 @@
   }
 }
 
-/* ── Main Glassmorphic Pill ─────────────────────────────────── */
-.timeline-pill {
-  height: 52px;
-  min-width: 480px;
-  max-width: 780px;
-  background: linear-gradient(
-    180deg,
-    rgba(28, 32, 42, 0.94) 0%,
-    rgba(18, 20, 26, 0.96) 100%
-  );
-  backdrop-filter: blur(24px) saturate(180%) contrast(105%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%) contrast(105%);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 9999px;
-  box-shadow:
-    inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.35),
-    inset 0 -1px 1px 0 rgba(0, 0, 0, 0.4),
-    0 20px 48px -6px rgba(0, 0, 0, 0.75),
-    0 8px 20px -2px rgba(0, 0, 0, 0.4);
+/* ── Sleek Floating Header Pill (Title + Range + Edit) ──────── */
+.timeline-header-bar {
   display: flex;
   align-items: center;
-  padding: 0 16px 0 14px;
-  gap: 12px;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(220, 230, 245, 0.7);
+  background: rgba(18, 20, 26, 0.72);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 9999px;
+  padding: 3px 12px;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.timeline-header-bar:hover {
+  color: #ffffff;
+  background: rgba(28, 32, 42, 0.9);
+  border-color: rgba(255, 255, 255, 0.2);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  transform: translateY(-1px);
+}
+
+.timeline-header-title {
+  font-weight: 600;
+  color: #f1f5f9;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline-header-dot {
+  opacity: 0.4;
+  font-size: 9px;
+}
+
+.timeline-header-range {
+  color: #94a3b8;
+  font-feature-settings: 'tnum';
+}
+
+.timeline-header-speed {
+  font-size: 10px;
+  font-weight: 600;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.12);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.timeline-header-edit-icon {
+  display: flex;
+  align-items: center;
+  color: rgba(255, 255, 255, 0.5);
+  margin-left: 2px;
+  transition: color 0.15s ease;
+}
+
+.timeline-header-bar:hover .timeline-header-edit-icon {
+  color: #38bdf8;
+}
+
+/* ── Main Glassmorphic Pill ─────────────────────────────────── */
+.timeline-pill {
+  height: 44px;
+  width: 540px;
+  max-width: 90vw;
+  background: linear-gradient(
+    180deg,
+    rgba(24, 27, 36, 0.88) 0%,
+    rgba(14, 16, 22, 0.92) 100%
+  );
+  backdrop-filter: blur(32px) saturate(200%) contrast(105%);
+  -webkit-backdrop-filter: blur(32px) saturate(200%) contrast(105%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
+  box-shadow:
+    inset 0 1px 1px 0 rgba(255, 255, 255, 0.25),
+    inset 0 -1px 1px 0 rgba(0, 0, 0, 0.35),
+    0 20px 48px -10px rgba(0, 0, 0, 0.7),
+    0 8px 20px -2px rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  gap: 14px;
   transition: all 0.25s ease;
 }
 
 .timeline-pill:hover {
-  border-color: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.18);
   box-shadow:
-    inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.45),
-    0 24px 54px -6px rgba(0, 0, 0, 0.82),
-    0 8px 24px -2px rgba(0, 0, 0, 0.45);
+    inset 0 1px 1px 0 rgba(255, 255, 255, 0.35),
+    0 24px 54px -10px rgba(0, 0, 0, 0.8);
 }
 
 .timeline-pill.is-loading {
@@ -77,32 +144,21 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 6px;
-  border-radius: 8px;
+  padding: 0;
+  border-radius: 50%;
   transition: all 0.15s ease;
 }
 
-.timeline-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #ffffff;
-}
-
-.timeline-btn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-  background: transparent;
-}
-
 .timeline-play-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
   background: rgba(255, 255, 255, 0.12);
   color: #ffffff;
 }
 
 .timeline-play-btn:hover {
-  background: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.24);
   transform: scale(1.06);
 }
 
@@ -110,36 +166,51 @@
   transform: scale(0.96);
 }
 
-.timeline-step-btn {
-  color: rgba(220, 228, 245, 0.75);
+.timeline-close-btn {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.4);
+  border-radius: 6px;
 }
 
-.timeline-step-btn:hover {
+.timeline-close-btn:hover {
   color: #ffffff;
+  background: rgba(255, 255, 255, 0.1);
 }
 
-/* ── Track & Needle Section ─────────────────────────────────── */
+/* ── Track Container ────────────────────────────────────────── */
 .timeline-track-container {
   flex: 1;
   position: relative;
-  height: 44px;
+  height: 38px;
   display: flex;
-  flex-direction: column;
-  justify-content: center;
+  align-items: center;
   cursor: pointer;
   margin: 0 4px;
 }
 
 .timeline-track-line {
   position: absolute;
-  top: 14px;
+  top: 17px;
   left: 0;
   right: 0;
   height: 2px;
-  background: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.15);
   border-radius: 1px;
 }
 
+.timeline-track-progress {
+  position: absolute;
+  top: 17px;
+  left: 0;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.55);
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+/* ── Ticks and Labels ───────────────────────────────────────── */
 .timeline-ticks {
   position: absolute;
   top: 0;
@@ -151,56 +222,50 @@
 
 .timeline-tick-node {
   position: absolute;
-  top: 0;
+  top: 17px;
   transform: translateX(-50%);
   display: flex;
   flex-direction: column;
   align-items: center;
   pointer-events: auto;
   cursor: pointer;
-  padding-top: 13px;
 }
 
 .timeline-tick-notch {
-  width: 2px;
+  width: 1px;
   height: 4px;
-  background: rgba(255, 255, 255, 0.35);
-  border-radius: 1px;
-}
-
-.timeline-tick-node.is-selected .timeline-tick-notch {
-  background: #ffffff;
-  height: 6px;
+  background: rgba(255, 255, 255, 0.28);
+  margin-top: -1px;
 }
 
 .timeline-tick-label {
   font-family: inherit;
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 500;
-  color: #94a3b8;
+  color: rgba(148, 163, 184, 0.75);
   margin-top: 5px;
   white-space: nowrap;
   letter-spacing: -0.01em;
+  font-feature-settings: 'tnum';
   transition: color 0.15s ease;
 }
 
-.timeline-tick-node:hover .timeline-tick-label,
-.timeline-tick-node.is-selected .timeline-tick-label {
-  color: #f8fafc;
+.timeline-tick-node:hover .timeline-tick-label {
+  color: #ffffff;
   font-weight: 600;
 }
 
-/* ── Needle with Inverted Triangle Arrow & Label ─────────────── */
+/* ── Scrubber Needle & Thumb ────────────────────────────────── */
 .timeline-needle {
   position: absolute;
-  top: 0;
-  bottom: 6px;
+  top: 2px;
+  bottom: 3px;
   transform: translateX(-50%);
   display: flex;
   flex-direction: column;
   align-items: center;
-  pointer-events: auto;
-  z-index: 4;
+  z-index: 5;
+  pointer-events: none;
   transition: left 0.15s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -208,74 +273,33 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-top: -2px;
 }
 
 .timeline-needle-text {
-  font-size: 9.5px;
+  font-size: 10.5px;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
   color: #ffffff;
-  background: rgba(15, 23, 42, 0.85);
-  padding: 1px 5px;
-  border-radius: 4px;
-  line-height: 1.2;
+  letter-spacing: 0.02em;
+  font-feature-settings: 'tnum';
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  line-height: 1;
 }
 
 .timeline-needle-arrow {
   width: 0;
   height: 0;
-  border-left: 5px solid transparent;
-  border-right: 5px solid transparent;
-  border-top: 6px solid #ffffff;
-  margin-top: 1px;
+  border-left: 4.5px solid transparent;
+  border-right: 4.5px solid transparent;
+  border-top: 5.5px solid #ffffff;
+  margin-top: 2px;
 }
 
 .timeline-needle-stem {
-  width: 2px;
+  width: 1.5px;
   flex: 1;
   background: #ffffff;
   border-radius: 1px;
   box-shadow: 0 0 6px rgba(255, 255, 255, 0.6);
-}
-
-/* ── Title Badge ────────────────────────────────────────────── */
-.timeline-title-badge {
-  font-size: 11.5px;
-  font-weight: 600;
-  color: #cbd5e1;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  padding: 3px 10px;
-  border-radius: 9999px;
-  max-width: 130px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* ── Action Buttons ─────────────────────────────────────────── */
-.timeline-edit-btn {
-  color: #94a3b8;
-  border-radius: 6px;
-}
-
-.timeline-edit-btn:hover,
-.timeline-edit-btn.is-active {
-  color: #38bdf8;
-  background: rgba(56, 189, 248, 0.15);
-}
-
-.timeline-close-btn {
-  font-size: 12px;
-  color: #94a3b8;
-  margin-left: 2px;
-}
-
-.timeline-close-btn:hover {
-  color: #ef4444;
-  background: rgba(239, 68, 68, 0.15);
 }
 
 /* ── Loading Spinner ────────────────────────────────────────── */
@@ -286,9 +310,9 @@
 }
 
 .timeline-spinner-dot {
-  width: 14px;
-  height: 14px;
-  border: 2px solid rgba(137, 180, 250, 0.3);
+  width: 13px;
+  height: 13px;
+  border: 1.5px solid rgba(137, 180, 250, 0.3);
   border-top-color: #89b4fa;
   border-radius: 50%;
   animation: timelineSpin 0.7s linear infinite;
@@ -303,9 +327,10 @@
 /* ── Popover Editor ─────────────────────────────────────────── */
 .timeline-edit-popover {
   position: absolute;
-  bottom: 64px;
-  right: 0;
-  width: 320px;
+  bottom: 82px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 310px;
   background: linear-gradient(
     180deg,
     rgba(25, 28, 38, 0.98) 0%,
@@ -313,7 +338,7 @@
   );
   backdrop-filter: blur(28px);
   -webkit-backdrop-filter: blur(28px);
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 16px;
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
   padding: 14px 16px;
@@ -324,11 +349,11 @@
 @keyframes popoverFadeIn {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translate(-50%, 8px);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translate(-50%, 0);
   }
 }
 
@@ -336,7 +361,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
   color: #f8fafc;
   margin-bottom: 12px;

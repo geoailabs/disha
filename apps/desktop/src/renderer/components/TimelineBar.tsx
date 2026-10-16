@@ -52,7 +52,7 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
     return () => clearInterval(timer)
   }, [isPlaying, currentIndex, steps, playbackSpeed, onStepChange])
 
-  // Calculate percentage along the track
+  // Percentage along track
   const pct = steps.length > 1 ? (currentIndex / (steps.length - 1)) * 100 : 50
 
   const handleStepSelect = useCallback((step: string) => {
@@ -61,17 +61,7 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
     }
   }, [currentStep, onStepChange])
 
-  const handlePrevStep = () => {
-    const prevIdx = Math.max(0, currentIndex - 1)
-    onStepChange(steps[prevIdx])
-  }
-
-  const handleNextStep = () => {
-    const nextIdx = Math.min(steps.length - 1, currentIndex + 1)
-    onStepChange(steps[nextIdx])
-  }
-
-  // Handle click or drag on the track
+  // Scrubbing calculation
   const updateFromPosition = (clientX: number) => {
     if (!trackRef.current || steps.length <= 1) return
     const rect = trackRef.current.getBoundingClientRect()
@@ -116,7 +106,6 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
     const eNum = parseInt(en, 10)
 
     if (!isNaN(sNum) && !isNaN(eNum) && s.length === 4 && en.length === 4) {
-      // Annual sequence
       const startYr = Math.min(sNum, eNum)
       const endYr = Math.max(sNum, eNum)
       for (let y = startYr; y <= endYr; y++) {
@@ -153,16 +142,40 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
     setIsEditing(false)
   }
 
-  // Determine whether to display every tick label or thin them if many
+  // Clean label display: never collide with the needle badge, and thin labels when crowded
   const shouldShowLabel = (idx: number, total: number) => {
-    if (total <= 7) return true
+    // Hide tick label under needle to avoid duplicate text collision
+    if (idx === currentIndex) return false
+
+    if (total <= 6) return true
     if (idx === 0 || idx === total - 1) return true
-    if (total <= 12) return idx % 2 === 0
-    return idx % Math.ceil(total / 6) === 0
+    if (total <= 10) return idx % 2 === 0
+    return idx % Math.ceil(total / 5) === 0
   }
+
+  const speedLabel = playbackSpeed <= 750 ? '2.0x' : playbackSpeed >= 3000 ? '0.5x' : '1.0x'
 
   return (
     <div className="timeline-bar-wrapper">
+      {/* Sleek Floating Header Pill (Dataset Title + Range + Edit trigger) */}
+      <div
+        className="timeline-header-bar"
+        onClick={() => setIsEditing(!isEditing)}
+        title="Click to edit date range & speed"
+      >
+        <span className="timeline-header-title">{spec.title}</span>
+        <span className="timeline-header-dot">•</span>
+        <span className="timeline-header-range">{spec.start} – {spec.end}</span>
+        <span className="timeline-header-dot">•</span>
+        <span className="timeline-header-speed">{speedLabel}</span>
+        <span className="timeline-header-edit-icon" title="Edit range">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 20h9" />
+            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+          </svg>
+        </span>
+      </div>
+
       {/* Inline Range Editor Popover */}
       {isEditing && (
         <div className="timeline-edit-popover">
@@ -184,7 +197,7 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
                   type="text"
                   value={editStart}
                   onChange={(e) => setEditStart(e.target.value)}
-                  placeholder="2018 or 10 PM"
+                  placeholder="2015"
                   autoFocus
                 />
               </label>
@@ -194,7 +207,7 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
                   type="text"
                   value={editEnd}
                   onChange={(e) => setEditEnd(e.target.value)}
-                  placeholder="2024 or 2 AM"
+                  placeholder="2024"
                 />
               </label>
             </div>
@@ -240,75 +253,52 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
         </div>
       )}
 
-      {/* Main Glassmorphic Pill */}
+      {/* Main Minimalist Pill */}
       <div className={`timeline-pill ${isLoading ? 'is-loading' : ''}`}>
         {/* Play/Pause Button */}
         <button
           type="button"
           className="timeline-btn timeline-play-btn"
           onClick={() => setIsPlaying(!isPlaying)}
-          title={isPlaying ? 'Pause playback' : 'Play timeline'}
+          title={isPlaying ? 'Pause' : 'Play'}
         >
           {isPlaying ? (
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
               <rect x="5" y="4" width="4" height="16" rx="1" />
               <rect x="15" y="4" width="4" height="16" rx="1" />
             </svg>
           ) : (
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
               <polygon points="6,3 20,12 6,21" />
             </svg>
           )}
         </button>
 
-        {/* Step Prev */}
-        <button
-          type="button"
-          className="timeline-btn timeline-step-btn"
-          onClick={handlePrevStep}
-          disabled={currentIndex <= 0}
-          title="Previous time step"
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-            <polygon points="19,20 9,12 19,4" />
-            <rect x="5" y="4" width="2" height="16" />
-          </svg>
-        </button>
-
-        {/* Step Next */}
-        <button
-          type="button"
-          className="timeline-btn timeline-step-btn"
-          onClick={handleNextStep}
-          disabled={currentIndex >= steps.length - 1}
-          title="Next time step"
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-            <polygon points="5,4 15,12 5,20" />
-            <rect x="17" y="4" width="2" height="16" />
-          </svg>
-        </button>
-
-        {/* Track with Ticks & Scrubber Needle */}
+        {/* Spacious Track & Needle */}
         <div
           className="timeline-track-container"
           ref={trackRef}
           onMouseDown={handleTrackMouseDown}
         >
-          {/* Subtle horizontal track line */}
+          {/* Base track line */}
           <div className="timeline-track-line" />
 
-          {/* Step ticks and labels */}
+          {/* Active progress fill */}
+          <div
+            className="timeline-track-progress"
+            style={{ width: `${pct}%` }}
+          />
+
+          {/* Ticks and spaced labels */}
           <div className="timeline-ticks">
             {steps.map((st, i) => {
               const tickPct = (i / (steps.length - 1)) * 100
-              const isSelected = i === currentIndex
               const showText = shouldShowLabel(i, steps.length)
 
               return (
                 <div
                   key={`${st}-${i}`}
-                  className={`timeline-tick-node ${isSelected ? 'is-selected' : ''}`}
+                  className="timeline-tick-node"
                   style={{ left: `${tickPct}%` }}
                   onClick={(e) => {
                     e.stopPropagation()
@@ -329,36 +319,13 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
             className="timeline-needle"
             style={{ left: `${pct}%` }}
           >
-            {/* Active tooltip / label above needle */}
             <div className="timeline-needle-badge">
-              <span className="timeline-needle-text">
-                {currentIndex === steps.length - 1 ? 'Now' : currentStep}
-              </span>
+              <span className="timeline-needle-text">{currentStep}</span>
               <div className="timeline-needle-arrow" />
             </div>
-
-            {/* Vertical needle line */}
             <div className="timeline-needle-stem" />
           </div>
         </div>
-
-        {/* Dataset / Title Badge with Tooltip */}
-        <div className="timeline-title-badge" title={spec.title}>
-          {spec.title}
-        </div>
-
-        {/* Edit Button */}
-        <button
-          type="button"
-          className={`timeline-btn timeline-edit-btn ${isEditing ? 'is-active' : ''}`}
-          onClick={() => setIsEditing(!isEditing)}
-          title="Edit timeline range & speed"
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 20h9" />
-            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-          </svg>
-        </button>
 
         {/* Loading Spinner */}
         {isLoading && (
@@ -372,9 +339,12 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
           type="button"
           className="timeline-btn timeline-close-btn"
           onClick={onClose}
-          title="Close timeline"
+          title="Dismiss timeline"
         >
-          ✕
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
         </button>
       </div>
     </div>
