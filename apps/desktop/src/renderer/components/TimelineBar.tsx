@@ -23,6 +23,7 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
   const [editEnd, setEditEnd] = useState<string>(String(spec.end))
   const [editUnit, setEditUnit] = useState<string>(spec.stepUnit || 'year')
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(spec.playbackSpeed || 1500)
+  const [isDragging, setIsDragging] = useState<boolean>(false)
 
   const trackRef = useRef<HTMLDivElement>(null)
   const isDraggingRef = useRef<boolean>(false)
@@ -77,6 +78,7 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
 
   const handleTrackMouseDown = (e: React.MouseEvent) => {
     isDraggingRef.current = true
+    setIsDragging(true)
     updateFromPosition(e.clientX)
 
     const handleMouseMove = (moveEvt: MouseEvent) => {
@@ -87,6 +89,7 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
 
     const handleMouseUp = () => {
       isDraggingRef.current = false
+      setIsDragging(false)
       window.removeEventListener('mousemove', handleMouseMove)
       window.removeEventListener('mouseup', handleMouseUp)
     }
@@ -157,6 +160,85 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
 
   return (
     <div className="timeline-bar-wrapper">
+      {/* Inline Range Editor Popover */}
+      {isEditing && (
+        <div className="timeline-edit-popover">
+          <div className="timeline-edit-header">
+            <span>Edit Temporal Range</span>
+            <button
+              type="button"
+              className="timeline-edit-close"
+              onClick={() => setIsEditing(false)}
+            >
+              ✕
+            </button>
+          </div>
+          <form onSubmit={handleApplyEdit} className="timeline-edit-form">
+            <div className="timeline-edit-grid">
+              <div className="timeline-edit-field">
+                <label className="timeline-edit-label">Start</label>
+                <input
+                  type="text"
+                  className="timeline-edit-input"
+                  value={editStart}
+                  onChange={(e) => setEditStart(e.target.value)}
+                  placeholder="2015"
+                  autoFocus
+                />
+              </div>
+              <div className="timeline-edit-field">
+                <label className="timeline-edit-label">End</label>
+                <input
+                  type="text"
+                  className="timeline-edit-input"
+                  value={editEnd}
+                  onChange={(e) => setEditEnd(e.target.value)}
+                  placeholder="2020"
+                />
+              </div>
+              <div className="timeline-edit-field">
+                <label className="timeline-edit-label">Unit</label>
+                <select
+                  className="timeline-edit-select"
+                  value={editUnit}
+                  onChange={(e) => setEditUnit(e.target.value)}
+                >
+                  <option value="year">Years</option>
+                  <option value="month">Months</option>
+                  <option value="day">Days</option>
+                  <option value="hour">Hours</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </div>
+              <div className="timeline-edit-field">
+                <label className="timeline-edit-label">Speed</label>
+                <select
+                  className="timeline-edit-select"
+                  value={playbackSpeed}
+                  onChange={(e) => setPlaybackSpeed(Number(e.target.value))}
+                >
+                  <option value={3000}>0.5x (Slow)</option>
+                  <option value={1500}>1.0x (Normal)</option>
+                  <option value={750}>2.0x (Fast)</option>
+                </select>
+              </div>
+            </div>
+            <div className="timeline-edit-actions">
+              <button
+                type="button"
+                className="timeline-btn-cancel"
+                onClick={() => setIsEditing(false)}
+              >
+                Cancel
+              </button>
+              <button type="submit" className="timeline-btn-apply">
+                Apply Range
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {/* Sleek Floating Header Pill (Dataset Title + Range + Edit trigger) */}
       <div
         className="timeline-header-bar"
@@ -175,83 +257,6 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
           </svg>
         </span>
       </div>
-
-      {/* Inline Range Editor Popover */}
-      {isEditing && (
-        <div className="timeline-edit-popover">
-          <div className="timeline-edit-header">
-            <span>Edit Temporal Range</span>
-            <button
-              type="button"
-              className="timeline-edit-close"
-              onClick={() => setIsEditing(false)}
-            >
-              ✕
-            </button>
-          </div>
-          <form onSubmit={handleApplyEdit} className="timeline-edit-form">
-            <div className="timeline-edit-row">
-              <label>
-                Start
-                <input
-                  type="text"
-                  value={editStart}
-                  onChange={(e) => setEditStart(e.target.value)}
-                  placeholder="2015"
-                  autoFocus
-                />
-              </label>
-              <label>
-                End
-                <input
-                  type="text"
-                  value={editEnd}
-                  onChange={(e) => setEditEnd(e.target.value)}
-                  placeholder="2024"
-                />
-              </label>
-            </div>
-            <div className="timeline-edit-row">
-              <label>
-                Unit
-                <select
-                  value={editUnit}
-                  onChange={(e) => setEditUnit(e.target.value)}
-                >
-                  <option value="year">Years</option>
-                  <option value="month">Months</option>
-                  <option value="day">Days</option>
-                  <option value="hour">Hours</option>
-                  <option value="custom">Custom</option>
-                </select>
-              </label>
-              <label>
-                Speed
-                <select
-                  value={playbackSpeed}
-                  onChange={(e) => setPlaybackSpeed(Number(e.target.value))}
-                >
-                  <option value={3000}>0.5x (Slow)</option>
-                  <option value={1500}>1.0x (Normal)</option>
-                  <option value={750}>2.0x (Fast)</option>
-                </select>
-              </label>
-            </div>
-            <div className="timeline-edit-actions">
-              <button
-                type="button"
-                className="timeline-btn-cancel"
-                onClick={() => setIsEditing(false)}
-              >
-                Cancel
-              </button>
-              <button type="submit" className="timeline-btn-apply">
-                Apply Range
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
 
       {/* Main Minimalist Pill */}
       <div className={`timeline-pill ${isLoading ? 'is-loading' : ''}`}>
@@ -316,13 +321,11 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
 
           {/* Scrubber Needle with Inverted Triangle Thumb & Active Label */}
           <div
-            className="timeline-needle"
+            className={`timeline-needle ${isDragging ? 'is-dragging' : ''}`}
             style={{ left: `${pct}%` }}
           >
-            <div className="timeline-needle-badge">
-              <span className="timeline-needle-text">{currentStep}</span>
-              <div className="timeline-needle-arrow" />
-            </div>
+            <span className="timeline-needle-text">{currentStep}</span>
+            <div className="timeline-needle-arrow" />
             <div className="timeline-needle-stem" />
           </div>
         </div>
