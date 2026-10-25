@@ -1,6 +1,11 @@
 # Backend Test Architecture & Guide
 
-This directory houses the backend test suite, test runners, and pre-flight verification scripts for **Disha**.
+[![Release](https://img.shields.io/badge/release-v0.1.8-blue.svg)](https://github.com/geoailabs/disha/releases/tag/v0.1.8)
+[![Version](https://img.shields.io/badge/version-0.1.8-emerald.svg)](https://github.com/geoailabs/disha/releases)
+
+**Current Version:** `v0.1.8` (Developer Preview)
+
+This directory houses the backend test suite, test runners, and pre-flight verification scripts for **Disha** (v0.1.8).
 
 ---
 

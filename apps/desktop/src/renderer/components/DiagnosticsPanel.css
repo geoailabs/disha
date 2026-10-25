@@ -240,6 +240,83 @@
   box-shadow: 0 0 0 2px rgba(190, 227, 219, 0.25);
 }
 
+.credentials-form .input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.credentials-form .input-toggle-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(85, 91, 110, 0.45);
+  color: var(--muted-teal, #89b0ae);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.credentials-form .input-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--bright-snow, #faf9f9);
+  border-color: var(--frozen-water, #bee3db);
+}
+
+.credentials-form textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: #0b0d11;
+  border: 1px solid rgba(85, 91, 110, 0.45);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: var(--bright-snow, #faf9f9);
+  font-size: 12px;
+  font-family: monospace;
+  resize: vertical;
+  min-height: 72px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.credentials-form textarea:focus {
+  outline: none;
+  border-color: var(--frozen-water, #bee3db);
+  box-shadow: 0 0 0 2px rgba(190, 227, 219, 0.25);
+}
+
+.credentials-form .import-json-btn {
+  background: rgba(190, 227, 219, 0.15);
+  border: 1px solid rgba(190, 227, 219, 0.4);
+  color: var(--frozen-water, #bee3db);
+  border-radius: 5px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.15s ease;
+}
+
+.credentials-form .import-json-btn:hover {
+  background: var(--frozen-water, #bee3db);
+  color: #0b0d11;
+}
+
+.credentials-form .label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.credentials-form .label-row label {
+  margin-bottom: 0;
+}
+
 .diag-save-btn {
   background: var(--frozen-water, #bee3db);
   border: none;
@@ -267,3 +344,4 @@
   font-size: 12px;
   margin-top: 10px;
 }
+

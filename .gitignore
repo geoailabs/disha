@@ -3,6 +3,7 @@ out/
 dist/
 release/
 build/
+!apps/desktop/build/
 .buildenv/
 .tmp/
 *.db

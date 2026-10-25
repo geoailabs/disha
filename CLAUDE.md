@@ -1,5 +1,10 @@
 # CLAUDE.md
 
+[![Release](https://img.shields.io/badge/release-v0.1.8-blue.svg)](https://github.com/geoailabs/disha/releases/tag/v0.1.8)
+[![Version](https://img.shields.io/badge/version-0.1.8-emerald.svg)](https://github.com/geoailabs/disha/releases)
+
+**Current Version:** `v0.1.8` (Developer Preview)
+
 Orientation and reference handbook for AI coding assistants working in the Disha repository.
 
 ## 🧭 Repository Documentation Map
@@ -7,7 +12,7 @@ Orientation and reference handbook for AI coding assistants working in the Disha
 - **[AGENTS.md](file:///Users/smriti/Documents/GitHub/disha/AGENTS.md)** — Architectural orientation, invariants, communication channels, 7+1 Domain Hubs, and coding rules.
 - **[ARCHITECTURE.md](file:///Users/smriti/Documents/GitHub/disha/ARCHITECTURE.md)** — In-depth architectural design, user/developer guides, and API route index.
 - **[FLAUDE.md](file:///Users/smriti/Documents/GitHub/disha/FLAUDE.md)** — Quick reference cheat sheet, critical invariants, and command cheat sheet.
-- **[FEATURE_IMPLEMENTATION_GUIDE.md](file:///Users/smriti/Documents/GitHub/disha/FEATURE_IMPLEMENTATION_GUIDE.md)** — Exhaustive deep dive on all 22 core platform capabilities, subsystems, and mathematical models.
+- **[FEATURE_IMPLEMENTATION_GUIDE.md](file:///Users/smriti/Documents/GitHub/disha/FEATURE_IMPLEMENTATION_GUIDE.md)** — Exhaustive deep dive on all 29 core platform capabilities, subsystems, and mathematical models.
 - **[.agents/AGENTS.md](file:///Users/smriti/Documents/GitHub/disha/.agents/AGENTS.md)** — Workspace-specific rules, race condition fixes, and GIS best practices.
 
 ---
@@ -33,12 +38,12 @@ pnpm --filter @disha/desktop build
 
 ## 🏛️ Architecture in Brief
 
-- **Shell:** Electron 34+ spawning FastAPI on port `:8765` (frozen in prod, hot-reloading uvicorn in dev).
-- **Renderer:** React 19 + TypeScript + MapLibre GL 4+ with pure React state (`useState`/`useRef` in `App.tsx`).
+- **Shell:** Electron 41+ spawning FastAPI on port `:8765` (frozen in prod, hot-reloading uvicorn in dev).
+- **Renderer:** React 19 + TypeScript + MapLibre GL 5+ with pure React state (`useState`/`useRef` in `App.tsx`).
 - **Backend:** Python 3.11+ FastAPI structured across **7 Planning Domains + 1 Utility Hub** returning typed `ToolResult`.
 - **Runtime:** Optional OpenCode Agent runtime (`USE_OPENCODE=true` on port `:4096`) or legacy fallback agent loop in `routers/chat.py`.
 - **Cartography:** EPSG:4326 WGS84 GeoJSON throughout; DuckDB `spatial` vector ingestion; WGS84 geodesic calculations (`pyproj.Geod`).
-- **UI Architecture:** Floating glassmorphic shell with Canva Sans typography, zero-overlap workspace layout insets (`.mundi-workspace-view`), unified top-right navigation stack with click-to-North flat 2D reset, categorized 11-format artifact export dropdown, and drag-and-drop document dropzone.
+- **UI Architecture:** Floating glassmorphic shell with Canva Sans typography, resizable panels with 50% default layer opacity, zero-overlap workspace layout insets (`.mundi-workspace-view`), unified top-right navigation stack with click-to-North flat 2D reset, categorized 11-format artifact export dropdown, safeStorage OS keychain encryption, and drag-and-drop document dropzone.
 
 ---
 

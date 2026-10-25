@@ -182,7 +182,9 @@ export const MenuBar: React.FC<MenuBarProps> = ({
         shortcut: '⌘Q',
         danger: true,
         onClick: () => {
-          if (window.electronAPI?.closeWindow) {
+          if (window.electronAPI?.quitApp) {
+            window.electronAPI.quitApp()
+          } else if (window.electronAPI?.closeWindow) {
             window.electronAPI.closeWindow()
           } else {
             window.close()

@@ -2115,16 +2115,43 @@ class ValidateKeyRequest(BaseModel):
 async def validate_key(req: ValidateKeyRequest):
     global _client, _env_key
     try:
-        clean_key = "".join(c for c in (req.api_key or "") if 32 <= ord(c) <= 126).strip()
+        raw_key = req.api_key or ""
+        clean_key = "".join(c for c in raw_key if 32 <= ord(c) <= 126).strip()
+        # Strip export statements and env prefixes
+        for prefix in ["export OPENAI_API_KEY=", "OPENAI_API_KEY=", "Bearer "]:
+            if clean_key.lower().startswith(prefix.lower()):
+                clean_key = clean_key[len(prefix):].strip()
+        # Strip surrounding quotes
+        if (clean_key.startswith('"') and clean_key.endswith('"')) or (clean_key.startswith("'") and clean_key.endswith("'")) or (clean_key.startswith('`') and clean_key.endswith('`')):
+            clean_key = clean_key[1:-1].strip()
+
         if not clean_key:
             return {"valid": False, "error": "API Key is empty or contains invalid characters."}
-        # Lightweight check to validate key
-        temp_client = AsyncOpenAI(api_key=clean_key)
-        await temp_client.models.list()
+
+        # Format pre-check
+        if not (clean_key.startswith("sk-") or len(clean_key) >= 16):
+            return {"valid": False, "error": "OpenAI API keys typically start with 'sk-'. Please check the key format."}
+
+        # Non-blocking connectivity probe (3.5s timeout)
+        is_verified = True
+        verification_notice = None
+        try:
+            import asyncio
+            temp_client = AsyncOpenAI(api_key=clean_key)
+            await asyncio.wait_for(temp_client.models.list(), timeout=3.5)
+        except asyncio.TimeoutError:
+            verification_notice = "Network probe timed out, but key was saved."
+        except Exception as check_err:
+            err_str = str(check_err).lower()
+            if "incorrect api key" in err_str or "invalid_api_key" in err_str or "invalid api key" in err_str:
+                return {"valid": False, "error": "Incorrect API key — please double-check your key at platform.openai.com/api-keys."}
+            # For 403 / permission denied (common with scoped project keys) or quota notices, allow saving
+            verification_notice = f"Key saved ({check_err})"
+
         os.environ["OPENAI_API_KEY"] = clean_key
         _env_key = clean_key
         _client = AsyncOpenAI(api_key=clean_key)
-        return {"valid": True}
+        return {"valid": True, "notice": verification_notice}
     except UnicodeEncodeError as ue:
         return {"valid": False, "error": f"API Key contains invalid characters: {ue}"}
     except Exception as e:
@@ -2134,6 +2161,8 @@ async def validate_key(req: ValidateKeyRequest):
 class SyncKeysRequest(BaseModel):
     openai_api_key: str | None = None
     google_maps_api_key: str | None = None
+    gee_credentials: str | None = None
+    mapillary_token: str | None = None
 
 
 @router.post("/sync-keys")
@@ -2141,6 +2170,11 @@ async def sync_keys(req: SyncKeysRequest):
     global _client, _env_key
     if req.openai_api_key is not None:
         clean_oa = "".join(c for c in req.openai_api_key if 32 <= ord(c) <= 126).strip()
+        for prefix in ["export OPENAI_API_KEY=", "OPENAI_API_KEY=", "Bearer "]:
+            if clean_oa.lower().startswith(prefix.lower()):
+                clean_oa = clean_oa[len(prefix):].strip()
+        if (clean_oa.startswith('"') and clean_oa.endswith('"')) or (clean_oa.startswith("'") and clean_oa.endswith("'")):
+            clean_oa = clean_oa[1:-1].strip()
         if clean_oa:
             os.environ["OPENAI_API_KEY"] = clean_oa
             _env_key = clean_oa
@@ -2149,16 +2183,39 @@ async def sync_keys(req: SyncKeysRequest):
             os.environ.pop("OPENAI_API_KEY", None)
             _env_key = ""
             _client = None
+
     if req.google_maps_api_key is not None:
         clean_gm = "".join(c for c in req.google_maps_api_key if 32 <= ord(c) <= 126).strip()
+        for prefix in ["export GOOGLE_MAPS_API_KEY=", "GOOGLE_MAPS_API_KEY=", "GOOGLE_API_KEY="]:
+            if clean_gm.lower().startswith(prefix.lower()):
+                clean_gm = clean_gm[len(prefix):].strip()
+        if (clean_gm.startswith('"') and clean_gm.endswith('"')) or (clean_gm.startswith("'") and clean_gm.endswith("'")):
+            clean_gm = clean_gm[1:-1].strip()
         if clean_gm:
             os.environ["GOOGLE_MAPS_API_KEY"] = clean_gm
         else:
             os.environ.pop("GOOGLE_MAPS_API_KEY", None)
+
+    if req.gee_credentials is not None:
+        clean_gee = req.gee_credentials.strip()
+        if clean_gee:
+            os.environ["GOOGLE_EARTH_ENGINE_CREDS"] = clean_gee
+        else:
+            os.environ.pop("GOOGLE_EARTH_ENGINE_CREDS", None)
+
+    if req.mapillary_token is not None:
+        clean_map = "".join(c for c in req.mapillary_token if 32 <= ord(c) <= 126).strip()
+        if clean_map:
+            os.environ["MAPILLARY_ACCESS_TOKEN"] = clean_map
+        else:
+            os.environ.pop("MAPILLARY_ACCESS_TOKEN", None)
+
     return {
         "status": "ok",
         "openai": bool(_env_openai_api_key()),
         "google_maps": bool(_env_google_maps_api_key()),
+        "gee": bool(os.environ.get("GOOGLE_EARTH_ENGINE_CREDS")),
+        "mapillary": bool(os.environ.get("MAPILLARY_ACCESS_TOKEN")),
     }
 
 
@@ -2167,6 +2224,8 @@ async def key_status():
     return {
         "openai": bool(_env_openai_api_key()),
         "google_maps": bool(_env_google_maps_api_key()),
+        "gee": bool(os.environ.get("GOOGLE_EARTH_ENGINE_CREDS")),
+        "mapillary": bool(os.environ.get("MAPILLARY_ACCESS_TOKEN")),
     }
 
 
@@ -2377,6 +2436,12 @@ async def chat_websocket(websocket: WebSocket):
 
             # Set the context-local variable for this WebSocket iteration
             google_maps_key_var.set(google_maps_api_key)
+
+            mapillary_token = (payload.get("mapillary_token") or "").strip()
+            if not mapillary_token:
+                mapillary_token = (os.environ.get("MAPILLARY_ACCESS_TOKEN") or "").strip()
+            if mapillary_token and not os.environ.get("MAPILLARY_ACCESS_TOKEN"):
+                os.environ["MAPILLARY_ACCESS_TOKEN"] = mapillary_token
 
             if not api_key:
                 await websocket.send_text(json.dumps({

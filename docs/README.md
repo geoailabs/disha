@@ -1,5 +1,10 @@
 # Disha Official Website & Documentation Portal
 
+[![Release](https://img.shields.io/badge/release-v0.1.8-blue.svg)](https://github.com/geoailabs/disha/releases/tag/v0.1.8)
+[![Version](https://img.shields.io/badge/version-0.1.8-emerald.svg)](https://github.com/geoailabs/disha/releases)
+
+**Current Version:** `v0.1.8` (Developer Preview)
+
 Official website and comprehensive technical documentation hub for [Disha](https://github.com/geoailabs/disha) — the open-source desktop GIS application with an autonomous conversational AI agent.
 
 Hosted live on GitHub Pages from the root `/docs` folder.

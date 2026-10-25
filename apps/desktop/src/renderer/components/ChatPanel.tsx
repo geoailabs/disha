@@ -591,7 +591,9 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
 
   // API Key State
   const [apiKey, setApiKey] = useState('')
+  const [openaiInput, setOpenaiInput] = useState('')
   const [showApiKeyInput, setShowApiKeyInput] = useState(false)
+  const [showOpenaiPassword, setShowOpenaiPassword] = useState(false)
   const [isSavingKey, setIsSavingKey] = useState(false)
   const [keyError, setKeyError] = useState<string | null>(null)
   const [keySuccess, setKeySuccess] = useState(false)
@@ -605,6 +607,8 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
 
   // Google Maps API Key State
   const [googleKey, setGoogleKey] = useState('')
+  const [googleInput, setGoogleInput] = useState('')
+  const [showGooglePassword, setShowGooglePassword] = useState(false)
   const [hasEnvGoogleKey, setHasEnvGoogleKey] = useState(false)
   const [isSavingGoogleKey, setIsSavingGoogleKey] = useState(false)
   const [googleKeyError, setGoogleKeyError] = useState<string | null>(null)
@@ -612,9 +616,19 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
 
   // GEE Service Account Key State
   const [geeKey, setGeeKey] = useState('')
+  const [geeInput, setGeeInput] = useState('')
   const [isSavingGeeKey, setIsSavingGeeKey] = useState(false)
   const [geeKeyError, setGeeKeyError] = useState<string | null>(null)
   const [geeKeySuccess, setGeeKeySuccess] = useState(false)
+
+  // Mapillary Token State
+  const [mapillaryKey, setMapillaryKey] = useState('')
+  const [mapillaryInput, setMapillaryInput] = useState('')
+  const [showMapillaryPassword, setShowMapillaryPassword] = useState(false)
+  const [hasEnvMapillaryKey, setHasEnvMapillaryKey] = useState(false)
+  const [isSavingMapillaryKey, setIsSavingMapillaryKey] = useState(false)
+  const [mapillaryKeyError, setMapillaryKeyError] = useState<string | null>(null)
+  const [mapillaryKeySuccess, setMapillaryKeySuccess] = useState(false)
 
   // Deep research state
   const [researchPhase, setResearchPhase] = useState<ResearchPhase>('idle')
@@ -681,38 +695,73 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
   const messages = activeConversation?.messages ?? []
   const hasOpenAIKey = apiKey.trim().length > 0 || hasEnvApiKey
   const hasGoogleMapsKey = googleKey.trim().length > 0 || hasEnvGoogleKey
+  const hasMapillaryKey = mapillaryKey.trim().length > 0 || hasEnvMapillaryKey
   const onMessagesChangeRef = useRef(onMessagesChange)
   onMessagesChangeRef.current = onMessagesChange
   const onMapActionRef = useRef(onMapAction)
   onMapActionRef.current = onMapAction
 
+  const normalizeKey = (k: string, prefixRegex?: RegExp) => {
+    let s = (k || '').trim()
+    if (prefixRegex) s = s.replace(prefixRegex, '')
+    s = s.replace(/^Bearer\s+/i, '')
+    if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")) || (s.startsWith('`') && s.endsWith('`'))) {
+      s = s.slice(1, -1).trim()
+    }
+    return s.replace(/[^\x20-\x7E]/g, '').trim()
+  }
+
   const loadKeys = useCallback(async (attempt = 0) => {
     let storedApiKey = ''
     let storedGoogleKey = ''
+    let storedGeeKey = ''
+    let storedMapillaryKey = ''
     let envOpenAI = false
     let envGoogle = false
+    let envGee = false
+    let envMapillary = false
     let envStatusLoaded = false
 
-    try {
-      const raw = await window.electronAPI.getAPIKey()
-      storedApiKey = (raw || '').replace(/[^\x20-\x7E]/g, '').trim()
-    } catch (err) {
-      console.error('Failed to load API key from secure storage:', err)
-    }
+    if (window.electronAPI) {
+      try {
+        const raw = await window.electronAPI.getAPIKey()
+        storedApiKey = normalizeKey(raw || '', /^(?:export\s+)?(?:OPENAI_API_KEY)\s*=\s*/i)
+      } catch (err) {
+        console.error('Failed to load API key from secure storage:', err)
+      }
 
-    try {
-      const raw = await window.electronAPI.getGoogleMapsKey()
-      storedGoogleKey = (raw || '').replace(/[^\x20-\x7E]/g, '').trim()
-    } catch (err) {
-      console.error('Failed to load Google Maps API key:', err)
-    }
+      try {
+        const raw = await window.electronAPI.getGoogleMapsKey()
+        storedGoogleKey = normalizeKey(raw || '', /^(?:export\s+)?(?:GOOGLE_MAPS_API_KEY|GOOGLE_API_KEY)\s*=\s*/i)
+      } catch (err) {
+        console.error('Failed to load Google Maps API key:', err)
+      }
 
-    try {
-      const status = await window.electronAPI.getKeyStatus()
-      envOpenAI = envOpenAI || !!status.openai
-      envGoogle = envGoogle || !!status.google_maps
-    } catch (err) {
-      console.error('Failed to detect Electron environment API keys:', err)
+      try {
+        const raw = await window.electronAPI.getGEEKey()
+        storedGeeKey = (raw || '').trim().replace(/[^\x20-\x7E\r\n\t]/g, '')
+      } catch (err) {
+        console.error('Failed to load GEE credentials:', err)
+      }
+
+      try {
+        if (window.electronAPI.getMapillaryKey) {
+          const raw = await window.electronAPI.getMapillaryKey()
+          storedMapillaryKey = normalizeKey(raw || '', /^(?:export\s+)?(?:MAPILLARY_ACCESS_TOKEN|MAPILLARY_CLIENT_TOKEN)\s*=\s*/i)
+        }
+      } catch (err) {
+        console.error('Failed to load Mapillary key:', err)
+      }
+
+      try {
+        const status = await window.electronAPI.getKeyStatus()
+        envOpenAI = envOpenAI || !!status.openai
+        envGoogle = envGoogle || !!status.google_maps
+        envGee = envGee || !!status.gee
+        envMapillary = envMapillary || !!status.mapillary
+      } catch (err) {
+        console.error('Failed to detect Electron environment API keys:', err)
+      }
     }
 
     try {
@@ -720,24 +769,37 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
       const status = await res.json()
       envOpenAI = envOpenAI || !!status.openai
       envGoogle = envGoogle || !!status.google_maps
+      envGee = envGee || !!status.gee
+      envMapillary = envMapillary || !!status.mapillary
       envStatusLoaded = true
     } catch (err) {
       console.error('Failed to detect backend environment API keys:', err)
     }
 
     setApiKey(storedApiKey || '')
+    setOpenaiInput(storedApiKey || '')
     setGoogleKey(storedGoogleKey || '')
+    setGoogleInput(storedGoogleKey || '')
+    setGeeKey(storedGeeKey || '')
+    setGeeInput(storedGeeKey || '')
+    setMapillaryKey(storedMapillaryKey || '')
+    setMapillaryInput(storedMapillaryKey || '')
+
     setHasEnvApiKey(envOpenAI)
     setHasEnvGoogleKey(envGoogle)
+    setHasEnvMapillaryKey(envMapillary)
     setIsKeyLoaded(true)
     setShowApiKeyInput(!(storedApiKey || envOpenAI))
-    if (storedApiKey || storedGoogleKey) {
+
+    if (storedApiKey || storedGoogleKey || storedGeeKey || storedMapillaryKey) {
       fetch('http://localhost:8765/api/chat/sync-keys', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           openai_api_key: storedApiKey,
           google_maps_api_key: storedGoogleKey,
+          gee_credentials: storedGeeKey,
+          mapillary_token: storedMapillaryKey,
         }),
       }).catch(() => {})
     }
@@ -750,28 +812,37 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
   useEffect(() => {
     loadKeys()
 
-    window.electronAPI.getGEEKey()
-      .then((key) => {
-        if (key) setGeeKey(key)
-      })
-      .catch((err) => {
-        console.error('Failed to load GEE credentials:', err)
-      })
-
     const handleKeysUpdated = (e?: Event) => {
-      const customEvent = e as CustomEvent<{ openai?: string; google?: string }> | undefined
+      const customEvent = e as CustomEvent<{ openai?: string; google?: string; gee?: string; mapillary?: string }> | undefined
       if (customEvent?.detail) {
         if (customEvent.detail.openai !== undefined) {
-          setApiKey(customEvent.detail.openai)
-          if (customEvent.detail.openai.trim()) {
+          const clean = normalizeKey(customEvent.detail.openai, /^(?:export\s+)?(?:OPENAI_API_KEY)\s*=\s*/i)
+          setApiKey(clean)
+          setOpenaiInput(clean)
+          if (clean.trim()) {
             setHasEnvApiKey(true)
             setShowApiKeyInput(false)
           }
         }
         if (customEvent.detail.google !== undefined) {
-          setGoogleKey(customEvent.detail.google)
-          if (customEvent.detail.google.trim()) {
+          const clean = normalizeKey(customEvent.detail.google, /^(?:export\s+)?(?:GOOGLE_MAPS_API_KEY|GOOGLE_API_KEY)\s*=\s*/i)
+          setGoogleKey(clean)
+          setGoogleInput(clean)
+          if (clean.trim()) {
             setHasEnvGoogleKey(true)
+          }
+        }
+        if (customEvent.detail.gee !== undefined) {
+          const clean = (customEvent.detail.gee || '').trim().replace(/[^\x20-\x7E\r\n\t]/g, '')
+          setGeeKey(clean)
+          setGeeInput(clean)
+        }
+        if (customEvent.detail.mapillary !== undefined) {
+          const clean = normalizeKey(customEvent.detail.mapillary, /^(?:export\s+)?(?:MAPILLARY_ACCESS_TOKEN|MAPILLARY_CLIENT_TOKEN)\s*=\s*/i)
+          setMapillaryKey(clean)
+          setMapillaryInput(clean)
+          if (clean.trim()) {
+            setHasEnvMapillaryKey(true)
           }
         }
       }
@@ -1339,81 +1410,112 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
     return raw
   }
 
-  const validateAndSaveKey = async (keyToSave: string): Promise<boolean> => {
-    const cleanKey = (keyToSave || '').replace(/[^\x20-\x7E]/g, '').trim()
+  const validateAndSaveKey = async (explicitKey?: string): Promise<boolean> => {
+    const rawVal = explicitKey !== undefined ? explicitKey : openaiInput
+    const cleanKey = normalizeKey(rawVal, /^(?:export\s+)?(?:OPENAI_API_KEY)\s*=\s*/i)
+    setOpenaiInput(cleanKey)
+    if (!cleanKey) {
+      await clearApiKey()
+      return true
+    }
+
     setIsSavingKey(true)
     setKeyError(null)
     setKeySuccess(false)
     try {
-      const res = await fetch('http://localhost:8765/api/chat/validate-key', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ api_key: cleanKey }),
-      })
-      const data = await res.json()
-      if (data.valid) {
+      if (window.electronAPI) {
         const ok = await window.electronAPI.setAPIKey(cleanKey)
-        if (ok) {
-          setApiKey(cleanKey)
-          setChatError(null)
-          setIsSavingKey(false)
-          setKeySuccess(true)
-          fetch('http://localhost:8765/api/chat/sync-keys', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ openai_api_key: cleanKey }),
-          }).catch(() => {})
-          setTimeout(() => {
-            setKeySuccess(false)
-            setShowApiKeyInput(false)
-          }, 1800)
-          return true
-        } else {
+        if (!ok) {
           setKeyError('Failed to save key securely to system keychain.')
+          setIsSavingKey(false)
+          return false
         }
-      } else {
-        setKeyError(friendlyKeyError(data.error || 'Invalid API Key. Please verify and try again.'))
       }
-    } catch (err) {
-      setKeyError('Could not reach verification server. Make sure the backend is running.')
-    }
-    setIsSavingKey(false)
-    return false
-  }
 
-  const clearApiKey = async () => {
-    const ok = await window.electronAPI.setAPIKey('')
-    if (ok) {
-      setApiKey('')
-      setShowApiKeyInput(!hasEnvApiKey)
+      setApiKey(cleanKey)
       setChatError(null)
+
+      // Sync immediately to running backend
       fetch('http://localhost:8765/api/chat/sync-keys', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ openai_api_key: '' }),
+        body: JSON.stringify({ openai_api_key: cleanKey }),
       }).catch(() => {})
+
+      // Non-blocking verification probe
+      try {
+        const res = await fetch('http://localhost:8765/api/chat/validate-key', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_key: cleanKey }),
+        })
+        const data = await res.json()
+        if (!data.valid) {
+          setKeyError(friendlyKeyError(data.error || 'Invalid API Key. Please verify and try again.'))
+          setIsSavingKey(false)
+          return false
+        }
+      } catch {
+        // Network timeout / offline probe — key is safely saved locally
+      }
+
+      setKeySuccess(true)
+      setTimeout(() => {
+        setKeySuccess(false)
+        setShowApiKeyInput(false)
+      }, 1500)
+      setIsSavingKey(false)
+      return true
+    } catch (err: any) {
+      setKeyError(err.message || 'Failed to save key.')
+      setIsSavingKey(false)
+      return false
     }
   }
 
-  const saveGoogleKey = async (keyToSave: string): Promise<boolean> => {
-    const cleanKey = (keyToSave || '').replace(/[^\x20-\x7E]/g, '').trim()
+  const clearApiKey = async () => {
+    if (window.electronAPI) {
+      await window.electronAPI.setAPIKey('')
+    }
+    setApiKey('')
+    setOpenaiInput('')
+    setShowApiKeyInput(!hasEnvApiKey)
+    setChatError(null)
+    fetch('http://localhost:8765/api/chat/sync-keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ openai_api_key: '' }),
+    }).catch(() => {})
+  }
+
+  const saveGoogleKey = async (explicitKey?: string): Promise<boolean> => {
+    const rawVal = explicitKey !== undefined ? explicitKey : googleInput
+    const cleanKey = normalizeKey(rawVal, /^(?:export\s+)?(?:GOOGLE_MAPS_API_KEY|GOOGLE_API_KEY)\s*=\s*/i)
+    setGoogleInput(cleanKey)
+    if (!cleanKey) {
+      await clearGoogleKey()
+      return true
+    }
+
     setIsSavingGoogleKey(true)
     setGoogleKeyError(null)
     try {
-      const ok = await window.electronAPI.setGoogleMapsKey(cleanKey)
-      if (ok) {
-        setGoogleKey(cleanKey)
-        setIsSavingGoogleKey(false)
-        setGoogleKeySuccess(true)
-        fetch('http://localhost:8765/api/chat/sync-keys', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ google_maps_api_key: cleanKey }),
-        }).catch(() => {})
-        setTimeout(() => setGoogleKeySuccess(false), 2000)
-        return true
-      } else {
-        setGoogleKeyError('Failed to save key securely to system keychain.')
+      if (window.electronAPI) {
+        const ok = await window.electronAPI.setGoogleMapsKey(cleanKey)
+        if (ok) {
+          setGoogleKey(cleanKey)
+          setIsSavingGoogleKey(false)
+          setGoogleKeySuccess(true)
+          fetch('http://localhost:8765/api/chat/sync-keys', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ google_maps_api_key: cleanKey }),
+          }).catch(() => {})
+          setTimeout(() => setGoogleKeySuccess(false), 2000)
+          return true
+        } else {
+          setGoogleKeyError('Failed to save key securely to system keychain.')
+        }
       }
     } catch (err) {
       setGoogleKeyError('Failed to save key.')
@@ -1423,56 +1525,70 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
   }
 
   const clearGoogleKey = async () => {
-    const ok = await window.electronAPI.setGoogleMapsKey('')
-    if (ok) {
-      setGoogleKey('')
+    if (window.electronAPI) {
+      await window.electronAPI.setGoogleMapsKey('')
     }
+    setGoogleKey('')
+    setGoogleInput('')
+    fetch('http://localhost:8765/api/chat/sync-keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ google_maps_api_key: '' }),
+    }).catch(() => {})
   }
 
-  const saveGeeKey = async (keyToSave: string): Promise<boolean> => {
-    const cleanKey = (keyToSave || '').replace(/[^\x20-\x7E\r\n\t]/g, '').trim()
+  const saveGeeKey = async (explicitKey?: string): Promise<boolean> => {
+    const rawVal = explicitKey !== undefined ? explicitKey : geeInput
+    let cleanKey = (rawVal || '').trim().replace(/[^\x20-\x7E\r\n\t]/g, '')
+    if ((cleanKey.startsWith('"') && cleanKey.endsWith('"')) || (cleanKey.startsWith("'") && cleanKey.endsWith("'"))) {
+      cleanKey = cleanKey.slice(1, -1).trim()
+    }
+    if (!cleanKey) {
+      await clearGeeKey()
+      return true
+    }
+
     setIsSavingGeeKey(true)
     setGeeKeyError(null)
     try {
-      // 1. Validate structure first if not empty
-      if (cleanKey) {
-        try {
-          const parsed = JSON.parse(cleanKey)
-          if (!parsed || parsed.type !== 'service_account') {
-            throw new Error("JSON must have type: 'service_account'")
-          }
-        } catch (e: any) {
-          setGeeKeyError(`Invalid GEE Service Account JSON: ${e.message}`)
-          setIsSavingGeeKey(false)
-          return false
+      try {
+        const parsed = JSON.parse(cleanKey)
+        if (!parsed || (typeof parsed === 'object' && parsed.type !== 'service_account')) {
+          throw new Error("JSON must have type: 'service_account'")
         }
+        cleanKey = JSON.stringify(parsed, null, 2)
+      } catch (e: any) {
+        setGeeKeyError(`Invalid GEE Service Account JSON: ${e.message}`)
+        setIsSavingGeeKey(false)
+        return false
       }
 
-      // 2. Save locally encrypted in main process
-      const ok = await window.electronAPI.setGEEKey(cleanKey)
-      if (ok) {
-        setGeeKey(cleanKey)
-        
-        // 3. Sync to Python backend process dynamically
-        const workspacePath = mapContext.workspace
-        const wsParam = workspacePath ? `?workspace=${encodeURIComponent(workspacePath)}` : ''
-        const response = await fetch(`http://localhost:8765/api/gee/credentials${wsParam}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ credentials: cleanKey }),
-        })
-        
-        if (response.ok) {
+      setGeeInput(cleanKey)
+      if (window.electronAPI) {
+        const ok = await window.electronAPI.setGEEKey(cleanKey)
+        if (ok) {
+          setGeeKey(cleanKey)
+          const workspacePath = mapContext.workspace
+          const wsParam = workspacePath ? `?workspace=${encodeURIComponent(workspacePath)}` : ''
+          fetch(`http://localhost:8765/api/gee/credentials${wsParam}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ credentials: cleanKey }),
+          }).catch(() => {})
+
+          fetch('http://localhost:8765/api/chat/sync-keys', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ gee_credentials: cleanKey }),
+          }).catch(() => {})
+
           setIsSavingGeeKey(false)
           setGeeKeySuccess(true)
           setTimeout(() => setGeeKeySuccess(false), 2000)
           return true
         } else {
-          const errData = await response.json()
-          setGeeKeyError(errData.detail || 'Failed to initialize GEE on the backend with these credentials.')
+          setGeeKeyError('Failed to save GEE credentials securely.')
         }
-      } else {
-        setGeeKeyError('Failed to save key securely to system keychain.')
       }
     } catch (err: any) {
       setGeeKeyError(err.message || 'Failed to save key.')
@@ -1484,17 +1600,23 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
   const clearGeeKey = async () => {
     setGeeKeyError(null)
     try {
-      const ok = await window.electronAPI.setGEEKey('')
-      if (ok) {
-        setGeeKey('')
-        const workspacePath = mapContext.workspace
-        const wsParam = workspacePath ? `?workspace=${encodeURIComponent(workspacePath)}` : ''
-        await fetch(`http://localhost:8765/api/gee/credentials${wsParam}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ credentials: '' }),
-        })
+      if (window.electronAPI) {
+        await window.electronAPI.setGEEKey('')
       }
+      setGeeKey('')
+      setGeeInput('')
+      const workspacePath = mapContext.workspace
+      const wsParam = workspacePath ? `?workspace=${encodeURIComponent(workspacePath)}` : ''
+      fetch(`http://localhost:8765/api/gee/credentials${wsParam}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ credentials: '' }),
+      }).catch(() => {})
+      fetch('http://localhost:8765/api/chat/sync-keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gee_credentials: '' }),
+      }).catch(() => {})
     } catch (err: any) {
       console.error('Failed to clear GEE credentials:', err)
     }
@@ -1503,6 +1625,7 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
   const importGeeJsonFile = async () => {
     setGeeKeyError(null)
     try {
+      if (!window.electronAPI?.openFile) return
       const chosen = await window.electronAPI.openFile({
         filters: [{ name: 'JSON credentials', extensions: ['json'] }]
       })
@@ -1510,24 +1633,73 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
       
       const fileContent = await window.electronAPI.readFile(chosen)
       if (fileContent) {
-        // Validate JSON
         try {
           const parsed = JSON.parse(fileContent)
-          if (parsed && parsed.type === 'service_account') {
+          if (parsed && (parsed.type === 'service_account' || typeof parsed === 'object')) {
             const formatted = JSON.stringify(parsed, null, 2)
-            setGeeKey(formatted)
-            // Force textarea update
-            const el = document.getElementById('gee-key-input-element') as HTMLTextAreaElement
-            if (el) el.value = formatted
+            setGeeInput(formatted)
           } else {
-            setGeeKeyError("Selected file is not a valid Google Service Account (missing type='service_account')")
+            setGeeKeyError("Selected file is not valid JSON credentials (missing type='service_account')")
           }
         } catch {
           setGeeKeyError('Selected file is not a valid JSON file.')
         }
       }
-    } catch (err: any) {
+    } catch (err) {
       setGeeKeyError('Failed to import JSON file.')
+    }
+  }
+
+  const saveMapillaryKey = async (explicitKey?: string): Promise<boolean> => {
+    const rawVal = explicitKey !== undefined ? explicitKey : mapillaryInput
+    const cleanKey = normalizeKey(rawVal, /^(?:export\s+)?(?:MAPILLARY_ACCESS_TOKEN|MAPILLARY_CLIENT_TOKEN)\s*=\s*/i)
+    setMapillaryInput(cleanKey)
+    if (!cleanKey) {
+      await clearMapillaryKey()
+      return true
+    }
+
+    setIsSavingMapillaryKey(true)
+    setMapillaryKeyError(null)
+    try {
+      if (window.electronAPI?.setMapillaryKey) {
+        const ok = await window.electronAPI.setMapillaryKey(cleanKey)
+        if (ok) {
+          setMapillaryKey(cleanKey)
+          setIsSavingMapillaryKey(false)
+          setMapillaryKeySuccess(true)
+          fetch('http://localhost:8765/api/chat/sync-keys', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mapillary_token: cleanKey }),
+          }).catch(() => {})
+          setTimeout(() => setMapillaryKeySuccess(false), 2000)
+          return true
+        } else {
+          setMapillaryKeyError('Failed to save Mapillary token securely.')
+        }
+      }
+    } catch (err) {
+      setMapillaryKeyError('Failed to save Mapillary token.')
+    }
+    setIsSavingMapillaryKey(false)
+    return false
+  }
+
+  const clearMapillaryKey = async () => {
+    try {
+      if (window.electronAPI?.setMapillaryKey) {
+        await window.electronAPI.setMapillaryKey('')
+      }
+      setMapillaryKey('')
+      setMapillaryInput('')
+      fetch('http://localhost:8765/api/chat/sync-keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mapillary_token: '' }),
+      }).catch(() => {})
+    } catch (err: any) {
+      console.error('Failed to clear Mapillary token:', err)
     }
   }
 
@@ -1719,6 +1891,7 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
         map_context: mapContext,
         api_key: effectiveApiKey || apiKey.replace(/[^\x20-\x7E]/g, '').trim(),
         google_maps_api_key: (googleKey || '').replace(/[^\x20-\x7E]/g, '').trim(),
+        mapillary_token: (mapillaryKey || '').replace(/[^\x20-\x7E]/g, '').trim(),
         image: documentImage
           ? {
               base64: documentImage.base64,
@@ -1998,6 +2171,20 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
                     <span className="api-key-label">GEE Credentials inactive</span>
                   </div>
                 )}
+
+                {hasMapillaryKey ? (
+                  <div className="api-key-status success">
+                    <span className="api-key-indicator green">●</span>
+                    <span className="api-key-label">
+                      Mapillary active{!mapillaryKey.trim() && hasEnvMapillaryKey ? ' (env)' : ''}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="api-key-status info">
+                    <span className="api-key-indicator gray">●</span>
+                    <span className="api-key-label">Mapillary inactive</span>
+                  </div>
+                )}
               </div>
 
               {/* API Settings toggle — gear outline with API text inside */}
@@ -2040,26 +2227,32 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
                 <label htmlFor="api-key-input-element" className="setting-field-label">OpenAI API Key (Required)</label>
                 <div className="api-key-input-wrapper">
                   <input
-                    key={apiKey}
-                    type="password"
+                    type={showOpenaiPassword ? 'text' : 'password'}
                     className="api-key-input-field"
-                    defaultValue={apiKey}
+                    value={openaiInput}
+                    onChange={(e) => setOpenaiInput(e.target.value)}
                     id="api-key-input-element"
                     placeholder="sk-proj-..."
                     disabled={isSavingKey}
+                    autoComplete="off"
+                    spellCheck="false"
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
-                        const el = document.getElementById('api-key-input-element') as HTMLInputElement
-                        if (el) validateAndSaveKey(el.value)
+                        validateAndSaveKey()
                       }
                     }}
                   />
                   <button
+                    type="button"
+                    className="api-key-toggle-btn"
+                    onClick={() => setShowOpenaiPassword((v) => !v)}
+                    title={showOpenaiPassword ? 'Hide Key' : 'Show Key'}
+                  >
+                    {showOpenaiPassword ? 'Hide' : 'Show'}
+                  </button>
+                  <button
                     className={`api-key-save-btn ${keySuccess ? 'success' : ''}`}
-                    onClick={() => {
-                      const el = document.getElementById('api-key-input-element') as HTMLInputElement
-                      if (el) validateAndSaveKey(el.value)
-                    }}
+                    onClick={() => validateAndSaveKey()}
                     disabled={isSavingKey}
                   >
                     {isSavingKey ? 'Saving...' : keySuccess ? 'Saved' : 'Save'}
@@ -2093,26 +2286,32 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
                 <label htmlFor="google-key-input-element" className="setting-field-label">Google Maps API Key (Optional)</label>
                 <div className="api-key-input-wrapper">
                   <input
-                    key={googleKey}
-                    type="password"
+                    type={showGooglePassword ? 'text' : 'password'}
                     className="api-key-input-field"
-                    defaultValue={googleKey}
+                    value={googleInput}
+                    onChange={(e) => setGoogleInput(e.target.value)}
                     id="google-key-input-element"
                     placeholder="AIzaSy..."
                     disabled={isSavingGoogleKey}
+                    autoComplete="off"
+                    spellCheck="false"
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
-                        const el = document.getElementById('google-key-input-element') as HTMLInputElement
-                        if (el) saveGoogleKey(el.value)
+                        saveGoogleKey()
                       }
                     }}
                   />
                   <button
+                    type="button"
+                    className="api-key-toggle-btn"
+                    onClick={() => setShowGooglePassword((v) => !v)}
+                    title={showGooglePassword ? 'Hide Key' : 'Show Key'}
+                  >
+                    {showGooglePassword ? 'Hide' : 'Show'}
+                  </button>
+                  <button
                     className={`api-key-save-btn ${googleKeySuccess ? 'success' : ''}`}
-                    onClick={() => {
-                      const el = document.getElementById('google-key-input-element') as HTMLInputElement
-                      if (el) saveGoogleKey(el.value)
-                    }}
+                    onClick={() => saveGoogleKey()}
                     disabled={isSavingGoogleKey}
                   >
                     {isSavingGoogleKey ? 'Saving...' : googleKeySuccess ? 'Saved' : 'Save'}
@@ -2150,6 +2349,7 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
                   <button
                     className="import-json-btn"
                     onClick={importGeeJsonFile}
+                    type="button"
                     style={{
                       background: 'var(--accent, #3b82f6)',
                       color: 'var(--accent-foreground, #0b0d11)',
@@ -2174,12 +2374,14 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
                 </div>
                 <div className="gee-key-input-container" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <textarea
-                    key={geeKey}
                     id="gee-key-input-element"
                     className="api-key-input-field"
-                    defaultValue={geeKey}
+                    value={geeInput}
+                    onChange={(e) => setGeeInput(e.target.value)}
                     placeholder='{ "type": "service_account", ... }'
                     disabled={isSavingGeeKey}
+                    autoComplete="off"
+                    spellCheck="false"
                     style={{
                       width: '100%',
                       height: '80px',
@@ -2196,10 +2398,7 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <button
                       className={`api-key-save-btn ${geeKeySuccess ? 'success' : ''}`}
-                      onClick={() => {
-                        const el = document.getElementById('gee-key-input-element') as HTMLTextAreaElement
-                        if (el) saveGeeKey(el.value)
-                      }}
+                      onClick={() => saveGeeKey()}
                       disabled={isSavingGeeKey}
                       style={{ flex: 1 }}
                     >
@@ -2226,6 +2425,65 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
                       </svg>
                     </span>
                     <span>{geeKeyError}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Mapillary Access Token Section */}
+              <div className="setting-field-group" style={{ marginTop: '12px', borderTop: '1px solid var(--border)', paddingTop: '12px' }}>
+                <label htmlFor="mapillary-key-input-element" className="setting-field-label">Mapillary Access Token (Optional)</label>
+                <div className="api-key-input-wrapper">
+                  <input
+                    type={showMapillaryPassword ? 'text' : 'password'}
+                    className="api-key-input-field"
+                    value={mapillaryInput}
+                    onChange={(e) => setMapillaryInput(e.target.value)}
+                    id="mapillary-key-input-element"
+                    placeholder="MLY|..."
+                    disabled={isSavingMapillaryKey}
+                    autoComplete="off"
+                    spellCheck="false"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        saveMapillaryKey()
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="api-key-toggle-btn"
+                    onClick={() => setShowMapillaryPassword((v) => !v)}
+                    title={showMapillaryPassword ? 'Hide Key' : 'Show Key'}
+                  >
+                    {showMapillaryPassword ? 'Hide' : 'Show'}
+                  </button>
+                  <button
+                    className={`api-key-save-btn ${mapillaryKeySuccess ? 'success' : ''}`}
+                    onClick={() => saveMapillaryKey()}
+                    disabled={isSavingMapillaryKey}
+                  >
+                    {isSavingMapillaryKey ? 'Saving...' : mapillaryKeySuccess ? 'Saved' : 'Save'}
+                  </button>
+                  {mapillaryKey && (
+                    <button
+                      className="api-key-clear-btn"
+                      onClick={clearMapillaryKey}
+                      disabled={isSavingMapillaryKey}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                {mapillaryKeyError && (
+                  <div className="api-key-error-msg">
+                    <span className="api-key-error-icon">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="12" cy="12" r="10" />
+                        <line x1="12" y1="8" x2="12" y2="12" />
+                        <line x1="12" y1="16" x2="12.01" y2="16" />
+                      </svg>
+                    </span>
+                    <span>{mapillaryKeyError}</span>
                   </div>
                 )}
               </div>

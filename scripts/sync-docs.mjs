@@ -36,9 +36,14 @@ const archMd = readFileSafe('ARCHITECTURE.md');
 const agentsMd = readFileSafe('AGENTS.md');
 const featureGuideMd = readFileSafe('FEATURE_IMPLEMENTATION_GUIDE.md');
 
-let version = 'v0.3.0';
+let version = 'v0.1.8';
 try {
-  const pkgJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf-8'));
+  let pkgJson = {};
+  if (fs.existsSync(path.join(rootDir, 'apps/desktop/package.json'))) {
+    pkgJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'apps/desktop/package.json'), 'utf-8'));
+  } else if (fs.existsSync(path.join(rootDir, 'package.json'))) {
+    pkgJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf-8'));
+  }
   if (pkgJson.version) version = `v${pkgJson.version}`;
 } catch (_) {}
 

@@ -391,6 +391,13 @@ function App() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Global shortcut for quitting Disha (Cmd+Q on Mac, Ctrl+Q on Win/Linux)
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'q') {
+        e.preventDefault()
+        window.electronAPI?.quitApp?.()
+        return
+      }
+
       const target = e.target as HTMLElement
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
         return

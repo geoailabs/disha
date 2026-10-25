@@ -53,3 +53,59 @@ def test_artifacts_crud_endpoint(tmp_path):
     response = client.delete(f"/api/artifacts/{art_id}", params={"workspace": workspace_str})
     assert response.status_code == 200
     assert response.json()["deleted"] is True
+
+
+def test_sync_keys_and_key_status_endpoint():
+    import os
+
+    sync_payload = {
+        "openai_api_key": "export OPENAI_API_KEY=\"sk-test-mock-key-12345678\"",
+        "google_maps_api_key": "AIzaSyMockGoogleMapsKey12345678",
+        "gee_credentials": '{"type": "service_account", "project_id": "test-gee"}',
+        "mapillary_token": "MLY|mock_mapillary_token_12345",
+    }
+    resp = client.post("/api/chat/sync-keys", json=sync_payload)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+    assert resp.json()["openai"] is True
+    assert resp.json()["google_maps"] is True
+    assert resp.json()["gee"] is True
+    assert resp.json()["mapillary"] is True
+
+    # Check os.environ
+    assert os.environ.get("OPENAI_API_KEY") == "sk-test-mock-key-12345678"
+    assert os.environ.get("GOOGLE_MAPS_API_KEY") == "AIzaSyMockGoogleMapsKey12345678"
+    assert "test-gee" in os.environ.get("GOOGLE_EARTH_ENGINE_CREDS", "")
+    assert os.environ.get("MAPILLARY_ACCESS_TOKEN") == "MLY|mock_mapillary_token_12345"
+
+    # Check /api/chat/key-status returns all 4 as True
+    status_resp = client.get("/api/chat/key-status")
+    assert status_resp.status_code == 200
+    status_data = status_resp.json()
+    assert status_data["openai"] is True
+    assert status_data["google_maps"] is True
+    assert status_data["gee"] is True
+    assert status_data["mapillary"] is True
+
+    # Test clearing keys
+    clear_payload = {
+        "openai_api_key": "",
+        "google_maps_api_key": "",
+        "gee_credentials": "",
+        "mapillary_token": "",
+    }
+    client.post("/api/chat/sync-keys", json=clear_payload)
+    assert not os.environ.get("OPENAI_API_KEY")
+    assert not os.environ.get("GOOGLE_MAPS_API_KEY")
+    assert not os.environ.get("GOOGLE_EARTH_ENGINE_CREDS")
+    assert not os.environ.get("MAPILLARY_ACCESS_TOKEN")
+
+
+def test_validate_key_normalization():
+    # Invalid short key
+    resp = client.post("/api/chat/validate-key", json={"api_key": "short"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["valid"] is False
+    assert "sk-" in data["error"]
+

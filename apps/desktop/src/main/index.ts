@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, safeStorage } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, safeStorage, Menu } from 'electron'
 import { spawn, ChildProcess } from 'child_process'
 import path from 'path'
 import fs from 'fs'
@@ -91,10 +91,16 @@ function getPrimaryConfigPath(filename: string): string {
   return path.join(app.getPath('userData'), filename)
 }
 
-function getKeyStatus(): { openai: boolean; google_maps: boolean } {
+function getKeyStatus(): { openai: boolean; google_maps: boolean; gee: boolean; mapillary: boolean } {
+  const openaiKey = normalizeApiKey(readEnvValue(['OPENAI_API_KEY'])) || readAndDecryptKey()
+  const googleKey = normalizeApiKey(readEnvValue(['GOOGLE_MAPS_API_KEY', 'GOOGLE_API_KEY'])) || readAndDecryptGoogleMapsKey()
+  const geeKey = normalizeGEEKey(readEnvValue(['GOOGLE_EARTH_ENGINE_CREDS', 'GEE_CREDENTIALS'])) || readAndDecryptGEEKey()
+  const mapillaryKey = normalizeApiKey(readEnvValue(['MAPILLARY_ACCESS_TOKEN', 'MAPILLARY_CLIENT_TOKEN'])) || readAndDecryptMapillaryKey()
   return {
-    openai: !!(readEnvValue(['OPENAI_API_KEY']) || readAndDecryptKey()),
-    google_maps: !!(readEnvValue(['GOOGLE_MAPS_API_KEY', 'GOOGLE_API_KEY']) || readAndDecryptGoogleMapsKey()),
+    openai: Boolean(openaiKey && openaiKey.length >= 8),
+    google_maps: Boolean(googleKey && googleKey.length >= 8),
+    gee: Boolean(geeKey && geeKey.includes('service_account')),
+    mapillary: Boolean(mapillaryKey && mapillaryKey.length >= 8),
   }
 }
 
@@ -173,32 +179,59 @@ function writeDefaultWorkspace(p: string): void {
 }
 
 // Key format and ASCII printable validation helpers
+function normalizeApiKey(k: unknown): string {
+  if (typeof k !== 'string') return ''
+  let s = k.trim()
+  // Strip shell export statements or env prefixes
+  s = s.replace(/^(?:export\s+)?(?:OPENAI_API_KEY|GOOGLE_MAPS_API_KEY|GOOGLE_API_KEY|MAPILLARY_ACCESS_TOKEN|MAPILLARY_CLIENT_TOKEN)\s*=\s*/i, '')
+  // Strip 'Bearer ' if user pasted curl auth header
+  s = s.replace(/^Bearer\s+/i, '')
+  // Strip surrounding quotes
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")) || (s.startsWith('`') && s.endsWith('`'))) {
+    s = s.slice(1, -1).trim()
+  }
+  // Filter to valid ASCII printable characters (32 to 126)
+  s = s.replace(/[^\x20-\x7E]/g, '').trim()
+  // Ignore placeholder dummy values
+  if (['your_api_key_here', 'your_key_here', 'your_key', 'sk-...', 'aizasy...', 'enter new api key', 'enter your api key'].includes(s.toLowerCase())) {
+    return ''
+  }
+  return s
+}
+
+function normalizeGEEKey(k: unknown): string {
+  if (typeof k !== 'string') return ''
+  let s = k.trim()
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+    if (s.startsWith('"{') || s.startsWith("'{")) {
+      s = s.slice(1, -1).trim()
+    }
+  }
+  s = s.replace(/[^\x20-\x7E\r\n\t]/g, '').trim()
+  return s
+}
+
 function isValidOpenAIKey(k: unknown): k is string {
-  if (typeof k !== 'string') return false
-  const trimmed = k.trim()
-  return Boolean(
-    trimmed.length >= 8 &&
-    /^[\x20-\x7E]+$/.test(trimmed)
-  )
+  const norm = normalizeApiKey(k)
+  return Boolean(norm.length >= 8)
 }
 
 function isValidGoogleMapsKey(k: unknown): k is string {
-  if (typeof k !== 'string') return false
-  const trimmed = k.trim()
-  return Boolean(
-    trimmed.length >= 8 &&
-    /^[\x20-\x7E]+$/.test(trimmed)
-  )
+  const norm = normalizeApiKey(k)
+  return Boolean(norm.length >= 8)
 }
 
 function isValidGEEKey(k: unknown): k is string {
-  if (typeof k !== 'string') return false
-  const trimmed = k.trim()
+  const norm = normalizeGEEKey(k)
   return Boolean(
-    trimmed.includes('service_account') &&
-    trimmed.includes('private_key') &&
-    /^[\x20-\x7E\r\n\t]+$/.test(trimmed)
+    norm.includes('service_account') &&
+    norm.includes('private_key')
   )
+}
+
+function isValidMapillaryKey(k: unknown): k is string {
+  const norm = normalizeApiKey(k)
+  return Boolean(norm.length >= 8)
 }
 
 // API Key persistence with safeStorage encryption
@@ -543,6 +576,109 @@ function encryptAndSaveGEEKey(key: string): boolean {
   }
 }
 
+// Mapillary Access Token persistence with safeStorage encryption
+function readAndDecryptMapillaryKey(): string {
+  try {
+    for (const configPath of getConfigCandidates('mapillary-token.json')) {
+      if (!fs.existsSync(configPath)) continue
+      try {
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+        if (!config || typeof config !== 'object') continue
+
+        // 1. Try safeStorage if marked encrypted
+        if (config.encrypted && config.key && safeStorage.isEncryptionAvailable()) {
+          try {
+            const encryptedBuffer = Buffer.from(config.key, 'hex')
+            const decrypted = safeStorage.decryptString(encryptedBuffer)
+            if (isValidMapillaryKey(decrypted)) return normalizeApiKey(decrypted)
+          } catch (decryptErr) {
+            console.warn('safeStorage.decryptString failed for Mapillary:', decryptErr)
+          }
+        }
+
+        // 2. Try explicit fallback if present
+        if (config.fallback && typeof config.fallback === 'string') {
+          try {
+            const decrypted = Buffer.from(config.fallback, 'base64').toString('utf-8')
+            if (isValidMapillaryKey(decrypted)) {
+              return normalizeApiKey(decrypted)
+            }
+          } catch {}
+        }
+
+        // 3. Try legacy base64 or plaintext ONLY if not marked encrypted
+        if (!config.encrypted && config.key && typeof config.key === 'string') {
+          try {
+            const decrypted = Buffer.from(config.key, 'base64').toString('utf-8')
+            if (isValidMapillaryKey(decrypted)) return normalizeApiKey(decrypted)
+          } catch {}
+          if (isValidMapillaryKey(config.key)) return normalizeApiKey(config.key)
+        }
+      } catch {
+        continue
+      }
+    }
+    return ''
+  } catch (err) {
+    console.error('Failed to read/decrypt Mapillary token:', err)
+    return ''
+  }
+}
+
+function encryptAndSaveMapillaryKey(key: string): boolean {
+  try {
+    const cleanKey = normalizeApiKey(key)
+    const primary = getPrimaryConfigPath('mapillary-token.json')
+    if (!cleanKey) {
+      for (const p of getConfigCandidates('mapillary-token.json')) {
+        if (fs.existsSync(p)) {
+          try { fs.unlinkSync(p) } catch { /* ignore */ }
+        }
+      }
+      delete process.env['MAPILLARY_ACCESS_TOKEN']
+      return true
+    }
+
+    let storedValue: string
+    let useEncryption = false
+    try {
+      if (safeStorage.isEncryptionAvailable()) {
+        const encryptedBuffer = safeStorage.encryptString(cleanKey)
+        storedValue = encryptedBuffer.toString('hex')
+        useEncryption = true
+      } else {
+        storedValue = Buffer.from(cleanKey).toString('base64')
+      }
+    } catch {
+      storedValue = Buffer.from(cleanKey).toString('base64')
+      useEncryption = false
+    }
+
+    const fallback = Buffer.from(cleanKey).toString('base64')
+    const data = JSON.stringify({
+      key: storedValue,
+      encrypted: useEncryption,
+      fallback: fallback,
+    })
+    fs.mkdirSync(path.dirname(primary), { recursive: true })
+    fs.writeFileSync(primary, data)
+    if (isDev) {
+      const rootTmp = path.resolve(__dirname, '../../../../.tmp', 'mapillary-token.json')
+      if (rootTmp !== primary) {
+        try {
+          fs.mkdirSync(path.dirname(rootTmp), { recursive: true })
+          fs.writeFileSync(rootTmp, data)
+        } catch { /* ignore */ }
+      }
+    }
+    process.env['MAPILLARY_ACCESS_TOKEN'] = cleanKey
+    return true
+  } catch (err) {
+    console.error('Failed to encrypt/save Mapillary token:', err)
+    return false
+  }
+}
+
 interface ModelConfig {
   id: string
   name: string
@@ -584,6 +720,8 @@ function writeCurrentModel(model: string): void {
 let mainWindow: BrowserWindow | null = null
 let backendProcess: ChildProcess | null = null
 let allowMainWindowClose = false
+let isQuitting = false
+let hasFlushedQuitState = false
 let quitFlushTimer: ReturnType<typeof setTimeout> | null = null
 
 async function startBackend(): Promise<void> {
@@ -645,9 +783,10 @@ async function startBackend(): Promise<void> {
   const env = { ...process.env }
   const storedOpenAI = readAndDecryptKey()
   const storedGoogle = readAndDecryptGoogleMapsKey()
+  const storedMapillary = readAndDecryptMapillaryKey()
   env['OPENAI_API_KEY'] = env['OPENAI_API_KEY'] || readEnvValue(['OPENAI_API_KEY']) || storedOpenAI
   env['GOOGLE_MAPS_API_KEY'] = env['GOOGLE_MAPS_API_KEY'] || readEnvValue(['GOOGLE_MAPS_API_KEY', 'GOOGLE_API_KEY']) || storedGoogle
-  env['MAPILLARY_ACCESS_TOKEN'] = env['MAPILLARY_ACCESS_TOKEN'] || readEnvValue(['MAPILLARY_ACCESS_TOKEN', 'MAPILLARY_CLIENT_TOKEN'])
+  env['MAPILLARY_ACCESS_TOKEN'] = env['MAPILLARY_ACCESS_TOKEN'] || readEnvValue(['MAPILLARY_ACCESS_TOKEN', 'MAPILLARY_CLIENT_TOKEN']) || storedMapillary
   const geeCreds = readAndDecryptGEEKey()
   if (geeCreds) {
     env['GOOGLE_EARTH_ENGINE_CREDS'] = geeCreds
@@ -744,6 +883,14 @@ ipcMain.handle('set-gee-key', (_e, key: string) => {
   }
   return ok
 })
+ipcMain.handle('get-mapillary-key', () => readAndDecryptMapillaryKey())
+ipcMain.handle('set-mapillary-key', (_e, key: string) => {
+  const ok = encryptAndSaveMapillaryKey(key)
+  if (ok && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('api-keys-updated')
+  }
+  return ok
+})
 
 // Open file dialog (for document mode)
 ipcMain.handle('open-file', async (_e, opts: { filters?: { name: string; extensions: string[] }[] }) => {
@@ -775,10 +922,125 @@ ipcMain.handle('window-maximize', () => {
   else mainWindow?.maximize()
 })
 ipcMain.handle('window-close', () => mainWindow?.close())
+ipcMain.handle('app-quit', () => {
+  isQuitting = true
+  app.quit()
+})
 ipcMain.handle('window-reload', () => mainWindow?.webContents.reload())
 ipcMain.handle('window-toggle-fullscreen', () => {
   if (mainWindow) mainWindow.setFullScreen(!mainWindow.isFullScreen())
 })
+
+function setupApplicationMenu(): void {
+  const isMac = process.platform === 'darwin'
+
+  const template: Electron.MenuItemConstructorOptions[] = [
+    ...(isMac
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              { role: 'about' as const },
+              { type: 'separator' as const },
+              {
+                label: 'Preferences...',
+                accelerator: 'CmdOrCtrl+,',
+                click: () => {
+                  if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('open-preferences')
+                  }
+                }
+              },
+              { type: 'separator' as const },
+              { role: 'services' as const },
+              { type: 'separator' as const },
+              { role: 'hide' as const },
+              { role: 'hideOthers' as const },
+              { role: 'unhide' as const },
+              { type: 'separator' as const },
+              {
+                label: 'Quit Disha',
+                accelerator: 'CommandOrControl+Q',
+                click: () => {
+                  isQuitting = true
+                  app.quit()
+                }
+              }
+            ]
+          }
+        ]
+      : []),
+    {
+      label: 'File',
+      submenu: [
+        {
+          label: 'Open Workspace...',
+          accelerator: 'CmdOrCtrl+O',
+          click: () => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('menu-open-workspace')
+            }
+          }
+        },
+        { type: 'separator' as const },
+        isMac
+          ? { role: 'close' as const }
+          : {
+              label: 'Quit',
+              accelerator: 'CmdOrCtrl+Q',
+              click: () => {
+                isQuitting = true
+                app.quit()
+              }
+            }
+      ]
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' as const },
+        { role: 'redo' as const },
+        { type: 'separator' as const },
+        { role: 'cut' as const },
+        { role: 'copy' as const },
+        { role: 'paste' as const },
+        { role: 'selectAll' as const }
+      ]
+    },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload' as const },
+        { role: 'forceReload' as const },
+        { role: 'toggleDevTools' as const },
+        { type: 'separator' as const },
+        { role: 'resetZoom' as const },
+        { role: 'zoomIn' as const },
+        { role: 'zoomOut' as const },
+        { type: 'separator' as const },
+        { role: 'togglefullscreen' as const }
+      ]
+    },
+    {
+      label: 'Window',
+      submenu: [
+        { role: 'minimize' as const },
+        { role: 'zoom' as const },
+        ...(isMac
+          ? [
+              { type: 'separator' as const },
+              { role: 'front' as const },
+              { type: 'separator' as const },
+              { role: 'window' as const }
+            ]
+          : [{ role: 'close' as const }])
+      ]
+    }
+  ]
+
+  const menu = Menu.buildFromTemplate(template)
+  Menu.setApplicationMenu(menu)
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -813,6 +1075,16 @@ function createWindow(): void {
       allowMainWindowClose = true
       return
     }
+
+    // When the application itself is quitting, before-quit coordinates the flush
+    if (isQuitting) {
+      if (!hasFlushedQuitState) {
+        e.preventDefault()
+      }
+      return
+    }
+
+    // Normal window close (e.g. red close button)
     e.preventDefault()
     if (quitFlushTimer) clearTimeout(quitFlushTimer)
     quitFlushTimer = setTimeout(() => {
@@ -820,8 +1092,15 @@ function createWindow(): void {
       allowMainWindowClose = true
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close()
       allowMainWindowClose = false
-    }, 4000)
-    mainWindow.webContents.send('app-before-quit')
+    }, 3000)
+
+    try {
+      mainWindow.webContents.send('app-before-quit')
+    } catch {
+      allowMainWindowClose = true
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close()
+      allowMainWindowClose = false
+    }
   })
 
   mainWindow.on('enter-full-screen', () => {
@@ -837,11 +1116,17 @@ ipcMain.on('app-quit-flush-done', () => {
     clearTimeout(quitFlushTimer)
     quitFlushTimer = null
   }
-  allowMainWindowClose = true
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.close()
+  if (isQuitting) {
+    hasFlushedQuitState = true
+    allowMainWindowClose = true
+    app.quit()
+  } else {
+    allowMainWindowClose = true
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.close()
+    }
+    allowMainWindowClose = false
   }
-  allowMainWindowClose = false
 })
 
 // --- IPC Handlers ---
@@ -1019,6 +1304,23 @@ ipcMain.handle('save-pdf', async (_e, htmlContent: string, defaultName: string) 
 // --- App lifecycle ---
 
 app.whenReady().then(async () => {
+  // On macOS in production, prompt to move to /Applications if launched from Downloads or another folder
+  if (!isDev && process.platform === 'darwin') {
+    try {
+      if (!app.isInApplicationsFolder()) {
+        const moved = app.moveToApplicationsFolder({
+          conflictHandler: () => true
+        })
+        if (moved) {
+          // The app was moved to /Applications and relaunched; terminate this instance early.
+          return
+        }
+      }
+    } catch (err) {
+      console.warn('Could not move app to Applications folder:', err)
+    }
+  }
+
   // Serve local files via localfile:// so the renderer can load them
   // regardless of whether it's running on file:// (prod) or http:// (dev).
   protocol.handle('localfile', (request) => {
@@ -1029,18 +1331,49 @@ app.whenReady().then(async () => {
   const backendReady = await waitForBackend()
   if (!backendReady) console.error('Backend failed to start')
 
+  setupApplicationMenu()
   createWindow()
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) {
+      allowMainWindowClose = false
+      hasFlushedQuitState = false
+      isQuitting = false
+      createWindow()
+    }
   })
 })
 
 app.on('window-all-closed', () => {
-  stopBackend()
-  if (process.platform !== 'darwin') app.quit()
+  if (process.platform !== 'darwin' || isQuitting) {
+    stopBackend()
+    app.quit()
+  }
 })
 
-app.on('before-quit', () => {
+app.on('before-quit', (e) => {
+  isQuitting = true
+
+  if (!hasFlushedQuitState && mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoading()) {
+    e.preventDefault()
+
+    if (quitFlushTimer) clearTimeout(quitFlushTimer)
+    quitFlushTimer = setTimeout(() => {
+      quitFlushTimer = null
+      hasFlushedQuitState = true
+      allowMainWindowClose = true
+      app.quit()
+    }, 3000)
+
+    try {
+      mainWindow.webContents.send('app-before-quit')
+    } catch {
+      hasFlushedQuitState = true
+      allowMainWindowClose = true
+      app.quit()
+    }
+    return
+  }
+
   stopBackend()
 })

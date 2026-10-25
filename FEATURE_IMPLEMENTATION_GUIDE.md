@@ -1,5 +1,10 @@
 # 🚀 Disha Feature Implementation & Subsystem Architecture Guide
 
+[![Release](https://img.shields.io/badge/release-v0.1.8-blue.svg)](https://github.com/geoailabs/disha/releases/tag/v0.1.8)
+[![Version](https://img.shields.io/badge/version-0.1.8-emerald.svg)](https://github.com/geoailabs/disha/releases)
+
+**Current Version:** `v0.1.8` (Developer Preview)
+
 ## Domain Hubs, Spatial Registry, Multi-Format Exports, Task Pipeline, Navigation Stack & Zero-Overlap UI
 
 This document provides a comprehensive, in-depth technical guide detailing the core architectures, subsystems, and feature implementations powering the **Disha AI Desktop IDE for Urban and Regional Planners**.
@@ -8,9 +13,9 @@ This document provides a comprehensive, in-depth technical guide detailing the c
 
 ## 📌 Executive Summary
 
-Urban and regional planning software requires unified coordination between high-performance interactive cartography (MapLibre GL), agentic AI reasoning across diverse planning disciplines, centralized geospatial entity tracking, and production-grade exportable deliverables.
+Urban and regional planning software requires unified coordination between high-performance interactive cartography (MapLibre GL 5+), agentic AI reasoning across diverse planning disciplines, centralized geospatial entity tracking, and production-grade exportable deliverables.
 
-We implemented and hardened twenty-two core platform capabilities:
+We implemented and hardened twenty-six core platform capabilities:
 
 1. **7+1 Domain Hub Architecture & ToolResult Protocol**: Replaces unorganized flat tool collections with cohesive domain subsystems (`Spatial`, `Mobility`, `Environment`, `Planning`, `Demographics`, `Places`, `Scenarios`, and `Utility`), returning typed execution packets (`ToolResult`) with automated side-effect routing.
 2. **Central Spatial & Polygon Registry**: Single source of truth for all study areas, zoning parcels, and boundaries, enforcing $\ge 90\%$ Intersection-over-Union (IoU) deduplication, geodesic ellipsoidal calculations (`pyproj.Geod`), and live map layer synchronization.
@@ -34,6 +39,10 @@ We implemented and hardened twenty-two core platform capabilities:
 20. **Client-Side SVG Mermaid Decision Flowchart Engine (`ArtifactsPanel.tsx`)**: Native client-side SVG renderer for decision trees, alternatives analysis, and multi-stage planning processes directly within generated reports.
 21. **Modal-Driven Publication Map Exporter & Spatial Clip (`MapExportModal.tsx`, `SpatialClipModal.tsx`)**: Dedicated modal windows for configuring cartographic title blocks, scale bars, north arrows, layers, and bounding-box spatial clipping.
 22. **Native Floating Layer Context Menus & Direct GeoJSON Feature Export (`FloatingLayerCard.tsx`, `AttributeTable.tsx`)**: Portal-rendered right-click context menu offering instant color swatches, opacity sliders, layer drag-and-drop reordering, and direct single-click GeoJSON export for selected features.
+23. **Resizable Multi-Panel IDE Layout & 50% Default Layer Opacity (`App.tsx`, `App.css`, `FloatingLayerCard.tsx`)**: Smooth interactive dragging dividers between left panel, map canvas, and chat drawer, with stacked polygon layers defaulting to 50% opacity to preserve multi-layer geographic legibility.
+24. **Hardware-Backed Credential Security with Electron `safeStorage` & OS Keychain (`apps/desktop/src/main/index.ts`)**: Hardware-accelerated API key encryption using OS keychain services with automatic non-ASCII character sanitization and graceful plaintext fallback for headless/containerized workflows.
+25. **Resilient WebSocket Auto-Reconnect & Enhanced Diagnostics (`ChatPanel.tsx`, `routers/diagnostics.py`)**: Automatic exponential backoff reconnection for WebSocket connections, diagnostic badge overflow protection, and live validation checks for AI, GIS, and tile services.
+26. **Continuous Hero Demo Video & High-Motion Documentation Hub (`docs/index.html`, `docs/js/components.js`)**: Interactive documentation portal featuring seamless autoplaying app walkthroughs, Recordly-style fluid spring animations, and instant full-text search across all 7+1 domain tools.
 
 ---
 
@@ -437,4 +446,200 @@ In Document Mode, users examine master plans, zoning maps, regional PDFs, and ae
    - An intelligent pill badge in the document header reflecting real-time indexing status:
      - 🟢 **`Indexed (Vector RAG Active)`**: Indicates document embeddings are computed in `<workspace>/.disha/rag_index.json` and actively fueling chat retrieval.
      - ⚪ **`Unindexed`**: Offers single-click background vectorization via `/api/rag/index`.
+
+---
+
+## 📊 19. Interactive Policy Levers & Multi-Row Trade-Off Matrix (`ScenarioBuilderPanel.tsx`)
+
+### The Challenge
+Urban planners evaluating master plan alternatives need to dynamically manipulate policy levers (FAR, green space quotas, transit mode shares) and immediately quantify the resource trade-offs without manually re-running full simulation pipelines.
+
+### The Solution Implementation
+1. **Full-Screen Scenario Review Mode (`.is-scenarios`)**:
+   - Expands the scenario review interface into a dedicated planning canvas, eliminating cramped sidebar scrolling.
+2. **Deep-Research Policy Levers (`HyperparameterSliders`)**:
+   - Live sliders for Target FAR (0.5 – 12.0), Green Space Quota (5% – 50%), Transit Mode Share (10% – 80%), and Electric Vehicle Share (0% – 100%).
+3. **Multi-Row Trade-Off Balance Sheet**:
+   - Comparative matrix computing Gross Floor Area ($\text{m}^2$), Population Capacity, Daily Water Demand (MLD), and Annual Mobility $\text{CO}_2$ (t/yr) across baseline and alternative scenarios.
+4. **Recommended Best-Fit Scenario Scoring**:
+   - Automated multi-criteria evaluation calculating composite scores out of 10 and rendering prominent `#1` badges and teal column highlights on the highest-ranking proposal.
+
+---
+
+## 🌲 20. Client-Side SVG Mermaid Decision Flowchart Engine (`ArtifactsPanel.tsx`)
+
+### The Challenge
+Planning reports frequently contain approval workflows, stage-gate decision trees, and alternative evaluation rubrics. Standard markdown renderers display these as raw text blocks (`mermaid`), degrading the visual polish of generated reports.
+
+### The Solution Implementation
+1. **Native Client-Side SVG Compilation**:
+   - Integrated client-side Mermaid parser within `ArtifactsPanel.tsx` that intercepts `mermaid` code blocks and compiles them directly into scalable SVGs.
+2. **Dark & Light Theme Harmony**:
+   - Applies matching CSS variables to flowchart nodes, strokes, and text labels, ensuring crisp rendering across dark glassmorphic themes.
+3. **PDF Export Parity**:
+   - Paired with backend `mermaid_renderer.py` via Playwright/Chromium to guarantee identical flowchart rendering in compiled `%PDF-1.4` publication exports.
+
+---
+
+## 🗺️ 21. Modal-Driven Publication Map Exporter & Spatial Clip (`MapExportModal.tsx`, `SpatialClipModal.tsx`)
+
+### The Challenge
+Publishing GIS maps for council hearings or technical appendices requires strict cartographic elements: scale bars, true north indicators, title blocks, and study-area boundary clipping.
+
+### The Solution Implementation
+1. **Dedicated Publication Modals**:
+   - `MapExportModal.tsx`: Configures paper sizes (A4, Letter, Poster), orientation (portrait/landscape), resolution (DPI), title block metadata, and layer visibility toggles.
+   - `SpatialClipModal.tsx`: Allows users to define study area bounding boxes or select an administrative boundary polygon to clip active layers.
+2. **True Geodesic Scale Bar & North Arrow**:
+   - Computes accurate Web-Mercator scale bar divisions based on center latitude using WGS84 ellipsoidal math.
+   - North arrow dynamically orients to the map camera bearing.
+3. **18% Geographic Boundary Padding**:
+   - Automatically calculates layer bounds and pads extents by 18% on all four cardinal directions, preventing edge clipping on exported figures.
+
+---
+
+## 📑 22. Native Floating Layer Context Menus & Direct GeoJSON Feature Export (`FloatingLayerCard.tsx`, `AttributeTable.tsx`)
+
+### The Challenge
+Layer controls in GIS sidebars often require deep menu navigation to perform quick operations like color tweaking, opacity adjustments, or exporting a filtered subset of features.
+
+### The Solution Implementation
+1. **React Portal Floating Context Menu**:
+   - Right-clicking any layer card opens a portal-rendered floating menu positioned accurately at the cursor coordinates.
+   - Includes instant 8-color quick swatches for instantaneous layer recoloring.
+   - Includes an inline opacity slider (0% to 100%) with real-time WebGL paint property updates.
+2. **Direct GeoJSON Feature Selection Export**:
+   - In `AttributeTable.tsx`, selected rows can be exported directly to a standalone GeoJSON file with a single click, saving the selection as a persistent layer.
+
+---
+
+## 📐 23. Resizable Multi-Panel IDE Layout & 50% Default Layer Opacity (`App.tsx`, `App.css`, `FloatingLayerCard.tsx`)
+
+### The Challenge
+Planners frequently switch focus between deep chat reasoning, expansive map inspection, and multi-column scenario comparisons. Fixed-width sidebars either cramped the map canvas on laptop screens or left excessive unused margins on ultra-wide monitors. Furthermore, overlapping full-opacity polygon layers obscured underlying basemaps and zoning parcels.
+
+### The Solution Implementation
+1. **Interactive Draggable Layout Dividers**:
+   - Implemented smooth draggable dividers between the left tool panel, central map canvas, and right chat drawer.
+   - Constrained with minimum safe widths (`--sidebar-min-width: 280px`, `--chat-min-width: 380px`) and maximum thresholds to prevent viewport collapse.
+2. **50% Default Layer Opacity**:
+   - All newly loaded vector layers (`.geojson`, `.shp`, `.gpkg`) and AI-generated spatial boundaries default to `0.50` fill opacity.
+   - Ensures underlying street grids, satellite basemaps, and intersecting parcels remain immediately visible without manual slider adjustments.
+
+---
+
+## 🔐 24. Hardware-Backed Credential Security with Electron `safeStorage` & OS Keychain (`apps/desktop/src/main/index.ts`)
+
+### The Challenge
+AI-native desktop tools require sensitive credentials (OpenAI API key, Google Maps Platform token, Earth Engine service account keys). Storing these in plaintext configuration files creates security liabilities, while naive encryption breaks in headless or containerized environments. Furthermore, raw clipboard paste often introduces invisible non-ASCII characters or trailing whitespace that trigger Python `UnicodeDecodeError: 'ascii' codec can't decode byte` crashes.
+
+### The Solution Implementation
+1. **Hardware-Accelerated Encryption**:
+   - Uses Electron's native `safeStorage` API backed by macOS Keychain, Windows DPAPI, or Linux Secret Service.
+   - Verifies `safeStorage.isEncryptionAvailable()` before encryption; gracefully falls back to encrypted base64 storage if running in containerized or headless environments.
+2. **String Sanitization & Codec Protection**:
+   - Implemented `sanitizeApiKey()` in `main/index.ts` to strip non-ASCII bytes, carriage returns, and whitespace before saving or passing keys to backend subprocesses.
+3. **IPC Key Synchronization**:
+   - Exposes `getAPIKey()`, `setAPIKey()`, `getKeyStatus()`, `getGoogleMapsKey()`, `setGoogleMapsKey()`, `getGEEKey()`, and `setGEEKey()` via preload IPC.
+   - Emits `onAPIKeysUpdated` events so the frontend instantly re-evaluates system health without restarting the application.
+
+---
+
+## 🔄 25. Resilient WebSocket Auto-Reconnect & Enhanced Diagnostics (`ChatPanel.tsx`, `routers/diagnostics.py`)
+
+### The Challenge
+When users put their computer to sleep or when the Python backend undergoes uvicorn hot-reloads during development, WebSocket connections disconnect abruptly. Without automatic recovery, users are forced to refresh the application, losing draft prompts and transient UI state.
+
+### The Solution Implementation
+1. **Exponential Backoff Auto-Reconnect**:
+   - `ChatPanel.tsx` monitors WebSocket connection lifecycles and automatically attempts reconnection with jittered exponential backoff (1s, 2s, 4s, 8s).
+   - Preserves message queues and conversation thread state across temporary reconnects.
+2. **System Diagnostics Self-Checks (`routers/diagnostics.py`, `DiagnosticsPanel.tsx`)**:
+   - Dedicated startup diagnostic suite probing:
+     - OpenAI API connectivity and token quota.
+     - Google Maps Platform API keys (Places, Elevation, Air Quality).
+     - Google Earth Engine service account authentication.
+     - Local GIS runtimes: DuckDB spatial extension, Shapely, pyproj geodesic engine, ReportLab.
+     - Free upstream geospatial endpoints: Overpass OSM, Nominatim, OSRM, Open-Meteo.
+   - Badge overflow prevention ensures status pills remain scannable regardless of display resolution.
+
+---
+
+## 🎬 26. Continuous Hero Demo Video & High-Motion Documentation Hub (`docs/index.html`, `docs/js/components.js`)
+
+### The Challenge
+Static mockups fail to convey the dynamic, real-time feel of an AI agent streaming map actions, drawing polygons, and compiling reports over a live MapLibre GL canvas.
+
+### The Solution Implementation
+1. **High-Definition Autoplay Walkthrough Video**:
+   - Embedded a lossless desktop demonstration recording directly into the website hero section (`docs/assets/desktop-demo.mp4`).
+   - Configured with `autoplay`, `loop`, `muted`, `playsinline`, and `pointer-events: none` to ensure smooth, non-intrusive continuous playback without OS video controls.
+2. **Recordly-Style Spring Motion Reveals**:
+   - Integrated lightweight CSS spring transitions (`cubic-bezier(0.16, 1, 0.3, 1)`) and hover button dynamics across the feature catalog.
+3. **Synchronized Documentation Portal**:
+   - Automated via `scripts/sync-docs.mjs` to keep the technical reference hub (`docs/docs.html`) synchronized with the 7+1 Domain Hubs, Central Spatial Registry, and prompt engineering handbook on every release.
+
+---
+
+## 📦 27. Native macOS DMG Drag-and-Drop Installer & Multi-Platform Executable Pipeline (`apps/desktop/electron-builder.yml`)
+
+### The Challenge
+Distributing desktop applications for planners on macOS and Windows requires native, friction-free packaging. On macOS, users expect a visual disk image (`.dmg`) with a branded background and an intuitive drag-and-drop shortcut directly into `/Applications`. On Windows, unsigned installer executables frequently trigger false-positive antivirus quarantines from Windows Defender unless bundled with portable ZIP extraction guides.
+
+### The Solution Implementation
+1. **Branded macOS Disk Image (`.dmg`)**:
+   - Configured `electron-builder.yml` with a customized $540 \times 380$ window layout, custom background graphic (`apps/desktop/build/background.png` and retina `@2x.png`), positioned application icon at $(130, 220)$, and `/Applications` folder alias at $(410, 220)$.
+   - Target configuration builds both `.dmg` and `.zip` for instant portable execution.
+2. **PyInstaller Backend Freezing**:
+   - Freezes Python 3.11+ backend dependencies (FastAPI, DuckDB spatial, Shapely, pyproj, ReportLab) into a self-contained binary (`packages/backend/dist/backend`), which Electron unpacks into `Resources/backend/backend` in production.
+3. **Multi-Platform Release Strategy**:
+   - Supports parallel GitHub Actions runners for macOS (`mac zip + dmg`) and Windows (`win zip + nsis`).
+
+---
+
+## 🛑 28. Graceful macOS `Cmd + Q` Lifecycle, Auto-Save Flush & Clean Process Termination (`apps/desktop/src/main/index.ts`, `App.tsx`)
+
+### The Challenge
+In a dual-process desktop architecture (Electron frontend + Python FastAPI backend), hitting `Cmd + Q` on macOS or clicking "Quit" in the Dock could abruptly terminate the application while workspace auto-save operations were still in flight. This risk corrupted `project.json` or left zombie Python backend processes occupying port `:8765`. Conversely, closing a window (`Cmd + W`) should not kill the app or backend on macOS.
+
+### The Solution Implementation
+1. **Native Application Menu & Accelerator**:
+   - Configured `Menu.setApplicationMenu()` in `src/main/index.ts` with standard macOS shortcuts, mapping `CommandOrControl+Q` directly to `app.quit()`.
+   - Wired in-app MenuBar "Quit Disha" and a global `(e.metaKey || e.ctrlKey) && e.key === 'q'` window listener to `window.electronAPI.quitApp()`.
+2. **Graceful Asynchronous Auto-Save Flush**:
+   - When `app.quit()` is triggered, `app.on('before-quit')` sets an internal `isQuitting = true` flag and broadcasts `app-before-quit` to the renderer over IPC.
+   - The renderer awaits all pending workspace project and document saves (`saveProjectRef.current(true)`).
+   - Enforces a 3-second safety timer: if the renderer takes longer than 3 seconds or is unresponsive, the main process forcefully proceeds to shutdown.
+3. **Clean Process Termination**:
+   - Once saves are confirmed via `app-quit-flush-done` or timer expiration, the main process signals the FastAPI backend process (`SIGTERM` / `SIGKILL`) and destroys all windows.
+4. **Dock Invariance (`Cmd + W`)**:
+   - Standard window close (`Cmd + W` or red titlebar button) leaves the app resident in the macOS Dock, allowing instant window re-opening without restarting the backend.
+
+---
+
+## 🔑 29. Universal 4-Credential Dynamic API Key Architecture (`ChatPanel.tsx`, `DiagnosticsPanel.tsx`, `chat.py`)
+
+### The Challenge
+Urban planners interact with multiple disparate spatial APIs: OpenAI for reasoning, Google Maps Platform for Street View and Places, Google Earth Engine for satellite LULC and NDVI, and Mapillary for crowd-sourced street-level imagery. Users frequently copy keys formatted with shell statements (`export OPENAI_API_KEY="..."`), quotes, or `Bearer ` prefixes. In addition, uncontrolled DOM inputs (`defaultValue` and `document.getElementById`) would reset user-typed keys during re-renders, while strict online validation probes would block valid keys if scoped permissions (e.g. project keys without `models:read`) returned 403 or if the network timed out.
+
+### The Solution Implementation
+1. **Unified Controlled React State**:
+   - Replaced all uncontrolled DOM queries with React state (`value={...}`, `onChange={...}`) across both `ChatPanel.tsx` and `DiagnosticsPanel.tsx`.
+   - Added Show/Hide password visibility toggle buttons next to all password fields.
+2. **Multi-Source Normalization Engine**:
+   - Frontend and backend normalizers (`normalizeApiKey` / `normalizeGEEKey`) automatically strip:
+     - Shell statements: `export KEY=`, `Bearer `
+     - Surrounding quotes: `"..."`, `'...'`, `` `...` ``
+     - Trailing whitespace, line returns, and non-ASCII bytes.
+3. **Immediate Local Persistence**:
+   - Saves immediately to Electron `safeStorage` (with base64 fallback so local saving is never blocked by OS keychain permissions).
+4. **Dynamic Backend Environment Synchronization (`/api/chat/sync-keys`)**:
+   - Injects credentials into `os.environ` of the active Python backend process in real time without restarting the application.
+   - Emits `disha-api-keys-updated` across components so that `ChatPanel`, `DiagnosticsPanel`, and the main process remain synchronized.
+5. **Non-Blocking Verification Probes**:
+   - Updated `/api/chat/validate-key` with a 3.5s timeout on `models.list()` and permissive handling for scoped project keys or offline networks, ensuring valid keys are never discarded or blocked.
+6. **One-Click GEE JSON Importer**:
+   - Integrated native file dialog file picker for `.json` service account files into both panels, automatically validating and formatting the JSON payload.
+
+
 
