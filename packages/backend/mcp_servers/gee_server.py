@@ -208,6 +208,12 @@ def _geojson_to_ee_geometry(geojson_data: dict | None) -> Any:
         return None
     try:
         import ee
+        global _EE_READY
+        if not _EE_READY:
+            creds = _find_gee_creds()
+            if creds:
+                _sync_init_gee(creds)
+
         from shapely.geometry import shape, mapping
         from shapely.ops import unary_union
 
@@ -288,6 +294,11 @@ def _sync_get_map_id(image_fn, vis_params: dict, ee_geom: Any = None) -> tuple[s
         clean_vis = {k: v for k, v in vis_params.items() if k in valid_keys}
         try:
             vis_img = img.visualize(**clean_vis)
+            if ee_geom is not None:
+                try:
+                    vis_img = vis_img.clip(ee_geom)
+                except Exception:
+                    pass
             result = ee.data.getMapId({"image": vis_img})
         except Exception as exc:
             logger.debug(f"Direct img.visualize failed, falling back to visParams dict: {exc}")
@@ -994,7 +1005,14 @@ class GEEServer:
         ).strip()
         country_code = (args.get("country_code") or args.get("country_iso") or "").strip()
         ws = args.get("_ws")
+        workspace = args.get("_workspace")
         map_context = args.get("_map_context") or {}
+
+        # 0. Always ensure Earth Engine is initialized so ee.Geometry conversions succeed!
+        try:
+            await _ensure_gee(workspace)
+        except Exception as _init_err:
+            logger.debug(f"Initial _ensure_gee in _resolve_place_boundary: {_init_err}")
 
         # If place_name not explicitly set, check title for a place indicator (e.g. 'NDVI - Paris')
         if not place_name and not geojson_input:
@@ -1003,16 +1021,29 @@ class GEEServer:
                 candidate = title.split(" - ")[-1].strip()
                 if candidate and len(candidate) > 2 and not candidate.isdigit():
                     place_name = candidate
+            elif " – " in title:
+                candidate = title.split(" – ")[-1].strip()
+                if candidate and len(candidate) > 2 and not candidate.isdigit():
+                    place_name = candidate
+            elif " for " in title.lower():
+                candidate = title.lower().split(" for ")[-1].strip()
+                if candidate and len(candidate) > 2:
+                    place_name = candidate
 
-        # If still no place_name or geojson, check if there is an active registered study area boundary
-        if not place_name and not geojson_input:
+        # If place_name is empty or generic ("that place", "here", "the boundary", "study area"):
+        generic_terms = {"", "that place", "this place", "the place", "here", "the boundary", "boundary", "study area", "study region"}
+        if not geojson_input and (not place_name or place_name.lower().strip() in generic_terms):
             try:
                 from tools.spatial_registry import spatial_registry
                 active_polys = spatial_registry.list_polygons()
                 study_polys = [p for p in active_polys if p.get("source") in ("osm_boundary", "ai_draw", "user_draw")]
-                if len(study_polys) == 1:
-                    geojson_input = study_polys[0].get("geometry")
-                    place_name = study_polys[0].get("name")
+                if study_polys:
+                    latest = study_polys[-1]
+                    geojson_input = latest.get("geometry")
+                    place_name = latest.get("name")
+                elif active_polys:
+                    geojson_input = active_polys[-1].get("geometry")
+                    place_name = active_polys[-1].get("name")
             except Exception:
                 pass
 
@@ -1051,12 +1082,23 @@ class GEEServer:
             except Exception as _reg_err:
                 logger.debug(f"Spatial registry check failed: {_reg_err}")
 
-            # Check active map layers
+            # Check active map layers (matching against spatial registry or features)
             if not geojson_input and map_context.get("layers"):
                 p_lower = place_name.lower().strip()
                 for layer in map_context["layers"]:
                     lname = (layer.get("name") or "").lower().strip()
                     if p_lower in lname or lname in p_lower:
+                        try:
+                            from tools.spatial_registry import spatial_registry
+                            p = spatial_registry.get_polygon(layer.get("name") or "")
+                            if p and p.geometry:
+                                geojson_input = p.geometry
+                                matched_name = p.name
+                                bbox = p.bbox
+                                centroid = p.centroid
+                                break
+                        except Exception:
+                            pass
                         ldata = layer.get("data")
                         if isinstance(ldata, dict) and ldata.get("features"):
                             geojson_input = ldata
@@ -2574,9 +2616,20 @@ class GEEServer:
                         except Exception:
                             pass
                     raw_img = coll.mosaic()
+                    if ee_geom is not None:
+                        try:
+                            raw_img = raw_img.clip(ee_geom)
+                        except Exception:
+                            pass
                     colored = raw_img.visualize(min=1, max=100, palette=palette)
                     # Mask out zeros / unpopulated agricultural lands so basemap shows through cleanly
-                    return colored.updateMask(raw_img.gt(0.5))
+                    res = colored.updateMask(raw_img.gt(0.5))
+                    if ee_geom is not None:
+                        try:
+                            res = res.clip(ee_geom)
+                        except Exception:
+                            pass
+                    return res
                 else:
                     valid_years = [2000, 2005, 2010, 2015, 2020]
                     yr = min(valid_years, key=lambda y: abs(y - year))
@@ -2587,8 +2640,19 @@ class GEEServer:
                         except Exception:
                             pass
                     raw_img = coll.first()
+                    if ee_geom is not None:
+                        try:
+                            raw_img = raw_img.clip(ee_geom)
+                        except Exception:
+                            pass
                     colored = raw_img.visualize(min=5, max=500, palette=palette)
-                    return colored.updateMask(raw_img.gt(1.0))
+                    res = colored.updateMask(raw_img.gt(1.0))
+                    if ee_geom is not None:
+                        try:
+                            res = res.clip(ee_geom)
+                        except Exception:
+                            pass
+                    return res
 
             layer_title = title or (f"Population Density – {place_nm} ({year})" if place_nm else f"Population Density ({source.title()} {year})")
             if place_nm and place_nm.lower() not in layer_title.lower():
