@@ -1131,14 +1131,6 @@ class GEEServer:
                         except Exception as reg_exc:
                             logger.warning(f"Failed to register boundary in spatial_registry: {reg_exc}")
 
-                        # Send boundary to map canvas so user sees the boundary polygon!
-                        boundary_title = f"{matched_name} Boundary"
-                        await self._send_action(ws, "add_geojson", {
-                            "geojson": geojson_input,
-                            "name": boundary_title,
-                            "color": "#3b82f6",
-                        })
-
                         # Frame camera to the boundary
                         try:
                             from shapely.geometry import shape

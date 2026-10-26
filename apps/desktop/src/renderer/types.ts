@@ -215,7 +215,16 @@ export type MapAction =
     }
   | {
       type: 'add_geojson'
-      payload: { geojson: FeatureCollection | Feature | Geometry; name: string; color?: string }
+      payload: {
+        geojson: FeatureCollection | Feature | Geometry
+        name: string
+        color?: string
+        fillColor?: string
+        fillOpacity?: number
+        lineColor?: string
+        lineWidth?: number
+        styleSpec?: any
+      }
     }
   | {
       type: 'highlight_features'

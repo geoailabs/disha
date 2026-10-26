@@ -1981,12 +1981,16 @@ function App() {
     } : undefined)
 
     setLayers((prev) => {
-      const newLayer = {
+      const newLayer: GeoJSONLayer = {
         id: `layer-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         name: layerName,
         filePath: '',
         visible: true,
-        opacity: 0.5,
+        opacity: styleSpec?.opacity ?? 0.5,
+        fillColor: styleSpec?.fillColor,
+        fillOpacity: styleSpec?.fillOpacity,
+        lineColor: styleSpec?.strokeColor ?? styleSpec?.lineColor,
+        lineWidth: styleSpec?.lineWidth,
         data,
         color: layerColor,
         styleSpec: finalStyleSpec,
@@ -2628,7 +2632,7 @@ function App() {
       return
     }
     if (action.type === 'add_geojson') {
-      const { geojson, name, color } = action.payload
+      const { geojson, name, color, fillColor, fillOpacity, lineColor, lineWidth, styleSpec } = action.payload
       setAppMode('map') // Auto-switch to Map view
       const geometryTypes = ['Point', 'MultiPoint', 'LineString', 'MultiLineString', 'Polygon', 'MultiPolygon', 'GeometryCollection']
       const data: FeatureCollection =
@@ -2640,10 +2644,19 @@ function App() {
               ? { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: geojson as Geometry, properties: {} }] }
               : { type: 'FeatureCollection', features: [] }
       const layerName = name || 'AI Layer'
+      const customStyleSpec = styleSpec || (fillColor !== undefined || fillOpacity !== undefined || lineColor !== undefined || lineWidth !== undefined ? {
+        mode: 'simple' as const,
+        color: color || lineColor || '#3b82f6',
+        fillColor,
+        fillOpacity,
+        strokeColor: lineColor || color,
+        lineWidth: lineWidth ?? 2,
+        opacity: fillOpacity ?? 0.5,
+      } : undefined)
       if (isPointOnlyCollection(data)) {
         addGroupedPointFeaturesToLayers(layerName, data, color)
       } else {
-        upsertLayer(layerName, data, color)
+        upsertLayer(layerName, data, color, customStyleSpec)
       }
       try {
         if (data && data.features && data.features.length > 0) {

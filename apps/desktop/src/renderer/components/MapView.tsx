@@ -824,7 +824,8 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
     }
 
     for (const layer of layers) {
-      const fillOpacity = layer.opacity ?? 0.5
+      const isTransparentFill = layer.fillColor === 'transparent' || layer.styleSpec?.fillColor === 'transparent' || layer.fillOpacity === 0 || layer.styleSpec?.fillOpacity === 0
+      const fillOpacity = isTransparentFill ? 0 : (layer.styleSpec?.fillOpacity ?? layer.fillOpacity ?? layer.styleSpec?.opacity ?? layer.opacity ?? 0.5)
       const hasSelection = selectedLayerIds && selectedLayerIds.size > 0
       const isSelected = !hasSelection || selectedLayerIds.has(layer.id)
       const opacityMultiplier = isSelected ? 1.0 : 0.35
@@ -845,7 +846,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
             type: 'raster',
             source: layer.id,
             layout: { visibility: layer.visible ? 'visible' : 'none' },
-            paint: { 'raster-opacity': (layer.opacity ?? 1.0) * opacityMultiplier },
+            paint: { 'raster-opacity': layer.opacity ?? 1.0 },
           })
           ownLayerIds.current.add(layer.id)
         } else if (layer.geeSpec) {
@@ -860,7 +861,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
             type: 'raster',
             source: layer.id,
             layout: { visibility: layer.visible ? 'visible' : 'none' },
-            paint: { 'raster-opacity': (layer.opacity ?? 1.0) * opacityMultiplier },
+            paint: { 'raster-opacity': layer.opacity ?? 0.85 },
           })
           ownLayerIds.current.add(layer.id)
         } else if (layer.rasterOverlaySpec) {
@@ -890,7 +891,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
               type: 'raster',
               source: layer.id,
               layout: { visibility: layer.visible ? 'visible' : 'none' },
-              paint: { 'raster-opacity': (layer.opacity ?? 0.8) * opacityMultiplier },
+              paint: { 'raster-opacity': layer.opacity ?? 0.8 },
             })
             ownLayerIds.current.add(layer.id)
           } else {
@@ -912,9 +913,9 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
           ],
           paint: {
             'fill-color': fillColorExpression(layer),
-            'fill-opacity': ['*', ['coalesce', ['get', 'fillOpacity'], fillOpacity], opacityMultiplier] as DataDrivenPropertyValueSpecification<number>,
+            'fill-opacity': isTransparentFill ? 0 : (['*', ['coalesce', ['get', 'fillOpacity'], fillOpacity], opacityMultiplier] as DataDrivenPropertyValueSpecification<number>),
           },
-          layout: { visibility: layer.visible ? 'visible' : 'none' },
+          layout: { visibility: (!layer.visible || isTransparentFill) ? 'none' : 'visible' },
         })
 
         map.addLayer({
@@ -929,7 +930,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
           paint: {
             'line-color': lineColorExpression(layer),
             'line-width': layer.styleSpec?.lineWidth ?? layer.lineWidth ?? 2,
-            'line-opacity': (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5) * opacityMultiplier,
+            'line-opacity': isTransparentFill ? 1.0 : (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5) * opacityMultiplier,
           },
           layout: { visibility: layer.visible ? 'visible' : 'none' },
         })
@@ -1037,20 +1038,20 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
               type: 'raster',
               source: layer.id,
               layout: { visibility: vis },
-              paint: { 'raster-opacity': (layer.opacity ?? 1.0) * opacityMultiplier },
+              paint: { 'raster-opacity': layer.opacity ?? 0.85 },
             })
           }
         } else if (layer.wmsSpec) {
           const vis = layer.visible ? 'visible' : 'none'
           if (map.getLayer(`${layer.id}-raster`)) {
             map.setLayoutProperty(`${layer.id}-raster`, 'visibility', vis)
-            map.setPaintProperty(`${layer.id}-raster`, 'raster-opacity', (layer.opacity ?? 1.0) * opacityMultiplier)
+            map.setPaintProperty(`${layer.id}-raster`, 'raster-opacity', layer.opacity ?? 1.0)
           }
         } else if (layer.rasterOverlaySpec) {
           const vis = layer.visible ? 'visible' : 'none'
           if (map.getLayer(`${layer.id}-raster`)) {
             map.setLayoutProperty(`${layer.id}-raster`, 'visibility', vis)
-            map.setPaintProperty(`${layer.id}-raster`, 'raster-opacity', (layer.opacity ?? 0.8) * opacityMultiplier)
+            map.setPaintProperty(`${layer.id}-raster`, 'raster-opacity', layer.opacity ?? 0.8)
           }
           const src = map.getSource(layer.id) as maplibregl.ImageSource
           if (src && src.setCoordinates && layer.rasterOverlaySpec.corners) {
@@ -1083,19 +1084,19 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
           const vis = layer.visible ? 'visible' : 'none'
           for (const suffix of ['-fill', '-outline', '-line', '-circle']) {
             if (map.getLayer(`${layer.id}${suffix}`)) {
-              map.setLayoutProperty(`${layer.id}${suffix}`, 'visibility', vis)
+              map.setLayoutProperty(`${layer.id}${suffix}`, 'visibility', (suffix === '-fill' && isTransparentFill) ? 'none' : vis)
             }
           }
           if (map.getLayer(`${layer.id}-fill`)) {
             map.setPaintProperty(`${layer.id}-fill`, 'fill-color', fillColorExpression(layer))
             map.setPaintProperty(
               `${layer.id}-fill`, 'fill-opacity',
-              ['*', ['coalesce', ['get', 'fillOpacity'], fillOpacity], opacityMultiplier] as DataDrivenPropertyValueSpecification<number>,
+              isTransparentFill ? 0 : (['*', ['coalesce', ['get', 'fillOpacity'], fillOpacity], opacityMultiplier] as DataDrivenPropertyValueSpecification<number>),
             )
           }
           if (map.getLayer(`${layer.id}-outline`)) {
             map.setPaintProperty(`${layer.id}-outline`, 'line-color', lineColorExpression(layer))
-            map.setPaintProperty(`${layer.id}-outline`, 'line-opacity', (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5) * opacityMultiplier)
+            map.setPaintProperty(`${layer.id}-outline`, 'line-opacity', isTransparentFill ? 1.0 : (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5) * opacityMultiplier)
             map.setPaintProperty(`${layer.id}-outline`, 'line-width', layer.styleSpec?.lineWidth ?? layer.lineWidth ?? 2)
           }
           if (map.getLayer(`${layer.id}-line`)) {
