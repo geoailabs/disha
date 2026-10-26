@@ -101,8 +101,18 @@ STATE_VILLAGE_CODES = {
     "kl": "Kerala", "wb": "West Bengal", "od": "Odisha",
     "pb": "Punjab", "hr": "Haryana", "br": "Bihar",
     "jh": "Jharkhand", "as": "Assam", "hp": "Himachal Pradesh",
-    "uk": "Uttarakhand", "ch": "Chandigarh",
+    "uk": "Uttarakhand", "ch": "Chandigarh", "ga": "Goa", "sk": "Sikkim",
 }
+
+STATE_NAME_TO_CODE = {v.lower(): k for k, v in STATE_VILLAGE_CODES.items()}
+STATE_NAME_TO_CODE.update({
+    "punjab": "pb", "kerala": "kl", "karnataka": "ka", "maharashtra": "mh",
+    "gujarat": "gj", "rajasthan": "rj", "uttar pradesh": "up", "madhya pradesh": "mp",
+    "tamil nadu": "tn", "tamilnadu": "tn", "andhra pradesh": "ap", "telangana": "ts",
+    "west bengal": "wb", "odisha": "od", "orissa": "od", "haryana": "hr", "bihar": "br",
+    "jharkhand": "jh", "assam": "as", "himachal pradesh": "hp", "uttarakhand": "uk",
+    "chandigarh": "ch", "goa": "ga", "sikkim": "sk"
+})
 
 def _resolve_workspace(workspace_arg: str) -> str:
     """Resolve workspace path to absolute folder or fallback to workspace root."""
@@ -123,8 +133,8 @@ class DatameetServer:
             ToolDeclaration(
                 name="import_datameet_boundary",
                 description=(
-                    "Fetch and display state, district, or village boundaries from Datameet map data source. "
-                    "Downloads the GeoJSON dynamically, saves it into the active workspace, and displays it on the map."
+                    "Fetch and display state, district, or individual village boundaries from Datameet Indian map data. "
+                    "When level is 'village', pass village_name (and optional state/district) to extract and display ONLY that specific village polygon on the map."
                 ),
                 parameters={
                     "type": "object",
@@ -136,18 +146,26 @@ class DatameetServer:
                         },
                         "state": {
                             "type": "string",
-                            "description": "Optional state name(s) (e.g. 'Tamil Nadu, Kerala') to extract and load ONLY districts for those states instead of the full national 820-district dataset.",
+                            "description": "State name (e.g. 'Kerala', 'Punjab', 'Maharashtra'). Automatically resolves state code.",
                         },
                         "state_code": {
                             "type": "string",
-                            "description": "ISO state code (e.g. 'tn', 'kl', 'ka', 'mh', 'gj', 'rj'). Required if level is 'village'.",
+                            "description": "ISO state code (e.g. 'kl', 'ka', 'mh', 'gj', 'rj', 'pb', 'br', 'ga', 'sk').",
+                        },
+                        "village_name": {
+                            "type": "string",
+                            "description": "Specific village name to extract and display ONLY that village boundary polygon instead of the full state."
+                        },
+                        "district": {
+                            "type": "string",
+                            "description": "Optional district name to filter or disambiguate villages."
                         },
                         "workspace": {
                             "type": "string",
                             "description": "Absolute path to the active workspace folder"
                         },
                     },
-                    "required": ["level", "workspace"],
+                    "required": ["level"],
                 },
             ),
             ToolDeclaration(
@@ -326,11 +344,16 @@ class DatameetServer:
         level = args.get("level", "").strip().lower()
         state_code = (args.get("state_code") or "").strip().lower()
         state = (args.get("state") or args.get("states") or "").strip()
+        village_name = (args.get("village_name") or args.get("village") or args.get("name") or "").strip()
+        district = (args.get("district") or "").strip()
         workspace = _resolve_workspace(args.get("workspace", ""))
         ws = args.get("_ws")
 
         workspace_path = Path(workspace)
         workspace_path.mkdir(parents=True, exist_ok=True)
+
+        if level == "village" and not state_code and state:
+            state_code = STATE_NAME_TO_CODE.get(state.lower().strip(), "")
 
         if level == "state":
             url = "https://raw.githubusercontent.com/datta07/INDIAN-SHAPEFILES/master/INDIA/INDIA_STATES.geojson"
@@ -339,12 +362,17 @@ class DatameetServer:
             url = "https://raw.githubusercontent.com/datta07/INDIAN-SHAPEFILES/master/INDIA/INDIA_DISTRICTS.geojson"
             filename = "india_districts.geojson"
         elif level == "village":
-            if not state_code:
+            if not state_code and not state:
                 return {
-                    "error": "state_code is required for village boundaries",
+                    "error": "state_code or state is required for village boundaries",
                     "available_states": STATE_VILLAGE_CODES
                 }
-            url = f"https://raw.githubusercontent.com/datameet/indian_village_boundaries/master/{state_code}/{state_code}.json"
+            if not state_code:
+                return {
+                    "error": f"Unknown state code for '{state}'. Available states: {list(STATE_VILLAGE_CODES.values())}",
+                    "available_states": STATE_VILLAGE_CODES
+                }
+            url = f"https://raw.githubusercontent.com/datameet/indian_village_boundaries/master/{state_code}/{state_code}.geojson"
             filename = f"village_boundaries_{state_code}.geojson"
         else:
             return {"error": f"Invalid level: '{level}'. Must be 'state', 'district', or 'village'."}
@@ -357,7 +385,7 @@ class DatameetServer:
                 async with httpx.AsyncClient(timeout=180.0, follow_redirects=True) as client:
                     async with client.stream("GET", url) as response:
                         if response.status_code != 200:
-                            return {"error": f"Failed to download boundary. HTTP {response.status_code}"}
+                            return {"error": f"Failed to download boundary from {url}. HTTP {response.status_code}"}
                         tmp = workspace_path / f"{filename}.tmp"
                         with open(tmp, "wb") as f:
                             async for chunk in response.aiter_bytes(chunk_size=65536):
@@ -365,6 +393,75 @@ class DatameetServer:
                         tmp.rename(target_file)
             except Exception as e:
                 return {"error": f"Download failed: {e}"}
+
+        # If village level and specific village requested: create individual village feature subset
+        if level == "village" and village_name:
+            target_villages = [v.strip().lower() for v in village_name.replace(";", ",").split(",") if v.strip()]
+            try:
+                data = json.loads(target_file.read_text(encoding="utf-8"))
+                matched = []
+                for f in data.get("features", []):
+                    props = f.get("properties", {})
+                    v_name = (props.get("NAME") or props.get("name") or props.get("VILL_NAME") or "").strip().lower()
+                    d_name = (props.get("DISTRICT") or props.get("district") or props.get("DIST_NAME") or "").strip().lower()
+                    if district and district.lower().strip() not in d_name:
+                        continue
+                    if any(tv == v_name or tv in v_name or v_name in tv for tv in target_villages):
+                        matched.append(f)
+
+                if matched:
+                    matched_names = [f.get("properties", {}).get("NAME", "Village") for f in matched]
+                    safe_label = "_".join(n.lower().replace(" ", "_") for n in matched_names[:3])
+                    v_filename = f"village_{safe_label}_{state_code}.geojson"
+                    v_file = workspace_path / v_filename
+                    v_fc = {"type": "FeatureCollection", "features": matched}
+                    v_file.write_text(json.dumps(v_fc, ensure_ascii=False), encoding="utf-8")
+                    
+                    layer_title = f"Village — {', '.join(matched_names[:3])}"
+                    if ws:
+                        try:
+                            await send_action(ws, "add_geojson_file", {
+                                "path": str(v_file.resolve()),
+                                "name": layer_title
+                            })
+                        except Exception:
+                            pass
+
+                    # Compute geodesic area and centroid
+                    centroid = None
+                    area_km2 = None
+                    try:
+                        from shapely.geometry import shape
+                        from tools.geo import geodesic_area_m2
+                        s = shape(matched[0]["geometry"])
+                        area_km2 = round(geodesic_area_m2(matched[0]["geometry"]) / 1e6, 3)
+                        centroid = {"lng": round(s.centroid.x, 6), "lat": round(s.centroid.y, 6)}
+                        if ws and centroid:
+                            await send_action(ws, "fly_to", {"center": [centroid["lng"], centroid["lat"]], "zoom": 13})
+                    except Exception:
+                        pass
+
+                    return {
+                        "status": "success",
+                        "level": "village",
+                        "village_name": ", ".join(matched_names),
+                        "state": STATE_VILLAGE_CODES.get(state_code, state_code.upper()),
+                        "district": matched[0].get("properties", {}).get("DISTRICT", ""),
+                        "sub_district": matched[0].get("properties", {}).get("SUB_DIST") or matched[0].get("properties", {}).get("SUB_DISTRICT", ""),
+                        "area_km2": area_km2,
+                        "centroid": centroid,
+                        "path": str(v_file.resolve()),
+                        "geojson": v_fc,
+                        "message": f"Extracted boundary for village '{', '.join(matched_names)}' ({matched[0].get('properties', {}).get('DISTRICT', '')}, {STATE_VILLAGE_CODES.get(state_code, state_code.upper())}) and loaded onto map."
+                    }
+                else:
+                    return {
+                        "status": "error",
+                        "error": f"Village '{village_name}' not found in DataMeet village boundaries for {STATE_VILLAGE_CODES.get(state_code, state_code.upper())}."
+                                + (f" (Filtered by district: {district})" if district else "")
+                    }
+            except Exception as e:
+                return {"error": f"Failed to filter village boundary: {e}"}
 
         # If district level and specific states requested: create lightweight filtered subset
         if level == "district" and (state or (state_code and state_code in STATE_VILLAGE_CODES)):
@@ -433,4 +530,76 @@ class DatameetServer:
             "path": str(target_file.resolve()),
             "message": f"'{filename}' downloaded and loaded onto the map."
         }
+
+    async def lookup_village_boundary(
+        self,
+        village_name: str,
+        state_name: str = "",
+        state_code: str = "",
+        district: str = "",
+        workspace: str = "",
+    ) -> dict | None:
+        """Lookup an Indian village boundary polygon from DataMeet datasets."""
+        if not village_name:
+            return None
+        clean_vname = village_name.strip().lower().replace("village", "").strip()
+        sc = state_code.strip().lower()
+        if not sc and state_name:
+            sc = STATE_NAME_TO_CODE.get(state_name.strip().lower(), "")
+
+        # Target states to check: specific state if known, else popular available DataMeet states
+        candidate_codes = [sc] if sc and sc in STATE_VILLAGE_CODES else ["pb", "kl", "ka", "mh", "gj", "rj", "br", "or", "ga", "sk"]
+
+        workspace_path = Path(_resolve_workspace(workspace))
+        workspace_path.mkdir(parents=True, exist_ok=True)
+
+        for c in candidate_codes:
+            filename = f"village_boundaries_{c}.geojson"
+            target_file = workspace_path / filename
+            url = f"https://raw.githubusercontent.com/datameet/indian_village_boundaries/master/{c}/{c}.geojson"
+
+            if not target_file.exists():
+                try:
+                    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                        resp = await client.get(url)
+                        if resp.status_code == 200:
+                            target_file.write_bytes(resp.content)
+                        else:
+                            continue
+                except Exception:
+                    continue
+
+            if not target_file.exists():
+                continue
+
+            try:
+                data = json.loads(target_file.read_text(encoding="utf-8"))
+                for f in data.get("features", []):
+                    props = f.get("properties", {})
+                    v_name = (props.get("NAME") or props.get("name") or "").strip().lower()
+                    d_name = (props.get("DISTRICT") or props.get("district") or "").strip().lower()
+                    if district and district.lower().strip() not in d_name:
+                        continue
+                    if clean_vname == v_name or clean_vname in v_name or v_name in clean_vname:
+                        # Found matching village polygon!
+                        return {
+                            "type": "Feature",
+                            "geometry": f["geometry"],
+                            "properties": {
+                                "name": props.get("NAME", village_name),
+                                "village_name": props.get("NAME", village_name),
+                                "district": props.get("DISTRICT", ""),
+                                "sub_district": props.get("SUB_DIST") or props.get("SUB_DISTRICT", ""),
+                                "state": props.get("STATE", STATE_VILLAGE_CODES.get(c, c.upper())),
+                                "census_code": props.get("CEN_2001") or props.get("CENSUS_CODE_2001") or "",
+                                "source": "datameet/indian_village_boundaries",
+                            }
+                        }
+            except Exception:
+                continue
+
+        return None
+
+
+datameet_server = DatameetServer()
 

@@ -1148,7 +1148,76 @@ out skel qt;
 
         # If place node exists (e.g. city/town node), resolve boundary via address parent or Overpass around
         if top_place_node and not _is_retry:
+            node_type = str(top_place_node.get("type", "")).lower()
+            is_village_node = (
+                node_type in ("village", "hamlet", "isolated_dwelling", "farm", "locality")
+                or place_type in ("village", "hamlet")
+                or "village" in name.lower()
+            )
             addr = top_place_node.get("address", {})
+
+            # For village/rural nodes: NEVER fall back to state_district (entire district)!
+            if is_village_node:
+                # 1. Try DataMeet village boundaries
+                try:
+                    from mcp_servers.datameet_server import datameet_server
+                    st_name = addr.get("state", "")
+                    dist_name = addr.get("state_district") or addr.get("county", "")
+                    clean_vname = name.lower().replace("village", "").strip()
+                    dm_feat = await datameet_server.lookup_village_boundary(
+                        village_name=clean_vname or name,
+                        state_name=st_name,
+                        district=dist_name,
+                    )
+                    if dm_feat:
+                        return dm_feat
+                except Exception:
+                    pass
+
+                # 2. Try Overpass specifically for village/census boundaries
+                try:
+                    n_lat = float(top_place_node.get("lat", 0))
+                    n_lon = float(top_place_node.get("lon", 0))
+                    if n_lat and n_lon:
+                        op_village_q = (
+                            f'[out:json][timeout:25];'
+                            f'('
+                            f'  relation(around:5000,{n_lat},{n_lon})["boundary"~"^(administrative|census)$"]["admin_level"~"^[89]|10$"];'
+                            f'  way(around:5000,{n_lat},{n_lon})["boundary"~"^(administrative|census)$"]["admin_level"~"^[89]|10$"];'
+                            f'  relation(around:5000,{n_lat},{n_lon})["place"~"^(village|hamlet)$"];'
+                            f'  way(around:5000,{n_lat},{n_lon})["place"~"^(village|hamlet)$"];'
+                            f');'
+                            f'out geom;'
+                        )
+                        around_feat = await self._overpass_boundary(op_village_q)
+                        if around_feat:
+                            return around_feat
+                except Exception:
+                    pass
+
+                # 3. If no polygon is mapped in OSM/DataMeet, return the village Point location (NOT the parent district!)
+                display = top_place_node.get("display_name", name)
+                n_lat = float(top_place_node.get("lat", 0))
+                n_lon = float(top_place_node.get("lon", 0))
+                return {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [n_lon, n_lat],
+                    },
+                    "properties": {
+                        "name": display.split(",")[0].strip() if display else name,
+                        "osm_id": top_place_node.get("osm_id"),
+                        "osm_type": "node",
+                        "place_type": "village",
+                        "district": addr.get("state_district") or addr.get("county"),
+                        "state": addr.get("state"),
+                        "is_point_fallback": True,
+                        "message": f"Found village centroid for '{name}' at [{round(n_lon, 5)}, {round(n_lat, 5)}] in {addr.get('state_district', '')}. Note: Official cadastral polygon is not mapped in OpenStreetMap or DataMeet.",
+                    },
+                }
+
+            # Only for non-village nodes (e.g. cities/towns), check parent candidates (e.g. Mohali Tahsil)
             for candidate in [addr.get("county"), addr.get("state_district")]:
                 if candidate:
                     clean_cand = candidate.replace(" Tahsil", "").replace(" District", "").strip()

@@ -357,7 +357,7 @@ SYSTEM_PROMPT = (
     "with dataset_ids, titles, and categories — call this first before importing), "
     "import_public_dataset (download and load a named dataset: national boundaries, states, districts, "
     "railway lines, stations, rivers, highways, urban agglomerations, etc.), "
-    "import_datameet_boundary (fetch state/district/village boundaries by administrative level).\n"
+    "import_datameet_boundary (fetch state, district, or individual village boundaries; for villages pass level='village', state='<state>', and village_name='<village>' to extract and display ONLY that specific village polygon).\n"
     "- Temporal Playback Timeline: "
     "set_timeline (display an interactive dark floating playback timeline scrubber on the map when the user requests temporal or multi-year data; pass title, start, end, steps, tool_name, and tool_args), "
     "close_timeline (dismiss/hide the timeline bar).\n\n"
@@ -556,6 +556,11 @@ SYSTEM_PROMPT = (
     "  - You MUST execute the initial layer tool (e.g. `get_surface_temperature_layer` or `get_land_cover` or `get_sentinel_layer` for the start or current year/date) AND call `set_timeline`.\n"
     "  - In `set_timeline`, set `start` and `end` matching the user's prompt (e.g. start='2018', end='2023'), generate `steps` (e.g. ['2018', '2019', '2020', '2021', '2022', '2023']), set `tool_name` to the GEE tool invoked, and provide `tool_args`.\n"
     "  - The interactive dark floating timeline scrubber will appear on the map allowing the user to play, scrub, and edit the date range.\n"
+    "40. VILLAGE & RURAL SETTLEMENT BOUNDARIES:\n"
+    "  - When the user asks to mark, show, or plot the boundary of a village, rural settlement, or rural locality (e.g. 'boundary of village X', 'plot village boundary'):\n"
+    "  - NEVER substitute, fetch, or mark the parent district or county boundary when a village is requested. A village is not a district.\n"
+    "  - For Indian rural areas and villages, use `import_datameet_boundary(level='village', state='<State Name or Code>', village_name='<Village Name>')` (or `district='<District>'` if known) to fetch and extract the exact cadastral village boundary polygon from the official boundaries dataset.\n"
+    "  - Or use `osm_boundary(name='<Village Name>', place_type='village')`. If no boundary polygon exists in official datasets or OSM, the system will mark the village's centroid with a pin and navigate there — NEVER plot the surrounding district.\n"
 )
 
 

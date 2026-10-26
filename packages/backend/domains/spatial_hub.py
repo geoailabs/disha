@@ -177,6 +177,21 @@ class SpatialHub(BaseDomainHub):
             geom = feats[0].get("geometry") if feats else None
 
             if geom:
+                if geom.get("type") == "Point":
+                    coords = geom.get("coordinates", [0, 0])
+                    summary = {
+                        "name": name,
+                        "type": "village_point",
+                        "centroid": {"lng": coords[0], "lat": coords[1]},
+                        "displayed_on_map": True,
+                        "message": feats[0].get("properties", {}).get("message") or f"Marked village location for '{name}' at [{round(coords[0], 5)}, {round(coords[1], 5)}].",
+                    }
+                    return ToolResult(
+                        status="success",
+                        data=summary,
+                        map_action={"action": "add_geojson", "payload": {"geojson": geojson, "name": label, "color": "#10b981"}},
+                    )
+
                 reg_res = spatial_registry.register_or_get(
                     name=label,
                     geometry=geom,
@@ -299,7 +314,11 @@ class SpatialHub(BaseDomainHub):
         if tool_name == "import_datameet_boundary":
             res = await self.datameet_server.execute(tool_name, {**args, **context})
             if "geojson" in res:
-                name = args.get("name") or "DataMeet boundary"
+                vname = res.get("village_name") or args.get("village_name")
+                if vname:
+                    name = f"Village — {vname}"
+                else:
+                    name = args.get("name") or "DataMeet boundary"
                 spatial_registry.register_or_get(name=name, geometry=res["geojson"], source="datameet")
                 summary = {k: v for k, v in res.items() if k != "geojson"}
                 summary["displayed_on_map"] = True
@@ -307,6 +326,15 @@ class SpatialHub(BaseDomainHub):
                     status="success",
                     data=summary,
                     map_action={"action": "add_geojson", "payload": {"geojson": res["geojson"], "name": name}},
+                )
+            if "path" in res and "geojson" not in res:
+                name = res.get("title") or args.get("name") or "DataMeet boundary"
+                summary = dict(res)
+                summary["displayed_on_map"] = True
+                return ToolResult(
+                    status="success",
+                    data=summary,
+                    map_action={"action": "add_geojson_file", "payload": {"path": res["path"], "name": name}},
                 )
             return ToolResult(status="success", data=res)
 
