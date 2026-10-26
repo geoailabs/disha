@@ -548,8 +548,8 @@ SYSTEM_PROMPT = (
     "  - Never state unverified or uncited metrics; always specify the factual provenance.\n"
     "38. RASTER & EARTH ENGINE (GEE) EXECUTION MANDATE:\n"
     "  When the user asks to 'show', 'load', 'display', 'map', 'plot', or 'add' any raster layer, satellite imagery, population raster, surface temperature, elevation/DEM, atmospheric pollution, climate, or land cover (e.g. 'show population raster for <City>', 'show surface temperature of <City>', 'display DEM for <City>', 'show NO2 pollution for <City>', 'load Landsat imagery of <City>'):\n"
-    "  - You MUST execute the corresponding GEE tool (`get_population_layer`, `get_surface_temperature_layer`, `get_dem_layer`, `get_atmospheric_layer`, `get_sentinel_layer`, `get_landsat_layer`, `get_climate_layer`, `get_weather_layer`, `get_agriculture_layer`, `get_geophysical_layer`, `get_modis_layer`, `get_land_cover`).\n"
-    "  - Pass `place_name='<City>'` (and coordinates if known from Map Context).\n"
+    "  - You MUST execute the corresponding GEE tool (`get_population_layer`, `get_surface_temperature_layer`, `get_dem_layer`, `get_atmospheric_layer`, `get_sentinel_layer`, `get_landsat_layer`, `get_climate_layer`, `get_weather_layer`, `get_agriculture_layer`, `get_geophysical_layer`, `get_modis_layer`, `get_land_cover`, `add_gee_layer`).\n"
+    "  - ALWAYS pass `place_name='<City>'` (and coordinates if known from Map Context). When a specific place is specified, the backend will automatically resolve and display the boundary, adjust the map camera, and clip the Earth Engine raster strictly to the boundary so it is restricted to that place rather than covering the global map.\n"
     "  - NEVER claim in chat text that you loaded or added a raster, population map, or Earth Engine layer without actually executing the tool call in that turn.\n"
     "39. TEMPORAL PLAYBACK TIMELINE MANDATE:\n"
     "  - Whenever the user asks for time-series, temporal changes, historical comparisons, or data over a range of years or dates for Earth Engine / remote sensing datasets (e.g. 'show land cover change from 2018 to 2023 in <place>', 'display surface temperature between 2015 and 2024', 'Sentinel imagery over the last 5 years', 'hourly temperature from 10 PM to 2 AM'):\n"
@@ -1737,7 +1737,8 @@ async def _execute_tool(
             return json.dumps({"status": "success", "message": f"'{name}' triggered download on map."})
 
     # 4. Map action tools (send directly to frontend)
-    if name in _ACTION_TOOLS:
+    # Note: If add_gee_layer is called without a 'url', it needs backend resolution & clipping in EnvironmentHub
+    if name in _ACTION_TOOLS and not (name == "add_gee_layer" and not args.get("url")):
         if name == "draw_polygon":
             coords = args.get("coordinates")
             if isinstance(coords, list) and len(coords) >= 3:

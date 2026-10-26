@@ -174,10 +174,115 @@ async def _ensure_gee(workspace: str | None = None) -> tuple[bool, str | None]:
     return ok, err
 
 
-def _sync_get_map_id(image_fn, vis_params: dict) -> tuple[str, str]:
+def _clean_geojson_coords(c: Any) -> Any:
+    """Recursively clean coordinates to [float(x), float(y)] 2D lists."""
+    if isinstance(c, (list, tuple)):
+        if len(c) >= 2 and isinstance(c[0], (int, float)) and isinstance(c[1], (int, float)):
+            return [round(float(c[0]), 6), round(float(c[1]), 6)]
+        return [_clean_geojson_coords(x) for x in c]
+    return c
+
+
+def _simplify_geom_if_needed(geom: dict, max_coords: int = 1500) -> dict:
+    """Ensure geometry has manageable coordinate count for GEE clipping without losing shape accuracy."""
+    try:
+        from shapely.geometry import shape, mapping
+        s = shape(geom)
+        coord_count = 0
+        if hasattr(s, "geoms"):
+            for p in s.geoms:
+                coord_count += len(p.exterior.coords) if hasattr(p, "exterior") else 0
+        elif hasattr(s, "exterior"):
+            coord_count += len(s.exterior.coords)
+        if coord_count > max_coords:
+            simplified = s.simplify(0.0005, preserve_topology=True)
+            return mapping(simplified)
+    except Exception:
+        pass
+    return geom
+
+
+def _geojson_to_ee_geometry(geojson_data: dict | None) -> Any:
+    """Convert GeoJSON FeatureCollection, Feature, or Geometry dict to an ee.Geometry."""
+    if not geojson_data or not isinstance(geojson_data, dict):
+        return None
+    try:
+        import ee
+        from shapely.geometry import shape, mapping
+        from shapely.ops import unary_union
+
+        gtype = geojson_data.get("type")
+        if gtype == "FeatureCollection":
+            features = geojson_data.get("features", [])
+            if not features:
+                return None
+            geoms = []
+            for f in features:
+                fg = f.get("geometry")
+                if fg:
+                    try:
+                        s = shape(fg)
+                        if not s.is_empty:
+                            if not s.is_valid:
+                                s = s.buffer(0)
+                            geoms.append(s)
+                    except Exception:
+                        pass
+            if not geoms:
+                return None
+            merged = unary_union(geoms) if len(geoms) > 1 else geoms[0]
+            geom_dict = mapping(merged)
+            geom_dict = _simplify_geom_if_needed(geom_dict)
+            clean_dict = {
+                "type": geom_dict["type"],
+                "coordinates": _clean_geojson_coords(geom_dict["coordinates"]),
+            }
+            return ee.Geometry(clean_dict)
+
+        elif gtype == "Feature":
+            fg = geojson_data.get("geometry")
+            if not fg:
+                return None
+            s = shape(fg)
+            if not s.is_valid:
+                s = s.buffer(0)
+            geom_dict = mapping(s)
+            geom_dict = _simplify_geom_if_needed(geom_dict)
+            clean_dict = {
+                "type": geom_dict["type"],
+                "coordinates": _clean_geojson_coords(geom_dict["coordinates"]),
+            }
+            return ee.Geometry(clean_dict)
+
+        elif gtype in ("Polygon", "MultiPolygon", "Point", "MultiPoint", "LineString", "MultiLineString", "GeometryCollection"):
+            s = shape(geojson_data)
+            if not s.is_valid:
+                s = s.buffer(0)
+            geom_dict = mapping(s)
+            geom_dict = _simplify_geom_if_needed(geom_dict)
+            clean_dict = {
+                "type": geom_dict["type"],
+                "coordinates": _clean_geojson_coords(geom_dict["coordinates"]),
+            }
+            return ee.Geometry(clean_dict)
+
+        elif "geometry" in geojson_data and isinstance(geojson_data["geometry"], dict):
+            return _geojson_to_ee_geometry(geojson_data["geometry"])
+
+    except Exception as exc:
+        logger.warning(f"Error converting geojson to ee.Geometry: {exc}")
+    return None
+
+
+def _sync_get_map_id(image_fn, vis_params: dict, ee_geom: Any = None) -> tuple[str, str]:
     """Call ee.data.getMapId in a thread. Returns (map_id, proxy_tile_url)."""
     import ee
     img = image_fn()
+    if ee_geom is not None:
+        try:
+            img = img.clip(ee_geom)
+        except Exception as clip_err:
+            logger.debug(f"Image clipping note in _sync_get_map_id: {clip_err}")
     if vis_params:
         valid_keys = {"bands", "min", "max", "gain", "bias", "gamma", "palette", "opacity", "forceRgbOutput"}
         clean_vis = {k: v for k, v in vis_params.items() if k in valid_keys}
@@ -302,18 +407,30 @@ class GEEServer:
     }
 
     def get_declarations(self) -> list[ToolDeclaration]:
+        place_param = {
+            "type": "string",
+            "description": "City or region name (e.g. 'City A', 'London'). When provided, the official boundary is fetched and the layer is strictly clipped to this place boundary.",
+        }
+        geojson_param = {
+            "type": "object",
+            "description": "Optional boundary polygon GeoJSON geometry or FeatureCollection to clip the layer strictly to.",
+        }
+
         return [
             ToolDeclaration(
                 name="add_gee_layer",
                 description=(
                     "Add any Google Earth Engine raster dataset to the map as a tiled layer. "
                     "Supports Sentinel-2, Landsat, SRTM, ESA WorldCover, ERA5, MODIS, and any other "
-                    "EE ImageCollection or Image. Applies cloud-free median compositing when dates are specified."
+                    "EE ImageCollection or Image. Applies cloud-free median compositing when dates are specified. "
+                    "When place_name or geojson is provided, the layer is strictly clipped to that boundary."
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
                         "dataset": {"type": "string", "description": "Earth Engine dataset ID (e.g. 'COPERNICUS/S2_SR_HARMONIZED', 'LANDSAT/LC09/C02/T1_L2', 'USGS/SRTMGL1_003')."},
+                        "place_name": place_param,
+                        "geojson": geojson_param,
                         "vis_params": {"type": "object", "description": "GEE visualization params (e.g. {\"min\":0,\"max\":3000,\"bands\":[\"B4\",\"B3\",\"B2\"]})."},
                         "date": {"type": "string", "description": "Year (e.g. '2023') or start date (YYYY-MM-DD) for collection filtering."},
                         "title": {"type": "string", "description": "Title label for the map layer panel."},
@@ -332,6 +449,8 @@ class GEEServer:
                 parameters={
                     "type": "object",
                     "properties": {
+                        "place_name": place_param,
+                        "geojson": geojson_param,
                         "source": {
                             "type": "string",
                             "enum": ["landsat", "modis", "era5_land"],
@@ -353,6 +472,8 @@ class GEEServer:
                 parameters={
                     "type": "object",
                     "properties": {
+                        "place_name": place_param,
+                        "geojson": geojson_param,
                         "source": {
                             "type": "string",
                             "enum": ["terraclimate", "era5_land", "worldclim", "chirps"],
@@ -378,6 +499,8 @@ class GEEServer:
                 parameters={
                     "type": "object",
                     "properties": {
+                        "place_name": place_param,
+                        "geojson": geojson_param,
                         "pollutant": {
                             "type": "string",
                             "enum": ["no2", "co", "so2", "o3", "aerosol_index", "formaldehyde", "methane", "modis_aod"],
@@ -397,6 +520,8 @@ class GEEServer:
                 parameters={
                     "type": "object",
                     "properties": {
+                        "place_name": place_param,
+                        "geojson": geojson_param,
                         "variable": {
                             "type": "string",
                             "enum": ["temperature_2m", "precipitation", "wind_speed", "solar_radiation"],
@@ -418,6 +543,8 @@ class GEEServer:
                 parameters={
                     "type": "object",
                     "properties": {
+                        "place_name": place_param,
+                        "geojson": geojson_param,
                         "satellite": {
                             "type": "string",
                             "enum": ["landsat_9", "landsat_8", "landsat_7", "landsat_5"],
@@ -445,6 +572,8 @@ class GEEServer:
                 parameters={
                     "type": "object",
                     "properties": {
+                        "place_name": place_param,
+                        "geojson": geojson_param,
                         "mission": {
                             "type": "string",
                             "enum": ["sentinel_2", "sentinel_1_sar"],
@@ -470,6 +599,8 @@ class GEEServer:
                 parameters={
                     "type": "object",
                     "properties": {
+                        "place_name": place_param,
+                        "geojson": geojson_param,
                         "source": {"type": "string", "enum": ["naip", "sentinel_10m"], "description": "Imagery source. Default 'naip'."},
                         "preset": {"type": "string", "enum": ["true_color", "color_infrared"], "description": "Preset for NAIP: 'true_color' (RGB) or 'color_infrared' (CIR)."},
                         "year": {"type": "integer", "description": "Year (default 2022)."},
@@ -488,6 +619,8 @@ class GEEServer:
                 parameters={
                     "type": "object",
                     "properties": {
+                        "place_name": place_param,
+                        "geojson": geojson_param,
                         "product": {
                             "type": "string",
                             "enum": ["reflectance", "ndvi_evi", "surface_temperature", "active_fires", "snow_cover", "burned_area", "land_cover"],
@@ -513,6 +646,8 @@ class GEEServer:
                 parameters={
                     "type": "object",
                     "properties": {
+                        "place_name": place_param,
+                        "geojson": geojson_param,
                         "source": {
                             "type": "string",
                             "enum": ["srtm", "copernicus", "nasadem", "alos"],
@@ -538,6 +673,8 @@ class GEEServer:
                 parameters={
                     "type": "object",
                     "properties": {
+                        "place_name": place_param,
+                        "geojson": geojson_param,
                         "source": {
                             "type": "string",
                             "enum": ["dynamic_world", "esa_worldcover", "modis_landcover", "copernicus_landcover"],
@@ -560,6 +697,8 @@ class GEEServer:
                 parameters={
                     "type": "object",
                     "properties": {
+                        "place_name": place_param,
+                        "geojson": geojson_param,
                         "indicator": {
                             "type": "string",
                             "enum": ["cropland_classes", "soil_moisture", "evapotranspiration", "crop_health_ndre", "crop_water_stress", "enhanced_vegetation_index"],
@@ -581,6 +720,8 @@ class GEEServer:
                 parameters={
                     "type": "object",
                     "properties": {
+                        "place_name": place_param,
+                        "geojson": geojson_param,
                         "dataset_type": {
                             "type": "string",
                             "enum": ["surface_water", "water_seasonality", "nighttime_lights", "forest_canopy_cover", "forest_loss", "active_fires"],
@@ -619,6 +760,7 @@ class GEEServer:
                     "type": "object",
                     "properties": {
                         "dataset": {"type": "string", "description": "Dataset ID (e.g. 'USGS/SRTMGL1_003', 'LANDSAT/LC09/C02/T1_L2', 'MODIS/061/MOD11A1')."},
+                        "place_name": place_param,
                         "band": {"type": "string", "description": "Band to analyze (e.g. 'elevation', 'ST_B10', 'LST_Day_1km', 'pr')."},
                         "geojson": {"type": "object", "description": "Optional boundary polygon GeoJSON."},
                         "lat": {"type": "number", "description": "Latitude for circular study area."},
@@ -639,7 +781,8 @@ class GEEServer:
                 parameters={
                     "type": "object",
                     "properties": {
-                        "place_name": {"type": "string", "description": "City or region name (e.g. 'Chandigarh', 'Delhi', 'London')."},
+                        "place_name": place_param,
+                        "geojson": geojson_param,
                         "source": {"type": "string", "enum": ["worldpop", "landscan", "gpw"], "description": "Dataset source (default 'worldpop')."},
                         "year": {"type": "integer", "description": "Year between 2000 and 2020 (default 2020)."},
                         "country_iso": {"type": "string", "description": "ISO-3 country code for WorldPop (e.g. 'IND', 'USA', 'GBR')."},
@@ -658,6 +801,8 @@ class GEEServer:
                 parameters={
                     "type": "object",
                     "properties": {
+                        "place_name": place_param,
+                        "geojson": geojson_param,
                         "year_start": {"type": "integer"},
                         "year_end": {"type": "integer"},
                         "title": {"type": "string"},
@@ -674,6 +819,7 @@ class GEEServer:
                 parameters={
                     "type": "object",
                     "properties": {
+                        "place_name": place_param,
                         "geojson": {"type": "object", "description": "GeoJSON polygon for study boundary."},
                         "lat": {"type": "number", "description": "Latitude for circular study area."},
                         "lng": {"type": "number", "description": "Longitude for circular study area."},
@@ -693,7 +839,7 @@ class GEEServer:
                     "type": "object",
                     "properties": {
                         "target_class": {"type": "string", "description": "The land cover class (e.g. 'Built Area', 'Trees', 'Water', 'Crops')."},
-                        "place_name": {"type": "string", "description": "City or region name to clip polygons to official boundary."},
+                        "place_name": place_param,
                         "geojson": {"type": "object", "description": "Optional boundary polygon GeoJSON."},
                         "color": {"type": "string", "description": "Layer colour."},
                         "lat": {"type": "number"},
@@ -713,6 +859,8 @@ class GEEServer:
                 parameters={
                     "type": "object",
                     "properties": {
+                        "place_name": place_param,
+                        "geojson": geojson_param,
                         "year": {"type": "integer"},
                         "title": {"type": "string"},
                     },
@@ -728,6 +876,8 @@ class GEEServer:
                     "type": "object",
                     "properties": {
                         "dataset": {"type": "string"},
+                        "place_name": place_param,
+                        "geojson": geojson_param,
                         "lat": {"type": "number"},
                         "lng": {"type": "number"},
                         "radius_meters": {"type": "number"},
@@ -792,22 +942,185 @@ class GEEServer:
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
-    async def _send_layer(self, ws, tile_url: str, dataset: str, vis_params: dict, title: str) -> None:
-        """Send add_gee_layer action over WebSocket if connected."""
+    async def _send_action(self, ws, action: str, payload: dict) -> None:
+        """Send a map action over WebSocket if connected."""
         if ws:
             try:
                 await ws.send_text(json.dumps({
                     "type": "action",
-                    "action": "add_gee_layer",
-                    "payload": {"url": tile_url, "dataset": dataset, "vis_params": vis_params, "title": title},
+                    "action": action,
+                    "payload": payload,
                 }))
             except Exception as _e:
-                logger.debug(f"Failed to send add_gee_layer over WS: {_e}")
+                logger.debug(f"Failed to send {action} over WS: {_e}")
 
-    async def _tile_proxy(self, image_fn, vis_params: dict) -> tuple[str, str]:
+    async def _send_layer(self, ws, tile_url: str, dataset: str, vis_params: dict, title: str) -> None:
+        """Send add_gee_layer action over WebSocket if connected."""
+        await self._send_action(ws, "add_gee_layer", {
+            "url": tile_url,
+            "dataset": dataset,
+            "vis_params": vis_params,
+            "title": title,
+        })
+
+    async def _tile_proxy(self, image_fn, vis_params: dict, ee_geom: Any = None) -> tuple[str, str]:
         """Run synchronous getMapId in thread pool → (map_id, proxy_tile_url)."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, _sync_get_map_id, image_fn, vis_params)
+        return await loop.run_in_executor(None, _sync_get_map_id, image_fn, vis_params, ee_geom)
+
+    async def _resolve_place_boundary(
+        self, args: dict
+    ) -> tuple[dict | None, Any, str | None, dict | None]:
+        """
+        Resolves boundary for a specific place if requested or present in args/context.
+        1. Checks explicit 'geojson' or 'place_name' in args (or aliases).
+        2. If place_name is provided, checks Central SpatialRegistry and active map layers.
+        3. If not found, fetches the official boundary polygon via OSMServer.
+        4. When a boundary is newly fetched, registers it in SpatialRegistry and dispatches
+           'add_geojson' and 'fit_bounds' to the map.
+        5. Converts the GeoJSON geometry to an ee.Geometry for Earth Engine clipping.
+        Returns: (boundary_geojson, ee_geom, matched_name, bbox_dict)
+        """
+        geojson_input = args.get("geojson")
+        place_name = (
+            args.get("place_name")
+            or args.get("city")
+            or args.get("location")
+            or args.get("study_area")
+            or args.get("boundary_name")
+            or args.get("boundary")
+            or args.get("place")
+            or ""
+        ).strip()
+        country_code = (args.get("country_code") or args.get("country_iso") or "").strip()
+        ws = args.get("_ws")
+        map_context = args.get("_map_context") or {}
+
+        # If place_name not explicitly set, check title for a place indicator (e.g. 'NDVI - Paris')
+        if not place_name and not geojson_input:
+            title = (args.get("title") or "").strip()
+            if " - " in title:
+                candidate = title.split(" - ")[-1].strip()
+                if candidate and len(candidate) > 2 and not candidate.isdigit():
+                    place_name = candidate
+
+        # If still no place_name or geojson, check if there is an active registered study area boundary
+        if not place_name and not geojson_input:
+            try:
+                from tools.spatial_registry import spatial_registry
+                active_polys = spatial_registry.list_polygons()
+                study_polys = [p for p in active_polys if p.get("source") in ("osm_boundary", "ai_draw", "user_draw")]
+                if len(study_polys) == 1:
+                    geojson_input = study_polys[0].get("geometry")
+                    place_name = study_polys[0].get("name")
+            except Exception:
+                pass
+
+        matched_name = place_name or None
+        bbox = None
+        centroid = None
+
+        # 1. If explicit GeoJSON provided, use it
+        if geojson_input:
+            if isinstance(geojson_input, str):
+                try:
+                    geojson_input = json.loads(geojson_input)
+                except Exception:
+                    pass
+            try:
+                from shapely.geometry import shape
+                s = shape(geojson_input if geojson_input.get("type") != "FeatureCollection" else geojson_input["features"][0]["geometry"])
+                minx, miny, maxx, maxy = s.bounds
+                bbox = {"west": round(minx, 6), "south": round(miny, 6), "east": round(maxx, 6), "north": round(maxy, 6)}
+                c = s.centroid
+                centroid = {"lat": round(c.y, 6), "lng": round(c.x, 6)}
+            except Exception:
+                pass
+
+        # 2. If place_name provided and no GeoJSON yet:
+        elif place_name:
+            # Check SpatialRegistry
+            try:
+                from tools.spatial_registry import spatial_registry
+                poly = spatial_registry.get_polygon(place_name)
+                if poly and poly.geometry:
+                    geojson_input = poly.geometry
+                    matched_name = poly.name
+                    bbox = poly.bbox
+                    centroid = poly.centroid
+            except Exception as _reg_err:
+                logger.debug(f"Spatial registry check failed: {_reg_err}")
+
+            # Check active map layers
+            if not geojson_input and map_context.get("layers"):
+                p_lower = place_name.lower().strip()
+                for layer in map_context["layers"]:
+                    lname = (layer.get("name") or "").lower().strip()
+                    if p_lower in lname or lname in p_lower:
+                        ldata = layer.get("data")
+                        if isinstance(ldata, dict) and ldata.get("features"):
+                            geojson_input = ldata
+                            matched_name = layer.get("name")
+                            break
+
+            # If still not found, fetch official boundary from OSM
+            if not geojson_input:
+                try:
+                    from mcp_servers.osm_server import OSMServer
+                    osm = OSMServer()
+                    b_res = await osm._fetch_boundary({
+                        "name": place_name,
+                        "country_code": country_code,
+                        "_map_context": map_context,
+                    })
+                    if isinstance(b_res, dict) and "geojson" in b_res:
+                        geojson_input = b_res["geojson"]
+                        matched_name = b_res.get("name") or place_name
+                        centroid = b_res.get("centroid")
+
+                        # Register in central spatial registry
+                        try:
+                            from tools.spatial_registry import spatial_registry
+                            spatial_registry.register_or_get(
+                                name=matched_name,
+                                geometry=geojson_input,
+                                source="osm_boundary",
+                            )
+                        except Exception as reg_exc:
+                            logger.warning(f"Failed to register boundary in spatial_registry: {reg_exc}")
+
+                        # Send boundary to map canvas so user sees the boundary polygon!
+                        boundary_title = f"{matched_name} Boundary"
+                        await self._send_action(ws, "add_geojson", {
+                            "geojson": geojson_input,
+                            "name": boundary_title,
+                            "color": "#3b82f6",
+                        })
+
+                        # Frame camera to the boundary
+                        try:
+                            from shapely.geometry import shape
+                            s = shape(geojson_input if geojson_input.get("type") != "FeatureCollection" else geojson_input["features"][0]["geometry"])
+                            minx, miny, maxx, maxy = s.bounds
+                            bbox = {"west": round(minx, 6), "south": round(miny, 6), "east": round(maxx, 6), "north": round(maxy, 6)}
+                            await self._send_action(ws, "fit_bounds", {
+                                "bounds": [bbox["west"], bbox["south"], bbox["east"], bbox["north"]],
+                            })
+                        except Exception:
+                            if centroid:
+                                await self._send_action(ws, "fly_to", {
+                                    "center": [centroid["lng"], centroid["lat"]],
+                                    "zoom": 12,
+                                })
+                except Exception as b_err:
+                    logger.warning(f"Could not auto-fetch boundary for '{place_name}': {b_err}")
+
+        # Convert to Earth Engine geometry
+        ee_geom = None
+        if geojson_input:
+            ee_geom = _geojson_to_ee_geometry(geojson_input)
+
+        return geojson_input, ee_geom, matched_name, bbox
 
     # ── 1. Universal GEE Layer ────────────────────────────────────────────────
 
@@ -815,12 +1128,18 @@ class GEEServer:
         dataset = args.get("dataset", "").strip()
         vis_params = args.get("vis_params") or {}
         date_str = args.get("date", "").strip()
-        title = args.get("title", "").strip() or f"{dataset}"
+        title = args.get("title", "").strip()
         ws = args.get("_ws")
         workspace = args.get("_workspace")
 
         if not dataset:
             return {"error": "dataset is required"}
+
+        b_geojson, ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
+        if not title:
+            title = f"{dataset} - {place_nm}" if place_nm else f"{dataset}"
+        elif place_nm and place_nm.lower() not in title.lower():
+            title = f"{title} - {place_nm}"
 
         ok, err = await _ensure_gee(workspace)
         if not ok:
@@ -835,6 +1154,11 @@ class GEEServer:
             def build_image():
                 if is_collection:
                     coll = ee.ImageCollection(dataset)
+                    if ee_geom is not None:
+                        try:
+                            coll = coll.filterBounds(ee_geom)
+                        except Exception:
+                            pass
                     if date_str:
                         start = f"{date_str}-01-01" if len(date_str) == 4 else date_str
                         end_yr = date_str.split("-")[0]
@@ -848,16 +1172,19 @@ class GEEServer:
                     return coll.median()
                 return ee.Image(dataset)
 
-            map_id, tile_url = await self._tile_proxy(build_image, final_vis)
+            map_id, tile_url = await self._tile_proxy(build_image, final_vis, ee_geom)
             await self._send_layer(ws, tile_url, dataset, final_vis, title)
             return {
                 "status": "success",
-                "message": f"GEE layer '{title}' added to map.",
+                "message": f"GEE layer '{title}' added to map" + (f" for {place_nm}." if place_nm else "."),
                 "tile_url": tile_url,
                 "map_id": map_id,
                 "dataset_id": dataset,
                 "vis": final_vis,
                 "layer_title": title,
+                "place_name": place_nm,
+                "clipped_to_boundary": bool(ee_geom),
+                "boundary_geojson": b_geojson if place_nm else None,
             }
 
         except Exception as exc:
@@ -873,6 +1200,11 @@ class GEEServer:
         title = args.get("title", "").strip()
         ws = args.get("_ws")
         workspace = args.get("_workspace")
+
+        b_geojson, ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
+        layer_title = title or (f"Surface Temperature ({source.title()} {year}) - {place_nm}" if place_nm else f"Surface Temperature ({source.title()} {year})")
+        if place_nm and place_nm.lower() not in layer_title.lower():
+            layer_title = f"{layer_title} - {place_nm}"
 
         ok, err = await _ensure_gee(workspace)
         if not ok:
@@ -897,6 +1229,11 @@ class GEEServer:
                         .filterDate(f"{year}-01-01", f"{year}-12-31")
                         .filter(ee.Filter.lt("CLOUD_COVER", 20))
                     )
+                    if ee_geom is not None:
+                        try:
+                            coll = coll.filterBounds(ee_geom)
+                        except Exception:
+                            pass
                     # Convert Landsat Thermal ST_B10 to Celsius
                     return (
                         coll.median()
@@ -909,6 +1246,11 @@ class GEEServer:
                 elif source == "modis":
                     dataset_id = "MODIS/061/MOD11A1"
                     coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                    if ee_geom is not None:
+                        try:
+                            coll = coll.filterBounds(ee_geom)
+                        except Exception:
+                            pass
                     # Convert MODIS Kelvin scale factor (0.02) to Celsius
                     return (
                         coll.select("LST_Day_1km")
@@ -920,12 +1262,16 @@ class GEEServer:
                 elif source == "era5_land":
                     dataset_id = "ECMWF/ERA5_LAND/HOURLY"
                     coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-06-01", f"{year}-08-31")
+                    if ee_geom is not None:
+                        try:
+                            coll = coll.filterBounds(ee_geom)
+                        except Exception:
+                            pass
                     return coll.select("skin_temperature").mean().subtract(273.15).rename("LST_Celsius")
                 else:
                     raise ValueError(f"Unknown source '{source}'. Use: landsat, modis, or era5_land.")
 
-            layer_title = title or f"Surface Temperature ({source.title()} {year})"
-            map_id, tile_url = await self._tile_proxy(build_lst, vis)
+            map_id, tile_url = await self._tile_proxy(build_lst, vis, ee_geom)
             dataset_id = "LANDSAT/LC09/C02/T1_L2" if source == "landsat" else ("MODIS/061/MOD11A1" if source == "modis" else "ECMWF/ERA5_LAND/HOURLY")
             await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
@@ -940,9 +1286,12 @@ class GEEServer:
                 "dataset_id": dataset_id,
                 "vis": vis,
                 "layer_title": layer_title,
+                "place_name": place_nm,
+                "clipped_to_boundary": bool(ee_geom),
+                "boundary_geojson": b_geojson if place_nm else None,
                 "message": (
-                    f"Surface temperature layer '{layer_title}' added to map. "
-                    f"Thermal scale: {min_temp}°C (blue) to {max_temp}°C (dark red). Useful for Urban Heat Island mapping."
+                    f"Surface temperature layer '{layer_title}' added to map" + (f" for {place_nm}." if place_nm else ".") +
+                    f" Thermal scale: {min_temp}°C (blue) to {max_temp}°C (dark red). Useful for Urban Heat Island mapping."
                 ),
             }
 
@@ -959,6 +1308,11 @@ class GEEServer:
         ws = args.get("_ws")
         workspace = args.get("_workspace")
 
+        b_geojson, ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
+        layer_title = title or (f"Climate: {variable.replace('_', ' ').title()} ({source.title()} {year}) - {place_nm}" if place_nm else f"Climate: {variable.replace('_', ' ').title()} ({source.title()} {year})")
+        if place_nm and place_nm.lower() not in layer_title.lower():
+            layer_title = f"{layer_title} - {place_nm}"
+
         ok, err = await _ensure_gee(workspace)
         if not ok:
             return {"error": err, "code": "upstream_unavailable"}
@@ -969,6 +1323,11 @@ class GEEServer:
             if source == "terraclimate":
                 dataset_id = "IDAHO_EPSCOR/TERRACLIMATE"
                 coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                if ee_geom is not None:
+                    try:
+                        coll = coll.filterBounds(ee_geom)
+                    except Exception:
+                        pass
                 if variable == "precipitation":
                     vis = {"min": 0, "max": 2000, "palette": ["ffffd9", "7fcdbb", "1d91c0", "081d58"]}
                     build_fn = lambda: coll.select("pr").sum().rename("annual_precipitation_mm")
@@ -993,6 +1352,11 @@ class GEEServer:
             elif source == "chirps":
                 dataset_id = "UCSB-CHG/CHIRPS/PENTAD"
                 coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                if ee_geom is not None:
+                    try:
+                        coll = coll.filterBounds(ee_geom)
+                    except Exception:
+                        pass
                 vis = {"min": 0, "max": 2500, "palette": ["ffffd9", "7fcdbb", "1d91c0", "081d58"]}
                 build_fn = lambda: coll.select("precipitation").sum().rename("annual_precipitation_mm")
                 unit = "mm/year"
@@ -1011,12 +1375,16 @@ class GEEServer:
             else:
                 dataset_id = "ECMWF/ERA5_LAND/HOURLY"
                 coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                if ee_geom is not None:
+                    try:
+                        coll = coll.filterBounds(ee_geom)
+                    except Exception:
+                        pass
                 vis = {"min": 0, "max": 2000, "palette": ["ffffd9", "7fcdbb", "1d91c0", "081d58"]}
                 build_fn = lambda: coll.select("total_precipitation").sum().multiply(1000).rename("precip_mm")
                 unit = "mm"
 
-            layer_title = title or f"Climate: {variable.replace('_', ' ').title()} ({source.title()} {year})"
-            map_id, tile_url = await self._tile_proxy(build_fn, vis)
+            map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
             await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
             return {
@@ -1030,7 +1398,10 @@ class GEEServer:
                 "dataset_id": dataset_id,
                 "vis": vis,
                 "layer_title": layer_title,
-                "message": f"Climate layer '{layer_title}' added to map.",
+                "place_name": place_nm,
+                "clipped_to_boundary": bool(ee_geom),
+                "boundary_geojson": b_geojson if place_nm else None,
+                "message": f"Climate layer '{layer_title}' added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 
         except Exception as exc:
@@ -1044,6 +1415,11 @@ class GEEServer:
         title = args.get("title", "").strip()
         ws = args.get("_ws")
         workspace = args.get("_workspace")
+
+        b_geojson, ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
+        layer_title = title or (f"Atmospheric: {pollutant.upper()} Concentration ({year}) - {place_nm}" if place_nm else f"Atmospheric: {pollutant.upper()} Concentration ({year})")
+        if place_nm and place_nm.lower() not in layer_title.lower():
+            layer_title = f"{layer_title} - {place_nm}"
 
         ok, err = await _ensure_gee(workspace)
         if not ok:
@@ -1099,10 +1475,14 @@ class GEEServer:
 
             def build_atmos():
                 coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                if ee_geom is not None:
+                    try:
+                        coll = coll.filterBounds(ee_geom)
+                    except Exception:
+                        pass
                 return coll.select(band).mean()
 
-            layer_title = title or f"Atmospheric: {pollutant.upper()} Concentration ({year})"
-            map_id, tile_url = await self._tile_proxy(build_atmos, vis)
+            map_id, tile_url = await self._tile_proxy(build_atmos, vis, ee_geom)
             await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
             return {
@@ -1115,7 +1495,10 @@ class GEEServer:
                 "dataset_id": dataset_id,
                 "vis": vis,
                 "layer_title": layer_title,
-                "message": f"Atmospheric pollution layer '{layer_title}' added to map.",
+                "place_name": place_nm,
+                "clipped_to_boundary": bool(ee_geom),
+                "boundary_geojson": b_geojson if place_nm else None,
+                "message": f"Atmospheric pollution layer '{layer_title}' added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 
         except Exception as exc:
@@ -1131,6 +1514,11 @@ class GEEServer:
         ws = args.get("_ws")
         workspace = args.get("_workspace")
 
+        b_geojson, ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
+        layer_title = title or (f"Weather: {variable.replace('_', ' ').title()} ({year}) - {place_nm}" if place_nm else f"Weather: {variable.replace('_', ' ').title()} ({year})")
+        if place_nm and place_nm.lower() not in layer_title.lower():
+            layer_title = f"{layer_title} - {place_nm}"
+
         ok, err = await _ensure_gee(workspace)
         if not ok:
             return {"error": err, "code": "upstream_unavailable"}
@@ -1140,6 +1528,11 @@ class GEEServer:
 
             dataset_id = "ECMWF/ERA5_LAND/HOURLY"
             coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-06-01", f"{year}-08-31")
+            if ee_geom is not None:
+                try:
+                    coll = coll.filterBounds(ee_geom)
+                except Exception:
+                    pass
 
             if variable == "temperature_2m":
                 vis = {"min": 0, "max": 42, "palette": ["0000ff", "00ffff", "ffff00", "ff7700", "ff0000"]}
@@ -1162,8 +1555,7 @@ class GEEServer:
                 build_fn = lambda: coll.select("surface_solar_radiation_downwards_hourly").mean().divide(3600).rename("solar_wm2")
                 unit = "W/m²"
 
-            layer_title = title or f"Weather: {variable.replace('_', ' ').title()} ({year})"
-            map_id, tile_url = await self._tile_proxy(build_fn, vis)
+            map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
             await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
             return {
@@ -1176,7 +1568,10 @@ class GEEServer:
                 "dataset_id": dataset_id,
                 "vis": vis,
                 "layer_title": layer_title,
-                "message": f"Weather layer '{layer_title}' added to map.",
+                "place_name": place_nm,
+                "clipped_to_boundary": bool(ee_geom),
+                "boundary_geojson": b_geojson if place_nm else None,
+                "message": f"Weather layer '{layer_title}' added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 
         except Exception as exc:
@@ -1192,6 +1587,11 @@ class GEEServer:
         title = args.get("title", "").strip()
         ws = args.get("_ws")
         workspace = args.get("_workspace")
+
+        b_geojson, ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
+        layer_title = title or (f"{sat.replace('_', ' ').title()} — {preset.replace('_', ' ').title()} ({year}) - {place_nm}" if place_nm else f"{sat.replace('_', ' ').title()} — {preset.replace('_', ' ').title()} ({year})")
+        if place_nm and place_nm.lower() not in layer_title.lower():
+            layer_title = f"{layer_title} - {place_nm}"
 
         ok, err = await _ensure_gee(workspace)
         if not ok:
@@ -1214,6 +1614,11 @@ class GEEServer:
                 .filterDate(f"{year}-01-01", f"{year}-12-31")
                 .filter(ee.Filter.lt("CLOUD_COVER", max_clouds))
             )
+            if ee_geom is not None:
+                try:
+                    coll = coll.filterBounds(ee_geom)
+                except Exception:
+                    pass
 
             if preset == "true_color":
                 bands = ["SR_B4", "SR_B3", "SR_B2"] if is_modern else ["SR_B3", "SR_B2", "SR_B1"]
@@ -1240,8 +1645,7 @@ class GEEServer:
                 red = "SR_B4" if is_modern else "SR_B3"
                 build_fn = lambda: coll.median().normalizedDifference([nir, red]).rename("NDVI")
 
-            layer_title = title or f"{sat.replace('_', ' ').title()} — {preset.replace('_', ' ').title()} ({year})"
-            map_id, tile_url = await self._tile_proxy(build_fn, vis)
+            map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
             await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
             return {
@@ -1254,7 +1658,10 @@ class GEEServer:
                 "dataset_id": dataset_id,
                 "vis": vis,
                 "layer_title": layer_title,
-                "message": f"Landsat imagery layer '{layer_title}' added to map.",
+                "place_name": place_nm,
+                "clipped_to_boundary": bool(ee_geom),
+                "boundary_geojson": b_geojson if place_nm else None,
+                "message": f"Landsat imagery layer '{layer_title}' added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 
         except Exception as exc:
@@ -1269,6 +1676,11 @@ class GEEServer:
         title = args.get("title", "").strip()
         ws = args.get("_ws")
         workspace = args.get("_workspace")
+
+        b_geojson, ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
+        layer_title = title or (f"{mission.replace('_', ' ').upper()} — {preset.replace('_', ' ').title()} ({year}) - {place_nm}" if place_nm else f"{mission.replace('_', ' ').upper()} — {preset.replace('_', ' ').title()} ({year})")
+        if place_nm and place_nm.lower() not in layer_title.lower():
+            layer_title = f"{layer_title} - {place_nm}"
 
         ok, err = await _ensure_gee(workspace)
         if not ok:
@@ -1285,6 +1697,11 @@ class GEEServer:
                     .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VV"))
                     .filterDate(f"{year}-01-01", f"{year}-12-31")
                 )
+                if ee_geom is not None:
+                    try:
+                        coll = coll.filterBounds(ee_geom)
+                    except Exception:
+                        pass
                 if preset == "sar_vh":
                     vis = {"min": -30, "max": -5, "palette": ["000000", "ffffff"]}
                     build_fn = lambda: coll.select("VH").median()
@@ -1302,6 +1719,11 @@ class GEEServer:
                     .filterDate(f"{year}-01-01", f"{year}-12-31")
                     .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 15))
                 )
+                if ee_geom is not None:
+                    try:
+                        coll = coll.filterBounds(ee_geom)
+                    except Exception:
+                        pass
                 if preset == "false_color_nir":
                     vis = {"bands": ["B8", "B4", "B3"], "min": 0, "max": 4000}
                     build_fn = lambda: coll.median()
@@ -1321,8 +1743,7 @@ class GEEServer:
                     vis = {"bands": ["B4", "B3", "B2"], "min": 0, "max": 3000}
                     build_fn = lambda: coll.median()
 
-            layer_title = title or f"{mission.replace('_', ' ').upper()} — {preset.replace('_', ' ').title()} ({year})"
-            map_id, tile_url = await self._tile_proxy(build_fn, vis)
+            map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
             await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
             return {
@@ -1335,7 +1756,10 @@ class GEEServer:
                 "dataset_id": dataset_id,
                 "vis": vis,
                 "layer_title": layer_title,
-                "message": f"Sentinel layer '{layer_title}' added to map.",
+                "place_name": place_nm,
+                "clipped_to_boundary": bool(ee_geom),
+                "boundary_geojson": b_geojson if place_nm else None,
+                "message": f"Sentinel layer '{layer_title}' added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 
         except Exception as exc:
@@ -1351,6 +1775,11 @@ class GEEServer:
         ws = args.get("_ws")
         workspace = args.get("_workspace")
 
+        b_geojson, ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
+        layer_title = title or (f"High-Res Imagery ({source.upper()} {year}) - {place_nm}" if place_nm else f"High-Res Imagery ({source.upper()} {year})")
+        if place_nm and place_nm.lower() not in layer_title.lower():
+            layer_title = f"{layer_title} - {place_nm}"
+
         ok, err = await _ensure_gee(workspace)
         if not ok:
             return {"error": err, "code": "upstream_unavailable"}
@@ -1361,6 +1790,11 @@ class GEEServer:
             if source == "naip":
                 dataset_id = "USDA/NAIP/DOQQ"
                 coll = ee.ImageCollection(dataset_id).filterDate(f"{year-1}-01-01", f"{year+1}-12-31")
+                if ee_geom is not None:
+                    try:
+                        coll = coll.filterBounds(ee_geom)
+                    except Exception:
+                        pass
                 if preset == "color_infrared":
                     vis = {"bands": ["N", "R", "G"], "min": 0, "max": 255}
                 else:
@@ -1370,12 +1804,16 @@ class GEEServer:
             else:
                 dataset_id = "COPERNICUS/S2_SR_HARMONIZED"
                 coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31").filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 10))
+                if ee_geom is not None:
+                    try:
+                        coll = coll.filterBounds(ee_geom)
+                    except Exception:
+                        pass
                 vis = {"bands": ["B4", "B3", "B2"], "min": 0, "max": 3000}
                 build_fn = lambda: coll.median()
                 desc = "10m European Space Agency Sentinel-2 optical"
 
-            layer_title = title or f"High-Res Imagery ({source.upper()} {year})"
-            map_id, tile_url = await self._tile_proxy(build_fn, vis)
+            map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
             await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
             return {
@@ -1388,7 +1826,10 @@ class GEEServer:
                 "dataset_id": dataset_id,
                 "vis": vis,
                 "layer_title": layer_title,
-                "message": f"High resolution imagery '{layer_title}' ({desc}) added to map.",
+                "place_name": place_nm,
+                "clipped_to_boundary": bool(ee_geom),
+                "boundary_geojson": b_geojson if place_nm else None,
+                "message": f"High resolution imagery '{layer_title}' ({desc}) added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 
         except Exception as exc:
@@ -1403,6 +1844,11 @@ class GEEServer:
         ws = args.get("_ws")
         workspace = args.get("_workspace")
 
+        b_geojson, ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
+        layer_title = title or (f"MODIS {product.replace('_', ' ').title()} ({year}) - {place_nm}" if place_nm else f"MODIS {product.replace('_', ' ').title()} ({year})")
+        if place_nm and place_nm.lower() not in layer_title.lower():
+            layer_title = f"{layer_title} - {place_nm}"
+
         ok, err = await _ensure_gee(workspace)
         if not ok:
             return {"error": err, "code": "upstream_unavailable"}
@@ -1414,46 +1860,80 @@ class GEEServer:
                 dataset_id = "MODIS/061/MOD09A1"
                 vis = {"bands": ["sur_refl_b01", "sur_refl_b04", "sur_refl_b03"], "min": -100, "max": 8000}
                 coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                if ee_geom is not None:
+                    try:
+                        coll = coll.filterBounds(ee_geom)
+                    except Exception:
+                        pass
                 build_fn = lambda: coll.median()
 
             elif product == "surface_temperature":
                 dataset_id = "MODIS/061/MOD11A1"
                 vis = {"min": 10, "max": 48, "palette": ["0000ff", "00ffff", "ffff00", "ff7700", "ff0000"]}
                 coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                if ee_geom is not None:
+                    try:
+                        coll = coll.filterBounds(ee_geom)
+                    except Exception:
+                        pass
                 build_fn = lambda: coll.select("LST_Day_1km").mean().multiply(0.02).subtract(273.15)
 
             elif product == "active_fires":
                 dataset_id = "FIRMS"
                 vis = {"min": 0, "max": 1, "palette": ["ffff00", "ff0000"]}
                 coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                if ee_geom is not None:
+                    try:
+                        coll = coll.filterBounds(ee_geom)
+                    except Exception:
+                        pass
                 build_fn = lambda: coll.select("T21").max().gt(300)
 
             elif product == "snow_cover":
                 dataset_id = "MODIS/061/MOD10A1"
                 vis = {"bands": ["NDSI_Snow_Cover"], "min": 0, "max": 100, "palette": ["000000", "00ffff", "ffffff"]}
                 coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                if ee_geom is not None:
+                    try:
+                        coll = coll.filterBounds(ee_geom)
+                    except Exception:
+                        pass
                 build_fn = lambda: coll.select("NDSI_Snow_Cover").max()
 
             elif product == "burned_area":
                 dataset_id = "MODIS/061/MCD64A1"
                 vis = {"bands": ["BurnDate"], "min": 1, "max": 366, "palette": ["ffff00", "ff7700", "ff0000"]}
                 coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                if ee_geom is not None:
+                    try:
+                        coll = coll.filterBounds(ee_geom)
+                    except Exception:
+                        pass
                 build_fn = lambda: coll.select("BurnDate").max()
 
             elif product == "land_cover":
                 dataset_id = "MODIS/061/MCD12Q1"
                 vis = {"bands": ["LC_Type1"], "min": 1, "max": 17}
                 coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                if ee_geom is not None:
+                    try:
+                        coll = coll.filterBounds(ee_geom)
+                    except Exception:
+                        pass
                 build_fn = lambda: coll.select("LC_Type1").first()
 
             else:
                 dataset_id = "MODIS/061/MOD13Q1"
                 vis = {"min": 0.0, "max": 0.85, "palette": ["ffffff", "ce7e45", "df923d", "f1b555", "fcd163", "99b718", "74a901", "66a000", "529400", "3e8601", "207401", "056201", "004c00"]}
                 coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                if ee_geom is not None:
+                    try:
+                        coll = coll.filterBounds(ee_geom)
+                    except Exception:
+                        pass
                 build_fn = lambda: coll.select("NDVI").median().multiply(0.0001)
 
-            layer_title = title or f"MODIS {product.replace('_', ' ').title()} ({year})"
-            map_id, tile_url = await self._tile_proxy(build_fn, vis)
+            map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
             await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
             return {
@@ -1465,7 +1945,10 @@ class GEEServer:
                 "dataset_id": dataset_id,
                 "vis": vis,
                 "layer_title": layer_title,
-                "message": f"MODIS layer '{layer_title}' added to map.",
+                "place_name": place_nm,
+                "clipped_to_boundary": bool(ee_geom),
+                "boundary_geojson": b_geojson if place_nm else None,
+                "message": f"MODIS layer '{layer_title}' added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 
         except Exception as exc:
@@ -1480,6 +1963,11 @@ class GEEServer:
         title = args.get("title", "").strip()
         ws = args.get("_ws")
         workspace = args.get("_workspace")
+
+        b_geojson, ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
+        layer_title = title or (f"DEM ({source.upper()} {mode.title()}) - {place_nm}" if place_nm else f"DEM ({source.upper()} {mode.title()})")
+        if place_nm and place_nm.lower() not in layer_title.lower():
+            layer_title = f"{layer_title} - {place_nm}"
 
         ok, err = await _ensure_gee(workspace)
         if not ok:
@@ -1535,8 +2023,7 @@ class GEEServer:
                     return ee.Terrain.aspect(dem_band)
                 return dem_band
 
-            layer_title = title or f"DEM ({source.upper()} {mode.title()})"
-            map_id, tile_url = await self._tile_proxy(build_terrain, vis)
+            map_id, tile_url = await self._tile_proxy(build_terrain, vis, ee_geom)
             await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
             return {
@@ -1548,7 +2035,10 @@ class GEEServer:
                 "map_id": map_id,
                 "vis": vis,
                 "layer_title": layer_title,
-                "message": f"Terrain layer '{layer_title}' ({mode}) added to map.",
+                "place_name": place_nm,
+                "clipped_to_boundary": bool(ee_geom),
+                "boundary_geojson": b_geojson if place_nm else None,
+                "message": f"Terrain layer '{layer_title}' ({mode}) added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 
         except Exception as exc:
@@ -1563,6 +2053,11 @@ class GEEServer:
         ws = args.get("_ws")
         workspace = args.get("_workspace")
 
+        b_geojson, ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
+        layer_title = title or (f"Land Cover ({source.replace('_', ' ').title()} {year}) - {place_nm}" if place_nm else f"Land Cover ({source.replace('_', ' ').title()} {year})")
+        if place_nm and place_nm.lower() not in layer_title.lower():
+            layer_title = f"{layer_title} - {place_nm}"
+
         ok, err = await _ensure_gee(workspace)
         if not ok:
             return {"error": err, "code": "upstream_unavailable"}
@@ -1575,7 +2070,15 @@ class GEEServer:
                 dw_classes = ["Water", "Trees", "Grass", "Flooded Vegetation", "Crops", "Shrub & Scrub", "Built Area", "Bare Ground", "Snow & Ice"]
                 vis = {"min": 0, "max": 8, "palette": dw_palette, "palette_labels": dw_classes}
                 dataset_id = "GOOGLE/DYNAMICWORLD/V1"
-                build_fn = lambda: ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31").select("label").mode()
+                def dw_fn():
+                    coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                    if ee_geom is not None:
+                        try:
+                            coll = coll.filterBounds(ee_geom)
+                        except Exception:
+                            pass
+                    return coll.select("label").mode()
+                build_fn = dw_fn
 
             elif source == "esa_worldcover":
                 yr_map = {2020: "ESA/WorldCover/v100/2020", 2021: "ESA/WorldCover/v200/2021"}
@@ -1588,15 +2091,26 @@ class GEEServer:
             elif source == "modis_landcover":
                 dataset_id = "MODIS/061/MCD12Q1"
                 vis = {"bands": ["LC_Type1"], "min": 1, "max": 17}
-                build_fn = lambda: ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31").select("LC_Type1").first()
+                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                if ee_geom is not None:
+                    try:
+                        coll = coll.filterBounds(ee_geom)
+                    except Exception:
+                        pass
+                build_fn = lambda: coll.select("LC_Type1").first()
 
             else:
                 dataset_id = "COPERNICUS/Landcover/100m/Proba-V-C3/Global"
                 vis = {"bands": ["discrete_classification"], "min": 0, "max": 200}
-                build_fn = lambda: ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31").select("discrete_classification").first()
+                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                if ee_geom is not None:
+                    try:
+                        coll = coll.filterBounds(ee_geom)
+                    except Exception:
+                        pass
+                build_fn = lambda: coll.select("discrete_classification").first()
 
-            layer_title = title or f"Land Cover ({source.replace('_', ' ').title()} {year})"
-            map_id, tile_url = await self._tile_proxy(build_fn, vis)
+            map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
             await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
             return {
@@ -1608,7 +2122,10 @@ class GEEServer:
                 "dataset_id": dataset_id,
                 "vis": vis,
                 "layer_title": layer_title,
-                "message": f"Land cover layer '{layer_title}' added to map.",
+                "place_name": place_nm,
+                "clipped_to_boundary": bool(ee_geom),
+                "boundary_geojson": b_geojson if place_nm else None,
+                "message": f"Land cover layer '{layer_title}' added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 
         except Exception as exc:
@@ -1623,6 +2140,11 @@ class GEEServer:
         ws = args.get("_ws")
         workspace = args.get("_workspace")
 
+        b_geojson, ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
+        layer_title = title or (f"Agriculture: {indicator.replace('_', ' ').title()} ({year}) - {place_nm}" if place_nm else f"Agriculture: {indicator.replace('_', ' ').title()} ({year})")
+        if place_nm and place_nm.lower() not in layer_title.lower():
+            layer_title = f"{layer_title} - {place_nm}"
+
         ok, err = await _ensure_gee(workspace)
         if not ok:
             return {"error": err, "code": "upstream_unavailable"}
@@ -1633,25 +2155,48 @@ class GEEServer:
             if indicator == "cropland_classes":
                 dataset_id = "USDA/NASS/CDL"
                 vis = {"bands": ["cropland"], "min": 1, "max": 254}
-                build_fn = lambda: ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31").first().select("cropland")
+                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                if ee_geom is not None:
+                    try:
+                        coll = coll.filterBounds(ee_geom)
+                    except Exception:
+                        pass
+                build_fn = lambda: coll.first().select("cropland")
                 desc = "USDA NASS Cropland Data Layer 30m detailed crop types"
 
             elif indicator == "soil_moisture":
                 dataset_id = "NASA_USDA/HSL/SMAP10KM_soil_moisture"
                 vis = {"min": 0, "max": 25, "palette": ["f7fcb9", "addd8e", "41ab5d", "006837", "081d58"]}
-                build_fn = lambda: ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31").select("ssm").mean()
+                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                if ee_geom is not None:
+                    try:
+                        coll = coll.filterBounds(ee_geom)
+                    except Exception:
+                        pass
+                build_fn = lambda: coll.select("ssm").mean()
                 desc = "NASA-USDA SMAP 10km Surface Soil Moisture (mm)"
 
             elif indicator == "evapotranspiration":
                 dataset_id = "MODIS/061/MOD16A2"
                 vis = {"min": 0, "max": 250, "palette": ["ffffff", "a6bddb", "3690c0", "02818a"]}
-                build_fn = lambda: ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31").select("ET").mean().multiply(0.1)
+                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                if ee_geom is not None:
+                    try:
+                        coll = coll.filterBounds(ee_geom)
+                    except Exception:
+                        pass
+                build_fn = lambda: coll.select("ET").mean().multiply(0.1)
                 desc = "MODIS 500m 8-Day Evapotranspiration"
 
             elif indicator == "crop_health_ndre":
                 dataset_id = "COPERNICUS/S2_SR_HARMONIZED"
                 vis = {"min": 0, "max": 0.6, "palette": ["d73027", "fdae61", "ffffbf", "a6d96a", "1a9850"]}
                 coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31").filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 15))
+                if ee_geom is not None:
+                    try:
+                        coll = coll.filterBounds(ee_geom)
+                    except Exception:
+                        pass
                 build_fn = lambda: coll.median().normalizedDifference(["B8", "B5"]).rename("NDRE")
                 desc = "Sentinel-2 Normalized Difference Red Edge (chlorophyll & nitrogen vigor)"
 
@@ -1659,6 +2204,11 @@ class GEEServer:
                 dataset_id = "COPERNICUS/S2_SR_HARMONIZED"
                 vis = {"min": -0.3, "max": 0.5, "palette": ["a50026", "f46d43", "ffffbf", "74add1", "313695"]}
                 coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31").filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 15))
+                if ee_geom is not None:
+                    try:
+                        coll = coll.filterBounds(ee_geom)
+                    except Exception:
+                        pass
                 build_fn = lambda: coll.median().normalizedDifference(["B8", "B11"]).rename("NDWI")
                 desc = "Sentinel-2 NDWI Canopy Water Stress"
 
@@ -1666,7 +2216,13 @@ class GEEServer:
                 dataset_id = "COPERNICUS/S2_SR_HARMONIZED"
                 vis = {"min": 0, "max": 1, "palette": ["ffffff", "ce7e45", "ffff00", "228B22", "006400"]}
                 def evi_fn():
-                    s2 = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31").filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 15)).median()
+                    c = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31").filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 15))
+                    if ee_geom is not None:
+                        try:
+                            c = c.filterBounds(ee_geom)
+                        except Exception:
+                            pass
+                    s2 = c.median()
                     nir = s2.select("B8").multiply(0.0001)
                     red = s2.select("B4").multiply(0.0001)
                     blue = s2.select("B2").multiply(0.0001)
@@ -1674,8 +2230,7 @@ class GEEServer:
                 build_fn = evi_fn
                 desc = "Sentinel-2 Enhanced Vegetation Index (EVI)"
 
-            layer_title = title or f"Agriculture: {indicator.replace('_', ' ').title()} ({year})"
-            map_id, tile_url = await self._tile_proxy(build_fn, vis)
+            map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
             await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
             return {
@@ -1688,7 +2243,10 @@ class GEEServer:
                 "dataset_id": dataset_id,
                 "vis": vis,
                 "layer_title": layer_title,
-                "message": f"Agricultural layer '{layer_title}' ({desc}) added to map.",
+                "place_name": place_nm,
+                "clipped_to_boundary": bool(ee_geom),
+                "boundary_geojson": b_geojson if place_nm else None,
+                "message": f"Agricultural layer '{layer_title}' ({desc}) added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 
         except Exception as exc:
@@ -1702,6 +2260,11 @@ class GEEServer:
         title = args.get("title", "").strip()
         ws = args.get("_ws")
         workspace = args.get("_workspace")
+
+        b_geojson, ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
+        layer_title = title or (f"Geophysical: {dataset_type.replace('_', ' ').title()} ({year}) - {place_nm}" if place_nm else f"Geophysical: {dataset_type.replace('_', ' ').title()} ({year})")
+        if place_nm and place_nm.lower() not in layer_title.lower():
+            layer_title = f"{layer_title} - {place_nm}"
 
         ok, err = await _ensure_gee(workspace)
         if not ok:
@@ -1720,6 +2283,11 @@ class GEEServer:
                 dataset_id = "NOAA/VIIRS/DNB/MONTHLY_V1/VCMSLCFG"
                 vis = {"bands": ["avg_rad"], "min": 0, "max": 60, "palette": ["000000", "111133", "224488", "ffff77", "ffffff"]}
                 coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                if ee_geom is not None:
+                    try:
+                        coll = coll.filterBounds(ee_geom)
+                    except Exception:
+                        pass
                 build_fn = lambda: coll.select("avg_rad").median()
                 desc = "NOAA VIIRS Nighttime Lights DNB Radiance"
 
@@ -1739,6 +2307,11 @@ class GEEServer:
                 dataset_id = "FIRMS"
                 vis = {"min": 0, "max": 1, "palette": ["ffff00", "ff0000"]}
                 coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                if ee_geom is not None:
+                    try:
+                        coll = coll.filterBounds(ee_geom)
+                    except Exception:
+                        pass
                 build_fn = lambda: coll.select("T21").max().gt(300)
                 desc = "NASA FIRMS Active Thermal Fire Hotspots"
 
@@ -1748,8 +2321,7 @@ class GEEServer:
                 build_fn = lambda: ee.Image(dataset_id).select("occurrence")
                 desc = "JRC Global Surface Water Occurrence (0-100%)"
 
-            layer_title = title or f"Geophysical: {dataset_type.replace('_', ' ').title()} ({year})"
-            map_id, tile_url = await self._tile_proxy(build_fn, vis)
+            map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
             await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
             return {
@@ -1762,7 +2334,10 @@ class GEEServer:
                 "dataset_id": dataset_id,
                 "vis": vis,
                 "layer_title": layer_title,
-                "message": f"Geophysical layer '{layer_title}' ({desc}) added to map.",
+                "place_name": place_nm,
+                "clipped_to_boundary": bool(ee_geom),
+                "boundary_geojson": b_geojson if place_nm else None,
+                "message": f"Geophysical layer '{layer_title}' ({desc}) added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 
         except Exception as exc:
@@ -1843,6 +2418,8 @@ class GEEServer:
         if not dataset:
             return {"error": "dataset parameter is required"}
 
+        b_geojson, ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
+
         ok, err = await _ensure_gee(workspace)
         if not ok:
             return {"error": err, "code": "upstream_unavailable"}
@@ -1853,15 +2430,22 @@ class GEEServer:
             default_vis, is_collection = _get_dataset_defaults(dataset)
 
             def run_stats():
-                if geojson_input:
-                    ee_geom = ee.Geometry(geojson_input.get("geometry", geojson_input))
-                elif lat is not None and lng is not None:
-                    ee_geom = ee.Geometry.Point([float(lng), float(lat)]).buffer(radius_km * 1000.0)
-                else:
-                    ee_geom = ee.Geometry.Point([76.7794, 30.7333]).buffer(5000)
+                stats_geom = ee_geom
+                if stats_geom is None:
+                    if geojson_input:
+                        stats_geom = ee.Geometry(geojson_input.get("geometry", geojson_input))
+                    elif lat is not None and lng is not None:
+                        stats_geom = ee.Geometry.Point([float(lng), float(lat)]).buffer(radius_km * 1000.0)
+                    else:
+                        stats_geom = ee.Geometry.Point([76.7794, 30.7333]).buffer(5000)
 
                 if is_collection:
                     coll = ee.ImageCollection(dataset).filterDate(f"{year}-01-01", f"{year}-12-31")
+                    if stats_geom is not None:
+                        try:
+                            coll = coll.filterBounds(stats_geom)
+                        except Exception:
+                            pass
                     img = coll.median()
                 else:
                     img = ee.Image(dataset)
@@ -1874,7 +2458,7 @@ class GEEServer:
                     ).combine(
                         ee.Reducer.stdDev(), sharedInputs=True
                     ),
-                    geometry=ee_geom,
+                    geometry=stats_geom,
                     scale=100,
                     maxPixels=1e9,
                 ).getInfo()
@@ -1890,7 +2474,10 @@ class GEEServer:
                 "band": band or "all",
                 "year": year,
                 "statistics": res,
-                "message": f"Zonal statistics for '{dataset}' calculated successfully.",
+                "place_name": place_nm,
+                "clipped_to_boundary": bool(ee_geom),
+                "boundary_geojson": b_geojson if place_nm else None,
+                "message": f"Zonal statistics for '{dataset}' calculated successfully" + (f" for {place_nm}." if place_nm else "."),
             }
 
         except Exception as exc:
@@ -1949,21 +2536,16 @@ class GEEServer:
         source = args.get("source", "worldpop").strip().lower()
         year = int(args.get("year") or 2020)
         country_iso = (args.get("country_iso") or "").upper().strip()
-        place_name = (
-            args.get("place_name")
-            or args.get("city")
-            or args.get("location")
-            or args.get("study_area")
-            or ""
-        ).strip()
         lat = args.get("lat")
         lng = args.get("lng")
         title = args.get("title", "").strip()
         ws = args.get("_ws")
         workspace = args.get("_workspace")
 
+        b_geojson, ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
+
         if not country_iso:
-            country_iso = self._infer_country_iso(args, place_name, lat, lng)
+            country_iso = self._infer_country_iso(args, place_nm or "", lat, lng)
 
         ok, err = await _ensure_gee(workspace)
         if not ok:
@@ -1986,6 +2568,11 @@ class GEEServer:
                     coll = ee.ImageCollection("WorldPop/GP/100m/pop").filter(ee.Filter.eq("year", yr))
                     if country_iso:
                         coll = coll.filter(ee.Filter.eq("country", country_iso))
+                    if ee_geom is not None:
+                        try:
+                            coll = coll.filterBounds(ee_geom)
+                        except Exception:
+                            pass
                     raw_img = coll.mosaic()
                     colored = raw_img.visualize(min=1, max=100, palette=palette)
                     # Mask out zeros / unpopulated agricultural lands so basemap shows through cleanly
@@ -1993,13 +2580,21 @@ class GEEServer:
                 else:
                     valid_years = [2000, 2005, 2010, 2015, 2020]
                     yr = min(valid_years, key=lambda y: abs(y - year))
-                    raw_img = ee.ImageCollection("CIESIN/GPWv411/GPW_Population_Density").filterDate(f"{yr}-01-01", f"{yr}-12-31").first()
+                    coll = ee.ImageCollection("CIESIN/GPWv411/GPW_Population_Density").filterDate(f"{yr}-01-01", f"{yr}-12-31")
+                    if ee_geom is not None:
+                        try:
+                            coll = coll.filterBounds(ee_geom)
+                        except Exception:
+                            pass
+                    raw_img = coll.first()
                     colored = raw_img.visualize(min=5, max=500, palette=palette)
                     return colored.updateMask(raw_img.gt(1.0))
 
-            layer_title = title or (f"Population Density – {place_name} ({year})" if place_name else f"Population Density ({source.title()} {year})")
+            layer_title = title or (f"Population Density – {place_nm} ({year})" if place_nm else f"Population Density ({source.title()} {year})")
+            if place_nm and place_nm.lower() not in layer_title.lower():
+                layer_title = f"{layer_title} - {place_nm}"
             dataset_id = "WorldPop/GP/100m/pop" if source == "worldpop" else "CIESIN/GPWv411/GPW_Population_Density"
-            map_id, tile_url = await self._tile_proxy(build_pop, {})
+            map_id, tile_url = await self._tile_proxy(build_pop, {}, ee_geom)
             await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
             return {
@@ -2007,13 +2602,15 @@ class GEEServer:
                 "source": source,
                 "year": year,
                 "country_iso": country_iso or "global",
-                "place_name": place_name,
+                "place_name": place_nm,
+                "clipped_to_boundary": bool(ee_geom),
+                "boundary_geojson": b_geojson if place_nm else None,
                 "tile_url": tile_url,
                 "map_id": map_id,
                 "dataset_id": dataset_id,
                 "vis": vis,
                 "layer_title": layer_title,
-                "message": f"Population density layer '{layer_title}' added to map.",
+                "message": f"Population density layer '{layer_title}' added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 
         except Exception as exc:
@@ -2022,12 +2619,18 @@ class GEEServer:
     async def _analyze_lulc_change(self, args: dict) -> dict:
         year_start = int(args.get("year_start", 2018))
         year_end = int(args.get("year_end", 2023))
-        title = args.get("title", "").strip() or f"LULC Change {year_start}→{year_end}"
+        title = args.get("title", "").strip()
         ws = args.get("_ws")
         workspace = args.get("_workspace")
 
         if year_start >= year_end:
             return {"error": "year_start must be less than year_end"}
+
+        b_geojson, ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
+        if not title:
+            title = f"LULC Change {year_start}→{year_end}" + (f" - {place_nm}" if place_nm else "")
+        elif place_nm and place_nm.lower() not in title.lower():
+            title = f"{title} - {place_nm}"
 
         ok, err = await _ensure_gee(workspace)
         if not ok:
@@ -2044,30 +2647,50 @@ class GEEServer:
             }
 
             def build_changed():
-                lc_start = ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1").filterDate(f"{year_start}-01-01", f"{year_start}-12-31").select("label").mode()
-                lc_end = ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1").filterDate(f"{year_end}-01-01", f"{year_end}-12-31").select("label").mode()
+                c_start = ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1").filterDate(f"{year_start}-01-01", f"{year_start}-12-31")
+                c_end = ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1").filterDate(f"{year_end}-01-01", f"{year_end}-12-31")
+                if ee_geom is not None:
+                    try:
+                        c_start = c_start.filterBounds(ee_geom)
+                        c_end = c_end.filterBounds(ee_geom)
+                    except Exception:
+                        pass
+                lc_start = c_start.select("label").mode()
+                lc_end = c_end.select("label").mode()
                 return lc_start.neq(lc_end).rename("changed")
 
             def build_transition():
-                lc_start = ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1").filterDate(f"{year_start}-01-01", f"{year_start}-12-31").select("label").mode()
-                lc_end = ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1").filterDate(f"{year_end}-01-01", f"{year_end}-12-31").select("label").mode()
+                c_start = ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1").filterDate(f"{year_start}-01-01", f"{year_start}-12-31")
+                c_end = ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1").filterDate(f"{year_end}-01-01", f"{year_end}-12-31")
+                if ee_geom is not None:
+                    try:
+                        c_start = c_start.filterBounds(ee_geom)
+                        c_end = c_end.filterBounds(ee_geom)
+                    except Exception:
+                        pass
+                lc_start = c_start.select("label").mode()
+                lc_end = c_end.select("label").mode()
                 changed = lc_start.neq(lc_end)
                 return lc_start.multiply(10).add(lc_end).updateMask(changed)
 
             loop = asyncio.get_event_loop()
-            _, changed_url = await loop.run_in_executor(None, _sync_get_map_id, build_changed, changed_vis)
-            _, transition_url = await loop.run_in_executor(None, _sync_get_map_id, build_transition, transition_vis)
+            _, changed_url = await loop.run_in_executor(None, _sync_get_map_id, build_changed, changed_vis, ee_geom)
+            _, transition_url = await loop.run_in_executor(None, _sync_get_map_id, build_transition, transition_vis, ee_geom)
 
-            await self._send_layer(ws, changed_url, "GOOGLE/DYNAMICWORLD/V1", changed_vis, f"Changed Areas {year_start}→{year_end}")
+            changed_title = f"Changed Areas {year_start}→{year_end}" + (f" - {place_nm}" if place_nm else "")
+            await self._send_layer(ws, changed_url, "GOOGLE/DYNAMICWORLD/V1", changed_vis, changed_title)
             await self._send_layer(ws, transition_url, "GOOGLE/DYNAMICWORLD/V1", transition_vis, title)
 
             return {
                 "status": "success",
                 "year_start": year_start,
                 "year_end": year_end,
+                "place_name": place_nm,
+                "clipped_to_boundary": bool(ee_geom),
+                "boundary_geojson": b_geojson if place_nm else None,
                 "layers_added": 2,
                 "tile_url": transition_url,
-                "message": f"LULC change layers added: (1) changed mask, (2) class transition map {year_start}→{year_end}.",
+                "message": f"LULC change layers added" + (f" for {place_nm}:" if place_nm else ":") + f" (1) changed mask, (2) class transition map {year_start}→{year_end}.",
             }
 
         except Exception as exc:
@@ -2075,9 +2698,15 @@ class GEEServer:
 
     async def _get_ndvi_layer(self, args: dict) -> dict:
         year = int(args.get("year") or 2023)
-        title = args.get("title", "").strip() or f"NDVI {year}"
+        title = args.get("title", "").strip()
         ws = args.get("_ws")
         workspace = args.get("_workspace")
+
+        b_geojson, ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
+        if not title:
+            title = f"NDVI {year}" + (f" - {place_nm}" if place_nm else "")
+        elif place_nm and place_nm.lower() not in title.lower():
+            title = f"{title} - {place_nm}"
 
         ok, err = await _ensure_gee(workspace)
         if not ok:
@@ -2094,18 +2723,25 @@ class GEEServer:
                     ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
                     .filterDate(f"{year}-01-01", f"{year}-12-31")
                     .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 10))
-                    .select(["B8", "B4"])
-                    .median()
                 )
+                if ee_geom is not None:
+                    try:
+                        s2 = s2.filterBounds(ee_geom)
+                    except Exception:
+                        pass
+                s2 = s2.select(["B8", "B4"]).median()
                 return s2.normalizedDifference(["B8", "B4"]).rename("NDVI")
 
-            map_id, tile_url = await self._tile_proxy(build_ndvi, vis)
+            map_id, tile_url = await self._tile_proxy(build_ndvi, vis, ee_geom)
             await self._send_layer(ws, tile_url, "COPERNICUS/S2_SR_HARMONIZED", vis, title)
 
             return {
                 "status": "success",
                 "year": year,
                 "index": "NDVI",
+                "place_name": place_nm,
+                "clipped_to_boundary": bool(ee_geom),
+                "boundary_geojson": b_geojson if place_nm else None,
                 "tile_url": tile_url,
                 "map_id": map_id,
                 "dataset_id": "COPERNICUS/S2_SR_HARMONIZED",
@@ -2117,7 +2753,7 @@ class GEEServer:
                     "0.3 – 0.5": "Moderate vegetation (agriculture, parks)",
                     "> 0.5": "Dense vegetation / forest",
                 },
-                "message": f"NDVI layer '{title}' added to map.",
+                "message": f"NDVI layer '{title}' added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 
         except Exception as exc:
@@ -2134,6 +2770,8 @@ class GEEServer:
         if not dataset:
             return {"error": "dataset is required"}
 
+        b_geojson, ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
+
         ok, err = await _ensure_gee(workspace)
         if not ok:
             return {"error": err, "code": "upstream_unavailable"}
@@ -2145,35 +2783,48 @@ class GEEServer:
 
             def build_and_sample():
                 if is_collection:
-                    img = ee.ImageCollection(dataset).filterBounds(ee.Geometry.Point([lng, lat])).median()
+                    coll = ee.ImageCollection(dataset)
+                    if ee_geom is not None:
+                        try:
+                            coll = coll.filterBounds(ee_geom)
+                        except Exception:
+                            pass
+                    elif lat != 0 or lng != 0:
+                        coll = coll.filterBounds(ee.Geometry.Point([lng, lat]))
+                    img = coll.median()
                 else:
                     img = ee.Image(dataset)
 
-                map_id, tile_url = _sync_get_map_id(lambda: img, default_vis)
+                map_id, tile_url = _sync_get_map_id(lambda: img, default_vis, ee_geom)
 
-                point = ee.Geometry.Point([lng, lat])
-                try:
-                    sample = img.sample(point, 30).first().toDictionary().getInfo()
-                except Exception:
-                    sample = {}
+                sample = {}
+                if lat != 0 or lng != 0:
+                    point = ee.Geometry.Point([lng, lat])
+                    try:
+                        sample = img.sample(point, 30).first().toDictionary().getInfo()
+                    except Exception:
+                        sample = {}
 
                 return map_id, tile_url, sample
 
             loop = asyncio.get_event_loop()
             map_id, tile_url, sample = await loop.run_in_executor(None, build_and_sample)
 
-            title = f"{dataset.split('/')[-1]} — pixel sample"
+            title = f"{dataset.split('/')[-1]}" + (f" - {place_nm}" if place_nm else " — pixel sample")
             await self._send_layer(ws, tile_url, dataset, default_vis, title)
 
             return {
                 "status": "success",
                 "dataset": dataset,
                 "pixel_values": sample,
+                "place_name": place_nm,
+                "clipped_to_boundary": bool(ee_geom),
+                "boundary_geojson": b_geojson if place_nm else None,
                 "tile_url": tile_url,
                 "map_id": map_id,
                 "vis": default_vis,
                 "layer_title": title,
-                "message": f"Layer '{title}' added to map. Pixel values at ({lat:.4f}, {lng:.4f}): {sample}",
+                "message": f"Layer '{title}' added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 
         except Exception as exc:
@@ -2186,6 +2837,8 @@ class GEEServer:
         radius_km = float(args.get("radius_km") or 5.0)
         year = int(args.get("year") or 2023)
         workspace = args.get("_workspace")
+
+        b_geojson, resolved_ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
 
         dw_classes = [
             "Water", "Trees", "Grass", "Flooded Vegetation",
@@ -2202,6 +2855,7 @@ class GEEServer:
                 "status": "partial_fallback",
                 "message": f"GEE credentials not active ({err}). Displaying standard Dynamic World class schema for {year}.",
                 "classes": {str(i): {"name": name, "color": color} for i, (name, color) in enumerate(zip(dw_classes, dw_colors))},
+                "place_name": place_nm,
                 "note": "Configure GEE credentials in workspace root (ee-service-account.json) for live pixel-reduction zonal stats."
             }
 
@@ -2209,19 +2863,22 @@ class GEEServer:
             import ee
 
             def run_zonal():
-                if geojson_input:
-                    ee_geom = ee.Geometry(geojson_input.get("geometry", geojson_input))
-                elif lat is not None and lng is not None:
-                    ee_geom = ee.Geometry.Point([float(lng), float(lat)]).buffer(radius_km * 1000.0)
-                else:
-                    ee_geom = ee.Geometry.Point([76.7794, 30.7333]).buffer(5000)
+                ee_geom = resolved_ee_geom
+                if ee_geom is None:
+                    if geojson_input:
+                        ee_geom = _geojson_to_ee_geometry(geojson_input)
+                    elif lat is not None and lng is not None:
+                        ee_geom = ee.Geometry.Point([float(lng), float(lat)]).buffer(radius_km * 1000.0)
+                    else:
+                        ee_geom = ee.Geometry.Point([76.7794, 30.7333]).buffer(5000)
 
-                img = (
-                    ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1")
-                    .filterDate(f"{year}-01-01", f"{year}-12-31")
-                    .select("label")
-                    .mode()
-                )
+                coll = ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1").filterDate(f"{year}-01-01", f"{year}-12-31")
+                if ee_geom is not None:
+                    try:
+                        coll = coll.filterBounds(ee_geom)
+                    except Exception:
+                        pass
+                img = coll.select("label").mode()
 
                 area_img = ee.Image.pixelArea().addBands(img)
                 stats = area_img.reduceRegion(
@@ -2276,8 +2933,11 @@ class GEEServer:
                 "year": year,
                 "source": "Google Dynamic World V1 (10m resolution)",
                 "zonal_analysis": res,
+                "place_name": place_nm,
+                "clipped_to_boundary": bool(resolved_ee_geom),
+                "boundary_geojson": b_geojson if place_nm else None,
                 "message": (
-                    f"Zonal land-use analysis complete for {year}. "
+                    f"Zonal land-use analysis complete for {year}" + (f" ({place_nm})" if place_nm else "") + ". "
                     f"Total Area: {res['total_area_km2']} km². Dominant Land Use: {res['dominant_land_use']}."
                 ),
             }
@@ -2306,6 +2966,12 @@ class GEEServer:
         year = int(args.get("year") or 2023)
         ws = args.get("_ws")
         workspace = args.get("_workspace")
+
+        b_geojson, resolved_ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
+        if b_geojson and not geojson_input:
+            geojson_input = b_geojson
+        if place_nm and not place_name:
+            place_name = place_nm
 
         dw_classes = [
             "water", "trees", "grass", "flooded vegetation",
@@ -2347,21 +3013,6 @@ class GEEServer:
         else:
             class_color = dw_colors[target_idx] if 0 <= target_idx < len(dw_colors) else "#C4281B"
 
-        if not geojson_input and place_name:
-            try:
-                from tools.spatial_registry import spatial_registry
-                poly = spatial_registry.get_polygon(place_name)
-                if poly and poly.geometry:
-                    geojson_input = poly.geometry
-                else:
-                    from mcp_servers.osm_server import OSMServer
-                    osm = OSMServer()
-                    b_res = await osm._fetch_boundary({"name": place_name})
-                    if isinstance(b_res, dict) and "geojson" in b_res:
-                        geojson_input = b_res["geojson"]
-            except Exception as b_err:
-                logger.warning(f"Could not auto-fetch boundary for '{place_name}': {b_err}")
-
         ok, err = await _ensure_gee(workspace)
         if not ok:
             return {"error": f"GEE credentials required to extract vector polygons: {err}", "code": "upstream_unavailable"}
@@ -2369,24 +3020,15 @@ class GEEServer:
         try:
             import ee
 
-            geom_data = None
-            if geojson_input:
-                geom_data = geojson_input
-                if isinstance(geom_data, dict):
-                    if geom_data.get("type") == "FeatureCollection" and geom_data.get("features"):
-                        geom_data = geom_data["features"][0].get("geometry", geom_data)
-                    elif geom_data.get("type") == "Feature" and "geometry" in geom_data:
-                        geom_data = geom_data["geometry"]
-                    elif "geometry" in geom_data and isinstance(geom_data["geometry"], dict):
-                        geom_data = geom_data["geometry"]
-
             def run_vectorize():
-                if geom_data:
-                    ee_geom = ee.Geometry(geom_data)
-                elif lat is not None and lng is not None:
-                    ee_geom = ee.Geometry.Point([float(lng), float(lat)]).buffer(radius_km * 1000.0)
-                else:
-                    ee_geom = ee.Geometry.Point([76.7794, 30.7333]).buffer(3000)
+                ee_geom = resolved_ee_geom
+                if ee_geom is None:
+                    if geojson_input:
+                        ee_geom = _geojson_to_ee_geometry(geojson_input)
+                    elif lat is not None and lng is not None:
+                        ee_geom = ee.Geometry.Point([float(lng), float(lat)]).buffer(radius_km * 1000.0)
+                    else:
+                        ee_geom = ee.Geometry.Point([76.7794, 30.7333]).buffer(3000)
 
                 img = (
                     ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1")

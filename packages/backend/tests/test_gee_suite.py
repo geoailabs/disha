@@ -257,3 +257,90 @@ def test_step_layer_endpoint_validation():
     assert res.status_code == 400
     assert "tool_name is required" in res.json()["detail"]
 
+
+@pytest.mark.asyncio
+async def test_gee_boundary_resolution_from_geojson(gee_server):
+    """Verify that _resolve_place_boundary handles explicit GeoJSON input correctly."""
+    sample_poly = {
+        "type": "Polygon",
+        "coordinates": [
+            [[76.7, 30.7], [76.8, 30.7], [76.8, 30.8], [76.7, 30.8], [76.7, 30.7]]
+        ]
+    }
+    b_geojson, ee_geom, matched_name, bbox = await gee_server._resolve_place_boundary({
+        "geojson": sample_poly,
+        "place_name": "Test Study Area",
+    })
+    assert b_geojson is not None
+    assert matched_name == "Test Study Area"
+    assert bbox is not None
+    assert bbox["west"] == 76.7
+    assert bbox["south"] == 30.7
+    assert bbox["east"] == 76.8
+    assert bbox["north"] == 30.8
+
+
+@pytest.mark.asyncio
+async def test_gee_boundary_resolution_from_osm_mock(gee_server, monkeypatch):
+    """Verify that when place_name is provided, _resolve_place_boundary fetches and registers OSM boundary."""
+    from mcp_servers.osm_server import OSMServer
+    from tools.spatial_registry import spatial_registry
+
+    mock_geojson = {
+        "type": "Polygon",
+        "coordinates": [
+            [[10.0, 20.0], [10.5, 20.0], [10.5, 20.5], [10.0, 20.5], [10.0, 20.0]]
+        ]
+    }
+
+    async def mock_fetch_boundary(self, args):
+        return {
+            "name": args.get("name"),
+            "geojson": mock_geojson,
+            "centroid": {"lat": 20.25, "lng": 10.25},
+        }
+
+    monkeypatch.setattr(OSMServer, "_fetch_boundary", mock_fetch_boundary)
+
+    b_geojson, ee_geom, matched_name, bbox = await gee_server._resolve_place_boundary({
+        "place_name": "Metropolis Alpha",
+    })
+
+    assert b_geojson == mock_geojson
+    assert matched_name == "Metropolis Alpha"
+    assert bbox["west"] == 10.0
+    assert bbox["north"] == 20.5
+
+    # Check that spatial registry recorded it
+    poly = spatial_registry.get_polygon("Metropolis Alpha")
+    assert poly is not None
+    assert poly.source == "osm_boundary"
+
+
+def test_gee_declarations_have_boundary_parameters(gee_server):
+    """Ensure that all GEE tool declarations include place_name and geojson parameters for boundary clipping."""
+    decls = {d.name: d for d in gee_server.get_declarations()}
+    tools_to_check = [
+        "add_gee_layer",
+        "get_surface_temperature_layer",
+        "get_climate_layer",
+        "get_atmospheric_layer",
+        "get_weather_layer",
+        "get_landsat_layer",
+        "get_sentinel_layer",
+        "get_high_resolution_imagery",
+        "get_modis_layer",
+        "get_dem_layer",
+        "get_land_cover",
+        "get_agriculture_layer",
+        "get_geophysical_layer",
+        "get_population_layer",
+        "get_ndvi_layer",
+    ]
+    for t in tools_to_check:
+        assert t in decls, f"Tool {t} missing from declarations"
+        params = decls[t].parameters.get("properties", {})
+        assert "place_name" in params, f"Tool {t} missing 'place_name' parameter in declaration"
+        assert "geojson" in params, f"Tool {t} missing 'geojson' parameter in declaration"
+
+

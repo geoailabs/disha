@@ -377,7 +377,8 @@ async def execute_disha_tool(
         }
 
     # 3. Action Tools dispatch
-    if name in _ACTION_TOOLS:
+    # Note: If add_gee_layer is called without a 'url', it needs backend resolution & clipping in EnvironmentHub
+    if name in _ACTION_TOOLS and not (name == "add_gee_layer" and not args.get("url")):
         if name == "draw_polygon":
             coords = args.get("coordinates")
             if isinstance(coords, list) and len(coords) >= 3:
