@@ -1309,7 +1309,9 @@ app.whenReady().then(async () => {
     try {
       if (!app.isInApplicationsFolder()) {
         const moved = app.moveToApplicationsFolder({
-          conflictHandler: () => true
+          // Replace a stale copy, but do not resolve a conflict while an older
+          // copy is running. That is what leads to Disha 2.app / Disha 3.app.
+          conflictHandler: (conflictType) => conflictType === 'exists'
         })
         if (moved) {
           // The app was moved to /Applications and relaunched; terminate this instance early.

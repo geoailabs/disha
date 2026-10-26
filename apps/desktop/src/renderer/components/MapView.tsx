@@ -209,6 +209,10 @@ function lineColorExpression(layer: GeoJSONLayer): ColorExpr {
   return dataDrivenColor(layer.styleSpec, 'strokeColor', layer.styleSpec?.strokeColor ?? layer.lineColor ?? layer.color)
 }
 
+function isAiMarkerLayer(layer: GeoJSONLayer): boolean {
+  return layer.groupName?.toLowerCase() === 'ai markers'
+}
+
 function fillOpacityValue(layer: GeoJSONLayer): number {
   return layer.styleSpec?.opacity ?? layer.opacity ?? 0.5
 }
@@ -967,11 +971,11 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
           ],
           paint: {
             'circle-color': fillColorExpression(layer),
-            'circle-radius': 6,
-            'circle-opacity': (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5) * opacityMultiplier,
+            'circle-radius': isAiMarkerLayer(layer) ? 8 : 6,
+            'circle-opacity': (isAiMarkerLayer(layer) ? 1 : (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5)) * opacityMultiplier,
             'circle-stroke-color': lineColorExpression(layer),
-            'circle-stroke-width': layer.styleSpec?.lineWidth ?? layer.lineWidth ?? 1.5,
-            'circle-stroke-opacity': (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5) * opacityMultiplier,
+            'circle-stroke-width': isAiMarkerLayer(layer) ? 2.5 : (layer.styleSpec?.lineWidth ?? layer.lineWidth ?? 1.5),
+            'circle-stroke-opacity': (isAiMarkerLayer(layer) ? 1 : (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5)) * opacityMultiplier,
           },
           layout: { visibility: layer.visible ? 'visible' : 'none' },
         })
@@ -1088,10 +1092,11 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
           }
           if (map.getLayer(`${layer.id}-circle`)) {
             map.setPaintProperty(`${layer.id}-circle`, 'circle-color', fillColorExpression(layer))
-            map.setPaintProperty(`${layer.id}-circle`, 'circle-opacity', (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5) * opacityMultiplier)
+            map.setPaintProperty(`${layer.id}-circle`, 'circle-radius', isAiMarkerLayer(layer) ? 8 : 6)
+            map.setPaintProperty(`${layer.id}-circle`, 'circle-opacity', (isAiMarkerLayer(layer) ? 1 : (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5)) * opacityMultiplier)
             map.setPaintProperty(`${layer.id}-circle`, 'circle-stroke-color', lineColorExpression(layer))
-            map.setPaintProperty(`${layer.id}-circle`, 'circle-stroke-width', layer.styleSpec?.lineWidth ?? layer.lineWidth ?? 1.5)
-            map.setPaintProperty(`${layer.id}-circle`, 'circle-stroke-opacity', (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5) * opacityMultiplier)
+            map.setPaintProperty(`${layer.id}-circle`, 'circle-stroke-width', isAiMarkerLayer(layer) ? 2.5 : (layer.styleSpec?.lineWidth ?? layer.lineWidth ?? 1.5))
+            map.setPaintProperty(`${layer.id}-circle`, 'circle-stroke-opacity', (isAiMarkerLayer(layer) ? 1 : (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5)) * opacityMultiplier)
           }
           // Labels: re-apply field/size/color and visibility (gated by enabled +
           // feature cap, AND the layer's own visibility).
