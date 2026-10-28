@@ -771,28 +771,57 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       })
       for (const layer of labelLayers) {
         const labelSpec = layer.styleSpec?.label
-        // Labels already enabled in MapLibre are present in the canvas. Add a
-        // fallback only for layers without an enabled label style to avoid
-        // drawing duplicate text in exports.
-        if (labelSpec?.enabled && labelSpec.property) continue
-        const featureLimit = Math.min(layer.data.features.length, 40)
+        const isPointMarkerLayer =
+          layer.name.toLowerCase().includes('marker') ||
+          layer.name.toLowerCase().includes('terminal') ||
+          layer.name.toLowerCase().includes('stops') ||
+          layer.name.toLowerCase().includes('waypoints') ||
+          layer.name.toLowerCase().includes('isbt')
+
+        // Only export labels if explicitly enabled by user/agent style or for dedicated point markers
+        const shouldLabel = Boolean(labelSpec?.enabled && labelSpec.property) || isPointMarkerLayer
+        if (!shouldLabel) continue
+
+        const targetProperty = labelSpec?.enabled && labelSpec.property ? labelSpec.property : null
+        const featureLimit = Math.min(layer.data.features.length, 25)
+
         for (const feature of layer.data.features.slice(0, featureLimit)) {
+          // Never draw centroid labels on line strings (routes, roads, contours) in exports
+          const geomType = feature.geometry?.type
+          if (geomType === 'LineString' || geomType === 'MultiLineString') {
+            continue
+          }
+
           const props = feature.properties || {}
-          const property = ['label', 'name', 'title', 'display_name', 'address']
-            .find((key) => props[key] != null && String(props[key]).trim())
+          const property =
+            targetProperty ||
+            ['label', 'name', 'title', 'display_name', 'address'].find(
+              (key) => props[key] != null && String(props[key]).trim(),
+            )
           if (!property || !feature.geometry) continue
+
           try {
             const point = turf.pointOnFeature(feature as any)
             const projected = map.project(point.geometry.coordinates as [number, number])
-            if (projected.x < 4 || projected.y < 4 || projected.x > map.getCanvas().width / (window.devicePixelRatio || 1) - 4 || projected.y > map.getCanvas().height / (window.devicePixelRatio || 1) - 4) continue
-            const text = String(props[property]).trim().replace(/\s+/g, ' ')
-            if (text) exportLabels.push({ text: text.slice(0, 64), x: projected.x, y: projected.y, color: layer.lineColor || layer.color })
+            const canvasW = map.getCanvas().width / (window.devicePixelRatio || 1)
+            const canvasH = map.getCanvas().height / (window.devicePixelRatio || 1)
+            if (projected.x < 12 || projected.y < 12 || projected.x > canvasW - 12 || projected.y > canvasH - 12) continue
+
+            const rawText = String(props[property]).trim().replace(/\s+/g, ' ')
+            if (rawText) {
+              exportLabels.push({
+                text: rawText.slice(0, 36),
+                x: projected.x,
+                y: projected.y,
+                color: labelSpec?.color || layer.lineColor || layer.color,
+              })
+            }
           } catch {
             // Ignore malformed feature geometry or coordinates.
           }
-          if (exportLabels.length >= 120) break
+          if (exportLabels.length >= 25) break
         }
-        if (exportLabels.length >= 120) break
+        if (exportLabels.length >= 25) break
       }
 
       // Restore camera view and layer visibility immediately after all export
