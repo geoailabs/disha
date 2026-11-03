@@ -96,6 +96,7 @@ class EnvironmentHub(BaseDomainHub):
                 return ToolResult(status="error", error=res.get("error", "GEE execution error"), data=res)
 
             map_action = None
+            layers_sent_directly = bool(context.get("_ws") and res.get("layers_added", 1) > 1)
             target_cls = (
                 res.get("target_class")
                 or res.get("product")
@@ -128,15 +129,20 @@ class EnvironmentHub(BaseDomainHub):
                         "color": color,
                     },
                 }
-            elif res.get("tile_url"):
+            elif res.get("tile_url") and not layers_sent_directly:
+                gee_payload = {
+                    "url": res["tile_url"],
+                    "dataset": res.get("dataset_id") or res.get("dataset", ""),
+                    "vis_params": res.get("vis") or res.get("vis_params", {}),
+                    "title": display_title,
+                }
+                if res.get("bbox"):
+                    gee_payload["bbox"] = res["bbox"]
+                if res.get("centroid"):
+                    gee_payload["centroid"] = res["centroid"]
                 map_action = {
                     "action": "add_gee_layer",
-                    "payload": {
-                        "url": res["tile_url"],
-                        "dataset": res.get("dataset_id") or res.get("dataset", ""),
-                        "vis_params": res.get("vis") or res.get("vis_params", {}),
-                        "title": display_title,
-                    },
+                    "payload": gee_payload,
                 }
 
             # Proactively emit set_timeline if temporal range was specified in args or result

@@ -34,6 +34,19 @@ from llm.base import ToolDeclaration
 
 logger = logging.getLogger(__name__)
 
+_MODIS_IGBP_PALETTE = [
+    "05450a", "086a10", "54a708", "78d203", "009900", "c6b044", "dcd159",
+    "dade48", "fbff13", "b6ff05", "27ff87", "c24f44", "a5a5a5", "ff6d4c",
+    "69fff8", "f9ffa4", "1c0dff",
+]
+_MODIS_IGBP_LABELS = [
+    "Evergreen Needleleaf Forest", "Evergreen Broadleaf Forest", "Deciduous Needleleaf Forest",
+    "Deciduous Broadleaf Forest", "Mixed Forests", "Closed Shrublands", "Open Shrublands",
+    "Woody Savannas", "Savannas", "Grasslands", "Permanent Wetlands", "Croplands",
+    "Urban and Built-up Lands", "Cropland/Natural Vegetation Mosaics", "Permanent Snow and Ice",
+    "Barren", "Water Bodies",
+]
+
 # ── Process-level GEE init cache ─────────────────────────────────────────────
 _EE_READY: bool | None = None
 _EE_ERROR: str | None = None
@@ -341,15 +354,46 @@ def _get_dataset_defaults(dataset: str) -> tuple[dict, bool]:
             "palette": ["419BDF", "397D49", "88B053", "7A87C6", "E49635", "DFC35A", "C4281B", "A59B8F", "B39FE1"],
         }, True
     if "mcd12q1" in d:
-        return {"bands": ["LC_Type1"], "min": 1, "max": 17}, True
+        return {
+            "bands": ["LC_Type1"],
+            "min": 1,
+            "max": 17,
+            "palette": _MODIS_IGBP_PALETTE,
+            "palette_labels": _MODIS_IGBP_LABELS,
+        }, True
 
     # 5. Population
     if "worldpop" in d or "landscan" in d or "gpw" in d:
         return {"min": 0, "max": 500, "palette": ["ffffe5", "f7fcb9", "addd8e", "31a354", "006837", "ff0000"]}, False
 
-    # 6. Surface Temperature (LST)
-    if "mod11a1" in d or "myd11a1" in d:
-        return {"bands": ["LST_Day_1km"], "min": 13000, "max": 16500, "palette": ["0000ff", "00ffff", "ffff00", "ff7700", "ff0000"]}, True
+    # 6. MODIS collections (generic fallback for any MODIS asset ID)
+    if "modis" in d or any(token in d for token in [
+        "mod09a1", "mod10a1", "mod11a1", "myd11a1", "mcd12q1", "mod13q1", "mod14a1",
+        "mcd64a1", "mod16a2", "mcd19a2", "mod15a2h", "mod17a2h", "mod21a2", "mod21a2d"
+    ]):
+        if "mod13q1" in d:
+            return {"bands": ["NDVI"], "min": 0, "max": 8000, "palette": ["ffffff", "ce7e45", "df923d", "f1b555", "fcd163", "99b718", "74a901", "66a000", "529400", "3e8601", "207401", "056201", "004c00"]}, True
+        if "mod14a1" in d:
+            return {"bands": ["FireMask"], "min": 0, "max": 7, "palette": ["000000", "ffff00", "ff0000"]}, True
+        if "mod09a1" in d:
+            return {"bands": ["sur_refl_b01", "sur_refl_b04", "sur_refl_b03"], "min": -100, "max": 8000}, True
+        if "mcd64a1" in d:
+            return {"bands": ["BurnDate"], "min": 1, "max": 366, "palette": ["ffff00", "ff7700", "ff0000"]}, True
+        if "mod16a2" in d:
+            return {"bands": ["ET_500m"], "min": 0, "max": 400, "palette": ["f7fcf0", "bae4bc", "7bccc4", "2b8cbe", "084081"]}, True
+        if "mcd19a2" in d:
+            return {"bands": ["Optical_Depth_047"], "min": 0, "max": 1.0, "palette": ["000000", "00ff00", "ffff00", "ff0000"]}, True
+        if "mod10a1" in d:
+            return {"bands": ["NDSI_Snow_Cover"], "min": 0, "max": 100, "palette": ["000000", "00ffff", "ffffff"]}, True
+        if "mcd12q1" in d:
+            return {
+                "bands": ["LC_Type1"],
+                "min": 1,
+                "max": 17,
+                "palette": _MODIS_IGBP_PALETTE,
+                "palette_labels": _MODIS_IGBP_LABELS,
+            }, True
+        return {"bands": ["NDVI"], "min": 0, "max": 8000, "palette": ["ffffff", "ce7e45", "df923d", "f1b555", "fcd163", "99b718", "74a901", "66a000", "529400", "3e8601", "207401", "056201", "004c00"]}, True
 
     # 7. Atmospheric & Pollution (Sentinel-5P)
     if "s5p" in d:
@@ -965,14 +1009,21 @@ class GEEServer:
             except Exception as _e:
                 logger.debug(f"Failed to send {action} over WS: {_e}")
 
-    async def _send_layer(self, ws, tile_url: str, dataset: str, vis_params: dict, title: str) -> None:
+    async def _send_layer(self, ws, tile_url: str, dataset: str, vis_params: dict, title: str, bbox: dict | None = None, centroid: dict | None = None) -> None:
         """Send add_gee_layer action over WebSocket if connected."""
-        await self._send_action(ws, "add_gee_layer", {
+        payload = {
             "url": tile_url,
             "dataset": dataset,
             "vis_params": vis_params,
             "title": title,
-        })
+        }
+        if bbox:
+            payload["bbox"] = bbox
+            payload["bounds"] = [bbox.get("west"), bbox.get("south"), bbox.get("east"), bbox.get("north")]
+        if centroid:
+            payload["centroid"] = centroid
+            payload["center"] = [centroid.get("lng") or centroid.get("x"), centroid.get("lat") or centroid.get("y")]
+        await self._send_action(ws, "add_gee_layer", payload)
 
     async def _tile_proxy(self, image_fn, vis_params: dict, ee_geom: Any = None) -> tuple[str, str]:
         """Run synchronous getMapId in thread pool → (map_id, proxy_tile_url)."""
@@ -1032,6 +1083,44 @@ class GEEServer:
 
         # If place_name is empty or generic ("that place", "here", "the boundary", "study area"):
         generic_terms = {"", "that place", "this place", "the place", "here", "the boundary", "boundary", "study area", "study region"}
+        selected_features = map_context.get("selected_features") or []
+        selected_feature_geojson = []
+        selected_names = []
+        for selected in selected_features:
+            selected_geom = selected.get("geojson")
+            if not isinstance(selected_geom, dict):
+                continue
+            if selected_geom.get("type") == "Feature":
+                geometry = selected_geom.get("geometry")
+            else:
+                geometry = selected_geom
+            if geometry and geometry.get("type") in ("Polygon", "MultiPolygon"):
+                selected_feature_geojson.append({
+                    "type": "Feature",
+                    "geometry": geometry,
+                    "properties": selected_geom.get("properties", selected.get("properties", {}))
+                    if selected_geom.get("type") == "Feature" else selected.get("properties", {}),
+                })
+                selected_names.append(str(selected.get("layerName") or "").strip())
+        selection_matches = (
+            not place_name
+            or place_name.lower().strip() in generic_terms
+            or any(
+                place_name.casefold() in selected_name.casefold()
+                or selected_name.casefold() in place_name.casefold()
+                for selected_name in selected_names
+                if selected_name
+            )
+        )
+        if not geojson_input and selected_feature_geojson and selection_matches:
+            geojson_input = (
+                selected_feature_geojson[0]
+                if len(selected_feature_geojson) == 1
+                else {"type": "FeatureCollection", "features": selected_feature_geojson}
+            )
+            if not place_name and selected_names:
+                place_name = selected_names[0]
+
         if not geojson_input and (not place_name or place_name.lower().strip() in generic_terms):
             try:
                 from tools.spatial_registry import spatial_registry
@@ -1060,7 +1149,20 @@ class GEEServer:
                     pass
             try:
                 from shapely.geometry import shape
-                s = shape(geojson_input if geojson_input.get("type") != "FeatureCollection" else geojson_input["features"][0]["geometry"])
+                from shapely.ops import unary_union
+                if geojson_input.get("type") == "FeatureCollection":
+                    geometries = [
+                        shape(feature["geometry"])
+                        for feature in geojson_input.get("features", [])
+                        if feature.get("geometry")
+                    ]
+                    if not geometries:
+                        raise ValueError("GeoJSON FeatureCollection contains no geometry")
+                    s = unary_union(geometries)
+                elif geojson_input.get("type") == "Feature":
+                    s = shape(geojson_input["geometry"])
+                else:
+                    s = shape(geojson_input)
                 minx, miny, maxx, maxy = s.bounds
                 bbox = {"west": round(minx, 6), "south": round(miny, 6), "east": round(maxx, 6), "north": round(maxy, 6)}
                 c = s.centroid
@@ -1082,12 +1184,13 @@ class GEEServer:
             except Exception as _reg_err:
                 logger.debug(f"Spatial registry check failed: {_reg_err}")
 
-            # Check active map layers (matching against spatial registry or features)
+            # Check active map layers (matching against spatial registry or file on disk)
             if not geojson_input and map_context.get("layers"):
                 p_lower = place_name.lower().strip()
                 for layer in map_context["layers"]:
                     lname = (layer.get("name") or "").lower().strip()
                     if p_lower in lname or lname in p_lower:
+                        # Priority 1: spatial registry (already has the exact polygon geometry)
                         try:
                             from tools.spatial_registry import spatial_registry
                             p = spatial_registry.get_polygon(layer.get("name") or "")
@@ -1099,8 +1202,29 @@ class GEEServer:
                                 break
                         except Exception:
                             pass
-                        ldata = layer.get("data")
-                        if isinstance(ldata, dict) and ldata.get("features"):
+                        # Priority 2: load actual GeoJSON from the layer's file on disk.
+                        # This ensures we use the EXACT polygon shape, not just its bounding
+                        # box, when the user selects a drawn or uploaded boundary layer.
+                        file_path = layer.get("filePath") or layer.get("file_path")
+                        if file_path and not geojson_input:
+                            try:
+                                import json as _json
+                                from pathlib import Path as _Path
+                                fp = _Path(file_path)
+                                if not fp.is_absolute() and workspace:
+                                    fp = _Path(workspace) / file_path
+                                if fp.exists() and fp.suffix.lower() in (".geojson", ".json"):
+                                    file_data = _json.loads(fp.read_text(encoding="utf-8"))
+                                    gtype = file_data.get("type", "") if isinstance(file_data, dict) else ""
+                                    if gtype in ("FeatureCollection", "Feature", "Polygon", "MultiPolygon", "GeometryCollection"):
+                                        geojson_input = file_data
+                                        matched_name = layer.get("name")
+                                        break
+                            except Exception as _fp_err:
+                                logger.debug(f"Failed to load layer geometry from file: {_fp_err}")
+                        # Priority 3: inline geometry_data or data field from map context
+                        ldata = layer.get("data") or layer.get("geometry_data")
+                        if isinstance(ldata, dict) and (ldata.get("features") or ldata.get("type")):
                             geojson_input = ldata
                             matched_name = layer.get("name")
                             break
@@ -1131,23 +1255,48 @@ class GEEServer:
                         except Exception as reg_exc:
                             logger.warning(f"Failed to register boundary in spatial_registry: {reg_exc}")
 
-                        # Frame camera to the boundary
-                        try:
-                            from shapely.geometry import shape
-                            s = shape(geojson_input if geojson_input.get("type") != "FeatureCollection" else geojson_input["features"][0]["geometry"])
-                            minx, miny, maxx, maxy = s.bounds
-                            bbox = {"west": round(minx, 6), "south": round(miny, 6), "east": round(maxx, 6), "north": round(maxy, 6)}
-                            await self._send_action(ws, "fit_bounds", {
-                                "bounds": [bbox["west"], bbox["south"], bbox["east"], bbox["north"]],
-                            })
-                        except Exception:
-                            if centroid:
-                                await self._send_action(ws, "fly_to", {
-                                    "center": [centroid["lng"], centroid["lat"]],
-                                    "zoom": 12,
-                                })
                 except Exception as b_err:
                     logger.warning(f"Could not auto-fetch boundary for '{place_name}': {b_err}")
+
+        # Compute bbox and centroid from geojson_input if not already set
+        if geojson_input and not bbox:
+            try:
+                from shapely.geometry import shape
+                s = shape(geojson_input if geojson_input.get("type") != "FeatureCollection" else geojson_input["features"][0]["geometry"])
+                minx, miny, maxx, maxy = s.bounds
+                bbox = {"west": round(minx, 6), "south": round(miny, 6), "east": round(maxx, 6), "north": round(maxy, 6)}
+                if not centroid:
+                    c = s.centroid
+                    centroid = {"lat": round(c.y, 6), "lng": round(c.x, 6)}
+            except Exception:
+                pass
+
+        # Frame camera whenever a boundary bbox or centroid is present and ws is connected
+        if ws:
+            if bbox:
+                try:
+                    await self._send_action(ws, "fit_bounds", {
+                        "west": bbox["west"],
+                        "south": bbox["south"],
+                        "east": bbox["east"],
+                        "north": bbox["north"],
+                        "bounds": [bbox["west"], bbox["south"], bbox["east"], bbox["north"]],
+                    })
+                except Exception:
+                    pass
+            elif centroid:
+                try:
+                    c_lng = centroid.get("lng") if isinstance(centroid, dict) else None
+                    c_lat = centroid.get("lat") if isinstance(centroid, dict) else None
+                    if c_lng is not None and c_lat is not None:
+                        await self._send_action(ws, "fly_to", {
+                            "lng": c_lng,
+                            "lat": c_lat,
+                            "center": [c_lng, c_lat],
+                            "zoom": 12,
+                        })
+                except Exception:
+                    pass
 
         # Convert to Earth Engine geometry
         ee_geom = None
@@ -1207,7 +1356,6 @@ class GEEServer:
                 return ee.Image(dataset)
 
             map_id, tile_url = await self._tile_proxy(build_image, final_vis, ee_geom)
-            await self._send_layer(ws, tile_url, dataset, final_vis, title)
             return {
                 "status": "success",
                 "message": f"GEE layer '{title}' added to map" + (f" for {place_nm}." if place_nm else "."),
@@ -1307,7 +1455,6 @@ class GEEServer:
 
             map_id, tile_url = await self._tile_proxy(build_lst, vis, ee_geom)
             dataset_id = "LANDSAT/LC09/C02/T1_L2" if source == "landsat" else ("MODIS/061/MOD11A1" if source == "modis" else "ECMWF/ERA5_LAND/HOURLY")
-            await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
             return {
                 "status": "success",
@@ -1419,7 +1566,6 @@ class GEEServer:
                 unit = "mm"
 
             map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
-            await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
             return {
                 "status": "success",
@@ -1517,7 +1663,6 @@ class GEEServer:
                 return coll.select(band).mean()
 
             map_id, tile_url = await self._tile_proxy(build_atmos, vis, ee_geom)
-            await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
             return {
                 "status": "success",
@@ -1590,7 +1735,6 @@ class GEEServer:
                 unit = "W/m²"
 
             map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
-            await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
             return {
                 "status": "success",
@@ -1680,7 +1824,6 @@ class GEEServer:
                 build_fn = lambda: coll.median().normalizedDifference([nir, red]).rename("NDVI")
 
             map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
-            await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
             return {
                 "status": "success",
@@ -1778,7 +1921,6 @@ class GEEServer:
                     build_fn = lambda: coll.median()
 
             map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
-            await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
             return {
                 "status": "success",
@@ -1848,7 +1990,6 @@ class GEEServer:
                 desc = "10m European Space Agency Sentinel-2 optical"
 
             map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
-            await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
             return {
                 "status": "success",
@@ -1947,14 +2088,20 @@ class GEEServer:
 
             elif product == "land_cover":
                 dataset_id = "MODIS/061/MCD12Q1"
-                vis = {"bands": ["LC_Type1"], "min": 1, "max": 17}
+                vis = {
+                    "bands": ["LC_Type1"],
+                    "min": 1,
+                    "max": 17,
+                    "palette": _MODIS_IGBP_PALETTE,
+                    "palette_labels": _MODIS_IGBP_LABELS,
+                }
                 coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
                 if ee_geom is not None:
                     try:
                         coll = coll.filterBounds(ee_geom)
                     except Exception:
                         pass
-                build_fn = lambda: coll.select("LC_Type1").first()
+                build_fn = lambda: coll.select("LC_Type1").first().toFloat()
 
             else:
                 dataset_id = "MODIS/061/MOD13Q1"
@@ -1968,7 +2115,6 @@ class GEEServer:
                 build_fn = lambda: coll.select("NDVI").median().multiply(0.0001)
 
             map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
-            await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
             return {
                 "status": "success",
@@ -2058,7 +2204,6 @@ class GEEServer:
                 return dem_band
 
             map_id, tile_url = await self._tile_proxy(build_terrain, vis, ee_geom)
-            await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
             return {
                 "status": "success",
@@ -2124,14 +2269,20 @@ class GEEServer:
 
             elif source == "modis_landcover":
                 dataset_id = "MODIS/061/MCD12Q1"
-                vis = {"bands": ["LC_Type1"], "min": 1, "max": 17}
+                vis = {
+                    "bands": ["LC_Type1"],
+                    "min": 1,
+                    "max": 17,
+                    "palette": _MODIS_IGBP_PALETTE,
+                    "palette_labels": _MODIS_IGBP_LABELS,
+                }
                 coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
                 if ee_geom is not None:
                     try:
                         coll = coll.filterBounds(ee_geom)
                     except Exception:
                         pass
-                build_fn = lambda: coll.select("LC_Type1").first()
+                build_fn = lambda: coll.select("LC_Type1").first().toFloat()
 
             else:
                 dataset_id = "COPERNICUS/Landcover/100m/Proba-V-C3/Global"
@@ -2145,7 +2296,6 @@ class GEEServer:
                 build_fn = lambda: coll.select("discrete_classification").first()
 
             map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
-            await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
             return {
                 "status": "success",
@@ -2265,7 +2415,6 @@ class GEEServer:
                 desc = "Sentinel-2 Enhanced Vegetation Index (EVI)"
 
             map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
-            await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
             return {
                 "status": "success",
@@ -2356,7 +2505,6 @@ class GEEServer:
                 desc = "JRC Global Surface Water Occurrence (0-100%)"
 
             map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
-            await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
             return {
                 "status": "success",
@@ -2402,8 +2550,14 @@ class GEEServer:
             # High Resolution Aerial
             {"id": "USDA/NAIP/DOQQ", "name": "USDA National Agriculture Imagery Program (NAIP)", "category": "high_resolution", "bands": ["R", "G", "B", "N"], "res": "0.6m - 1m", "desc": "Sub-meter aerial digital ortho photography covering the US."},
             # MODIS
+            {"id": "MODIS/061/MOD09A1", "name": "MODIS Surface Reflectance 8-Day", "category": "modis", "bands": ["sur_refl_b01", "sur_refl_b04", "sur_refl_b03"], "res": "500m", "desc": "Surface reflectance imagery suitable for vegetation, burn scars, and land surface monitoring."},
+            {"id": "MODIS/061/MOD10A1", "name": "MODIS Snow Cover Daily", "category": "modis", "bands": ["NDSI_Snow_Cover"], "res": "500m", "desc": "Daily snow extent and snow cover fraction."},
+            {"id": "MODIS/061/MOD11A1", "name": "MODIS Terra Land Surface Temperature Daily", "category": "modis", "bands": ["LST_Day_1km", "LST_Night_1km"], "res": "1km", "desc": "Daily land surface temperature using thermal infrared bands."},
+            {"id": "MODIS/061/MCD12Q1", "name": "MODIS Land Cover Type Yearly", "category": "modis", "bands": ["LC_Type1"], "res": "500m", "desc": "Annual IGBP land cover classes globally."},
             {"id": "MODIS/061/MOD13Q1", "name": "MODIS Terra Vegetation Indices 16-Day", "category": "modis", "bands": ["NDVI", "EVI"], "res": "250m", "desc": "Global Normalized Difference Vegetation Index and Enhanced Vegetation Index."},
             {"id": "MODIS/061/MOD14A1", "name": "MODIS Thermal Anomalies & Fire Daily", "category": "modis", "bands": ["FireMask"], "res": "1km", "desc": "Daily active fire hotspots and thermal anomalies."},
+            {"id": "MODIS/061/MCD64A1", "name": "MODIS Burned Area Monthly", "category": "modis", "bands": ["BurnDate"], "res": "500m", "desc": "Monthly burned-area detection and burn date."},
+            {"id": "MODIS/061/MOD16A2", "name": "MODIS Evapotranspiration 8-Day", "category": "modis", "bands": ["ET_500m"], "res": "500m", "desc": "Evapotranspiration and water use estimates."},
             # Terrain
             {"id": "USGS/SRTMGL1_003", "name": "NASA Shuttle Radar Topography Mission (SRTM)", "category": "terrain", "bands": ["elevation"], "res": "30m", "desc": "Global digital elevation model between 60°N and 56°S."},
             {"id": "COPERNICUS/DEM/GLO30", "name": "Copernicus DEM Global 30m", "category": "terrain", "bands": ["DEM"], "res": "30m", "desc": "High-accuracy global 30m digital elevation model from WorldDEM."},
@@ -2651,7 +2805,6 @@ class GEEServer:
                 layer_title = f"{layer_title} - {place_nm}"
             dataset_id = "WorldPop/GP/100m/pop" if source == "worldpop" else "CIESIN/GPWv411/GPW_Population_Density"
             map_id, tile_url = await self._tile_proxy(build_pop, {}, ee_geom)
-            await self._send_layer(ws, tile_url, dataset_id, vis, layer_title)
 
             return {
                 "status": "success",
@@ -2789,7 +2942,6 @@ class GEEServer:
                 return s2.normalizedDifference(["B8", "B4"]).rename("NDVI")
 
             map_id, tile_url = await self._tile_proxy(build_ndvi, vis, ee_geom)
-            await self._send_layer(ws, tile_url, "COPERNICUS/S2_SR_HARMONIZED", vis, title)
 
             return {
                 "status": "success",
@@ -2867,7 +3019,6 @@ class GEEServer:
             map_id, tile_url, sample = await loop.run_in_executor(None, build_and_sample)
 
             title = f"{dataset.split('/')[-1]}" + (f" - {place_nm}" if place_nm else " — pixel sample")
-            await self._send_layer(ws, tile_url, dataset, default_vis, title)
 
             return {
                 "status": "success",
@@ -3084,24 +3235,41 @@ class GEEServer:
                     elif lat is not None and lng is not None:
                         ee_geom = ee.Geometry.Point([float(lng), float(lat)]).buffer(radius_km * 1000.0)
                     else:
-                        ee_geom = ee.Geometry.Point([76.7794, 30.7333]).buffer(3000)
+                        raise ValueError(
+                            "A study boundary is required. Select a polygon layer, provide GeoJSON, "
+                            "or provide a place name or coordinates; no default location is used."
+                        )
+
+                if ee_geom is None:
+                    raise ValueError(
+                        "Could not create a bounded Earth Engine geometry from the supplied boundary. "
+                        "Provide valid GeoJSON, a place name with a resolvable boundary, or lat/lng coordinates."
+                    )
 
                 img = (
                     ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1")
                     .filterDate(f"{year}-01-01", f"{year}-12-31")
+                    .filterBounds(ee_geom)
                     .select("label")
                     .mode()
                 )
 
-                masked = img.eq(target_idx).selfMask()
+                # CRITICAL: clip the image to the exact boundary geometry BEFORE vectorizing.
+                # Without .clip(), reduceToVectors produces polygons whose edges bleed outside
+                # the boundary because GEE vectorizes at pixel/tile boundaries, not the supplied
+                # geometry boundary. filterBounds alone only filters scenes, not pixels.
+                masked = img.eq(target_idx).selfMask().clip(ee_geom)
 
                 def extract_geom(g):
+                    if g is None:
+                        raise ValueError("A bounded geometry is required to extract land-use polygons.")
                     vectors = masked.reduceToVectors(
                         geometry=g,
                         scale=30,
                         maxPixels=1e9,
                         geometryType="polygon",
                         labelProperty="class_id",
+                        bestEffort=True,
                     )
                     return vectors.getInfo()
 
@@ -3158,10 +3326,28 @@ class GEEServer:
 
             features = fc_data.get("features", [])
 
-            if geom_data:
+            boundary_geometry = geojson_input
+            if isinstance(boundary_geometry, str):
+                boundary_geometry = json.loads(boundary_geometry)
+
+            if boundary_geometry:
                 try:
                     import shapely.geometry
-                    b_shape = shapely.geometry.shape(geom_data)
+                    from shapely.ops import unary_union
+                    boundary_type = boundary_geometry.get("type")
+                    if boundary_type == "Feature":
+                        b_shape = shapely.geometry.shape(boundary_geometry["geometry"])
+                    elif boundary_type == "FeatureCollection":
+                        boundary_shapes = [
+                            shapely.geometry.shape(feature["geometry"])
+                            for feature in boundary_geometry.get("features", [])
+                            if feature.get("geometry")
+                        ]
+                        b_shape = unary_union(boundary_shapes)
+                    else:
+                        b_shape = shapely.geometry.shape(boundary_geometry)
+                    if b_shape.is_empty:
+                        raise ValueError("The study boundary is empty.")
                     clipped_features = []
                     for feat in features:
                         f_geom = feat.get("geometry")
@@ -3170,12 +3356,28 @@ class GEEServer:
                         f_shape = shapely.geometry.shape(f_geom)
                         if b_shape.intersects(f_shape):
                             inter = b_shape.intersection(f_shape)
-                            if not inter.is_empty:
-                                feat["geometry"] = shapely.geometry.mapping(inter)
+                            polygons = []
+                            pending = [inter]
+                            while pending:
+                                part = pending.pop()
+                                if part.geom_type == "Polygon":
+                                    if part.area > 0:
+                                        polygons.append(part)
+                                elif hasattr(part, "geoms"):
+                                    pending.extend(part.geoms)
+                            if polygons:
+                                clipped_shape = unary_union(polygons)
+                                feat["geometry"] = shapely.geometry.mapping(clipped_shape)
                                 clipped_features.append(feat)
                     features = clipped_features
                 except Exception as clip_err:
-                    logger.warning(f"Spatial clipping of land cover polygons failed: {clip_err}")
+                    raise ValueError(
+                        f"Could not clip extracted polygons to the requested study boundary: {clip_err}"
+                    ) from clip_err
+            else:
+                raise ValueError(
+                    "A study boundary is required to clip extracted polygons; refusing to return unbounded results."
+                )
 
             display_title = f"{class_name} - {place_name}" if place_name else f"{class_name} Polygons ({year})"
             for feat in features:

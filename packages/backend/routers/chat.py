@@ -401,7 +401,14 @@ SYSTEM_PROMPT = (
     "osm_boundary multiple times and then try manual coordinate stitching.\n"
     "10. AIR QUALITY: prefer get_air_quality_google (per-pollutant breakdown, AQI, health "
     "recommendations). If Google returns an error, HTTP 403, or upstream_unavailable, IMMEDIATELY "
-    "call get_air_quality (Open-Meteo, keyless fallback) so the user always receives live PM2.5, PM10, and AQI metrics.\n"
+    "call get_air_quality (Open-Meteo, keyless fallback) so the user receives its reported European AQI and pollutant metrics. "
+    "Report the provider, exact index name, value, category, and scale/direction supplied by the tool. "
+    "When Google returns a local AQI for the requested region, report that as the local index and show UAQI separately; "
+    "never calculate an official local AQI from one pollutant's concentration. "
+    "Google UAQI increases as air quality improves; Open-Meteo European AQI increases as pollution worsens. "
+    "Keep these opposite directions explicit and do not conflate their categories or scales. "
+    "Do not present a single-pollutant estimate as India's official overall AQI, and do not claim a provider's index "
+    "is the Indian or US AQI unless the tool explicitly returns that index.\n"
     "11. AMBIGUOUS PLACE NAMES: if the user types a partial or ambiguous place name, call "
     "places_autocomplete first to get candidate place_ids, then place_details on the best match "
     "to resolve to coordinates. Skip this for unambiguous queries — geocode is faster.\n"
@@ -1417,6 +1424,82 @@ _TOOLS = _build_tools()
 
 # ── Tool execution ────────────────────────────────────────────────────────────
 
+def _selected_polygon_geojson(map_context: dict | None) -> dict | None:
+    selected = (map_context or {}).get("selected_features") or []
+    features = []
+    for item in selected:
+        feature = item.get("geojson")
+        if not isinstance(feature, dict):
+            continue
+        if feature.get("type") == "Feature":
+            geometry = feature.get("geometry")
+            properties = feature.get("properties") or {}
+        elif feature.get("type") in ("Polygon", "MultiPolygon"):
+            geometry = feature
+            properties = item.get("properties") or {}
+        else:
+            continue
+        if geometry and geometry.get("type") in ("Polygon", "MultiPolygon"):
+            features.append({
+                "type": "Feature",
+                "geometry": geometry,
+                "properties": properties,
+            })
+    if not features:
+        return None
+    if len(features) == 1:
+        return features[0]
+    return {"type": "FeatureCollection", "features": features}
+
+
+def _scope_tool_to_selection(name: str, args: dict, map_context: dict | None) -> None:
+    """Pass the selected polygon to geometry-aware tools when they support GeoJSON."""
+    selected_geojson = _selected_polygon_geojson(map_context)
+    if not selected_geojson or args.get("geojson"):
+        return
+
+    layer_names = [
+        str(item.get("layerName") or "").strip().casefold()
+        for item in (map_context or {}).get("selected_features", [])
+        if item.get("geojson")
+    ]
+    place_name = str(
+        args.get("place_name")
+        or args.get("city")
+        or args.get("location")
+        or args.get("study_area")
+        or args.get("boundary_name")
+        or args.get("boundary")
+        or args.get("place")
+        or ""
+    ).strip().casefold()
+    generic_places = {
+        "", "here", "this", "this place", "that place", "the boundary",
+        "boundary", "study area", "study region", "selected layer",
+    }
+    if place_name not in generic_places and not any(
+        place_name in layer_name or layer_name in place_name
+        for layer_name in layer_names
+        if layer_name
+    ):
+        return
+
+    declaration = next(
+        (
+            tool.get("function", {}).get("parameters", {}).get("properties", {})
+            for tool in _TOOLS
+            if tool.get("function", {}).get("name") == name
+        ),
+        {},
+    )
+    if "geojson" in declaration:
+        args["geojson"] = selected_geojson
+    elif name == "gis_clip" and "clip" in declaration and not args.get("clip"):
+        args["clip"] = selected_geojson
+    elif name == "nearby_places_in_polygon" and "polygon" in declaration and not args.get("polygon"):
+        args["geojson"] = selected_geojson
+
+
 async def _execute_tool(
     name: str,
     args: dict,
@@ -1428,6 +1511,8 @@ async def _execute_tool(
 ) -> str:
     if _is_cancelled():
         return json.dumps({"status": "cancelled"})
+
+    _scope_tool_to_selection(name, args, map_context)
 
     # 1. Sync live map layers to SpatialRegistry for real-time reactivity
     if map_context and "layers" in map_context:
@@ -2499,7 +2584,20 @@ async def chat_websocket(websocket: WebSocket):
                     print(f"[RAG] Document search error: {e}")
 
             if map_context:
-                system += f"\n\nCurrent map state:\n{json.dumps(map_context, indent=2)}"
+                prompt_map_context = {
+                    **map_context,
+                    "selected_features": [
+                        {key: value for key, value in feature.items() if key != "geojson"}
+                        for feature in map_context.get("selected_features", [])
+                    ],
+                }
+                system += f"\n\nCurrent map state:\n{json.dumps(prompt_map_context, indent=2)}"
+                if map_context.get("selected_features"):
+                    system += (
+                        "\nThe backend has the exact selected feature geometry. When the user refers to "
+                        "the selected feature/layer, use it as the study boundary; never substitute its "
+                        "bounding box, viewport, or a separately looked-up boundary."
+                    )
                 if map_context.get("selected_features"):
                     selected_block = "\n\n[USER SELECTED MAP ELEMENTS / HIGHLIGHTED LAYERS]\n"
                     for sf in map_context["selected_features"]:

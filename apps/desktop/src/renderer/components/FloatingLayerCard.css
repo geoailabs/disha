@@ -566,7 +566,8 @@
 }
 
 /* Eye visibility toggle button */
-.flc-eye-btn {
+.flc-eye-btn,
+.flc-zoom-btn {
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.18);
   color: var(--frozen-water, #bee3db);
@@ -581,7 +582,8 @@
   transition: all 0.15s ease;
 }
 
-.flc-eye-btn:hover {
+.flc-eye-btn:hover,
+.flc-zoom-btn:hover {
   background: rgba(255, 255, 255, 0.2);
   border-color: rgba(255, 255, 255, 0.35);
   color: #ffffff;

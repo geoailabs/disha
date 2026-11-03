@@ -287,8 +287,8 @@ export type MapAction =
   | { type: 'isolate_layer'; payload: { layer_name: string; keep_basemap?: boolean } }
   | { type: 'refresh_artifacts'; payload: { id?: number } | Record<string, never> }
   | { type: 'switch_basemap'; payload: { basemap: string } }
-  | { type: 'add_wms_layer'; payload: { url: string; layer_name: string; title: string } }
-  | { type: 'add_gee_layer'; payload: { url: string; dataset: string; vis_params: any; title: string } }
+  | { type: 'add_wms_layer'; payload: { url: string; layer_name: string; title: string; bbox?: any; bounds?: any; center?: any; centroid?: any } }
+  | { type: 'add_gee_layer'; payload: { url: string; dataset: string; vis_params: any; title: string; bbox?: any; bounds?: any; center?: any; centroid?: any } }
   | { type: 'add_geojson_file'; payload: { path: string; name: string; color?: string; styleSpec?: any } }
   | {
       type: 'add_scenarios'
@@ -467,6 +467,7 @@ export interface MapContext {
     filePath?: string
     featureCount?: number
     properties: Record<string, any>
+    geojson?: Feature
     bbox?: [number, number, number, number]
     centroid?: [number, number]
   }>

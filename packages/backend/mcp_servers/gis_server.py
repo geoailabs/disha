@@ -903,13 +903,19 @@ class GISServer:
                 from tools.action_utils import send_action
                 await send_action(ws, "add_geojson_file", {"path": str(out_file), "name": output_layer_name})
                 if bbox:
-                    await send_action(ws, "fit_bounds", {"bounds": bbox})
+                    await send_action(ws, "fit_bounds", {
+                        "west": bbox[0], "south": bbox[1], "east": bbox[2], "north": bbox[3],
+                        "bounds": bbox,
+                    })
         else:
             if ws:
                 from tools.action_utils import send_action
                 await send_action(ws, "add_geojson", {"geojson": out_fc, "name": output_layer_name})
                 if bbox:
-                    await send_action(ws, "fit_bounds", {"bounds": bbox})
+                    await send_action(ws, "fit_bounds", {
+                        "west": bbox[0], "south": bbox[1], "east": bbox[2], "north": bbox[3],
+                        "bounds": bbox,
+                    })
 
         return {
             "status": "success",

@@ -114,6 +114,19 @@ STATE_NAME_TO_CODE.update({
     "chandigarh": "ch", "goa": "ga", "sikkim": "sk"
 })
 
+
+def _candidate_state_codes(state_code: str = "", state_name: str = "") -> list[str]:
+    """Return a state search order that prioritizes the named state but searches the full supported registry."""
+    sc = (state_code or "").strip().lower()
+    if not sc and state_name:
+        sc = STATE_NAME_TO_CODE.get(state_name.strip().lower(), "")
+
+    codes = list(STATE_VILLAGE_CODES.keys())
+    if sc and sc in STATE_VILLAGE_CODES:
+        return [sc] + [code for code in codes if code != sc]
+    return codes
+
+
 def _resolve_workspace(workspace_arg: str) -> str:
     """Resolve workspace path to absolute folder or fallback to workspace root."""
     arg = (workspace_arg or "").strip()
@@ -436,8 +449,23 @@ class DatameetServer:
                         s = shape(matched[0]["geometry"])
                         area_km2 = round(geodesic_area_m2(matched[0]["geometry"]) / 1e6, 3)
                         centroid = {"lng": round(s.centroid.x, 6), "lat": round(s.centroid.y, 6)}
-                        if ws and centroid:
-                            await send_action(ws, "fly_to", {"center": [centroid["lng"], centroid["lat"]], "zoom": 13})
+                        minx, miny, maxx, maxy = s.bounds
+                        if ws:
+                            if abs(maxx - minx) > 1e-5 and abs(maxy - miny) > 1e-5:
+                                await send_action(ws, "fit_bounds", {
+                                    "west": round(minx, 6),
+                                    "south": round(miny, 6),
+                                    "east": round(maxx, 6),
+                                    "north": round(maxy, 6),
+                                    "bounds": [round(minx, 6), round(miny, 6), round(maxx, 6), round(maxy, 6)],
+                                })
+                            elif centroid:
+                                await send_action(ws, "fly_to", {
+                                    "lng": centroid["lng"],
+                                    "lat": centroid["lat"],
+                                    "center": [centroid["lng"], centroid["lat"]],
+                                    "zoom": 14,
+                                })
                     except Exception:
                         pass
 
@@ -547,8 +575,7 @@ class DatameetServer:
         if not sc and state_name:
             sc = STATE_NAME_TO_CODE.get(state_name.strip().lower(), "")
 
-        # Target states to check: specific state if known, else popular available DataMeet states
-        candidate_codes = [sc] if sc and sc in STATE_VILLAGE_CODES else ["pb", "kl", "ka", "mh", "gj", "rj", "br", "or", "ga", "sk"]
+        candidate_codes = _candidate_state_codes(sc, state_name)
 
         workspace_path = Path(_resolve_workspace(workspace))
         workspace_path.mkdir(parents=True, exist_ok=True)

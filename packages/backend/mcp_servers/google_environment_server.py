@@ -62,10 +62,11 @@ class GoogleEnvironmentServer:
                 name="get_air_quality_google",
                 description=(
                     "Current air quality at a location — Google Air Quality API. Returns a "
-                    "Universal AQI (0-100, lower = worse) plus per-pollutant concentrations "
-                    "(PM2.5, PM10, NO2, O3, SO2, CO) and the dominant pollutant. "
-                    "PREFER THIS over get_weather's air-quality fields when available — it "
-                    "covers Indian cities better and breaks down pollutants individually."
+                    "Universal AQI (UAQI; higher values indicate cleaner air) and, where available, "
+                    "the location's local AQI "
+                    "plus per-pollutant concentrations (PM2.5, PM10, NO2, O3, SO2, CO) and the "
+                    "dominant pollutant. Report the returned index value and category exactly; "
+                    "lower values indicate worse air. Do not claim this is an India/US AQI."
                 ),
                 parameters={
                     "type": "object",
@@ -173,11 +174,13 @@ class GoogleEnvironmentServer:
         async def _fetch() -> dict:
             body = {
                 "location": {"latitude": lat, "longitude": lng},
+                "universalAqi": True,
                 "extraComputations": [
                     "DOMINANT_POLLUTANT_CONCENTRATION",
                     "POLLUTANT_CONCENTRATION",
                     "POLLUTANT_ADDITIONAL_INFO",
                     "HEALTH_RECOMMENDATIONS",
+                    "LOCAL_AQI",
                 ],
             }
             payload = await call_v1(
@@ -188,10 +191,18 @@ class GoogleEnvironmentServer:
             )
 
             indexes = payload.get("indexes") or []
-            primary = next(
-                (i for i in indexes if i.get("code") == "uaqi"),
-                indexes[0] if indexes else {},
-            )
+            primary = next((i for i in indexes if i.get("code") == "uaqi"), {})
+            reported_indexes = [
+                {
+                    "code": index.get("code"),
+                    "display_name": index.get("displayName"),
+                    "aqi": index.get("aqi"),
+                    "aqi_display": index.get("aqiDisplay"),
+                    "category": index.get("category"),
+                }
+                for index in indexes
+            ]
+            local_indexes = [index for index in reported_indexes if index.get("code") != "uaqi"]
             pollutants = []
             for p in payload.get("pollutants") or []:
                 conc = p.get("concentration") or {}
@@ -206,10 +217,20 @@ class GoogleEnvironmentServer:
                 "aqi": primary.get("aqi"),
                 "aqi_display": primary.get("aqiDisplay"),
                 "category": primary.get("category"),
+                "aqi_index": primary.get("code") or None,
+                "aqi_scale": (
+                    "Google Universal AQI; higher values indicate cleaner air"
+                    if primary else None
+                ),
+                "aqi_status": "available" if primary else "Google Universal AQI was not returned",
+                "indexes": reported_indexes,
+                "local_indexes": local_indexes,
                 "dominant_pollutant": primary.get("dominantPollutant"),
                 "pollutants": pollutants,
                 "health_recommendations": payload.get("healthRecommendations") or {},
                 "region_code": payload.get("regionCode"),
+                "observation_time": payload.get("dateTime"),
+                "sample_location": {"lat": lat, "lng": lng},
             }
 
         try:

@@ -10,6 +10,7 @@ Tests:
 """
 
 import sys
+import types
 from pathlib import Path
 import pytest
 from fastapi import FastAPI
@@ -19,7 +20,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from mcp_servers.gee_server import GEEServer, parse_gee_credentials_data, _find_gee_creds
+from mcp_servers.gee_server import GEEServer, parse_gee_credentials_data, _find_gee_creds, _get_dataset_defaults, _sync_get_map_id
 from domains.environment_hub import EnvironmentHub
 from domains.protocol import ToolResult
 from routers.gee import router as gee_router
@@ -66,6 +67,140 @@ def test_credentials_parsing_and_fallback():
     parsed_wrapped = parse_gee_credentials_data(wrapper)
     assert parsed_wrapped is not None
     assert parsed_wrapped["client_email"] == "test@test-project.iam.gserviceaccount.com"
+
+
+def test_modis_catalog_dataset_defaults_are_image_collections():
+    collection_ids = [
+        "MODIS/061/MOD09A1",
+        "MODIS/061/MOD11A1",
+        "MODIS/061/MOD10A1",
+        "MODIS/061/MCD64A1",
+        "MODIS/061/MCD12Q1",
+        "MODIS/061/MOD13Q1",
+        "MODIS/061/MOD14A1",
+        "MODIS/061/MOD16A2",
+        "MODIS/061/MCD19A2_GRANULES",
+    ]
+
+    for dataset in collection_ids:
+        vis, is_collection = _get_dataset_defaults(dataset)
+        assert is_collection is True, f"{dataset} should be classified as an Earth Engine image collection"
+        assert vis, f"{dataset} should define default visualization settings"
+
+    generic_modis = "MODIS/061/MOD15A2H"
+    vis, is_collection = _get_dataset_defaults(generic_modis)
+    assert is_collection is True
+    assert vis.get("bands") is not None
+
+
+@pytest.mark.asyncio
+async def test_modis_layer_uses_explicit_palette_and_class_ranges(gee_server, monkeypatch):
+    class FakeImage:
+        def __init__(self, float_cast=False):
+            self.float_cast = float_cast
+
+        def toFloat(self):
+            return FakeImage(float_cast=True)
+
+    class FakeCollection:
+        def __init__(self, dataset):
+            self.dataset = dataset
+
+        def filterDate(self, *_args, **_kwargs):
+            return self
+
+        def filterBounds(self, *_args, **_kwargs):
+            return self
+
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def first(self):
+            return FakeImage()
+
+        def median(self):
+            return object()
+
+    fake_ee = types.SimpleNamespace(
+        ImageCollection=lambda dataset: FakeCollection(dataset),
+        Image=lambda dataset: object(),
+        Filter=types.SimpleNamespace(lt=lambda *args, **kwargs: object()),
+    )
+
+    async def fake_ensure_gee(*args, **kwargs):
+        return True, None
+
+    built_images = []
+
+    async def fake_tile_proxy(image_fn, *_args, **_kwargs):
+        built_images.append(image_fn())
+        return "map-id-123", "http://example.test/tiles/map-id-123/{z}/{x}/{y}"
+
+    sent_layers = []
+
+    async def fake_send_layer(*args, **kwargs):
+        sent_layers.append(args)
+        return None
+
+    async def fake_resolve_place_boundary(*args, **kwargs):
+        return None, None, None, None
+
+    monkeypatch.setitem(sys.modules, "ee", fake_ee)
+    monkeypatch.setattr("mcp_servers.gee_server._ensure_gee", fake_ensure_gee)
+    monkeypatch.setattr(gee_server, "_resolve_place_boundary", fake_resolve_place_boundary)
+    monkeypatch.setattr(gee_server, "_tile_proxy", fake_tile_proxy)
+    monkeypatch.setattr(gee_server, "_send_layer", fake_send_layer)
+
+    res = await gee_server.execute("get_modis_layer", {"product": "land_cover", "year": 2023})
+    assert res["status"] == "success"
+    assert res["vis"]["palette"] == [
+        "05450a", "086a10", "54a708", "78d203", "009900", "c6b044", "dcd159",
+        "dade48", "fbff13", "b6ff05", "27ff87", "c24f44", "a5a5a5", "ff6d4c",
+        "69fff8", "f9ffa4", "1c0dff",
+    ]
+    assert res["vis"]["min"] == 1
+    assert res["vis"]["max"] == 17
+    assert built_images[-1].float_cast is True
+
+    res2 = await gee_server.execute("get_land_cover", {"source": "modis_landcover", "year": 2023})
+    assert res2["status"] == "success"
+    assert "palette" in res2["vis"]
+    assert res2["vis"]["min"] == 1
+    assert res2["vis"]["max"] == 17
+    assert built_images[-1].float_cast is True
+    assert sent_layers == []
+
+
+def test_sync_get_map_id_bakes_palette_into_visualized_image(monkeypatch):
+    class FakeImage:
+        def __init__(self, visualized=False):
+            self.visualized = visualized
+            self.vis_params = None
+
+        def visualize(self, **vis_params):
+            rendered = FakeImage(visualized=True)
+            rendered.vis_params = vis_params
+            return rendered
+
+    source_image = FakeImage()
+    map_request = {}
+    fake_ee = types.SimpleNamespace(
+        data=types.SimpleNamespace(
+            getMapId=lambda request: map_request.update(request) or {"mapid": "map-id-123"}
+        )
+    )
+    monkeypatch.setitem(sys.modules, "ee", fake_ee)
+
+    _sync_get_map_id(
+        lambda: source_image,
+        {"bands": ["LC_Type1"], "min": 1, "max": 17, "palette": ["05450a", "1c0dff"]},
+    )
+
+    rendered_image = map_request["image"]
+    assert rendered_image.visualized is True
+    assert rendered_image.vis_params["min"] == 1
+    assert rendered_image.vis_params["max"] == 17
+    assert rendered_image.vis_params["palette"] == ["05450a", "1c0dff"]
 
 
 def test_gee_server_declarations(gee_server, env_hub):
@@ -344,3 +479,129 @@ def test_gee_declarations_have_boundary_parameters(gee_server):
         assert "geojson" in params, f"Tool {t} missing 'geojson' parameter in declaration"
 
 
+@pytest.mark.asyncio
+async def test_extract_land_use_polygons_clips_to_boundary(gee_server, monkeypatch):
+    boundary = {
+        "type": "Polygon",
+        "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]],
+    }
+    extracted_geometry = {
+        "type": "Polygon",
+        "coordinates": [[[-1, -1], [2, -1], [2, 2], [-1, 2], [-1, -1]]],
+    }
+
+    class FakeMaskedImage:
+        def eq(self, _class_id):
+            return self
+
+        def selfMask(self):
+            return self
+
+        def clip(self, _geom):
+            return self
+
+        def reduceToVectors(self, **_kwargs):
+            assert _kwargs.get("geometry") is not None
+            return types.SimpleNamespace(getInfo=lambda: {
+                "type": "FeatureCollection",
+                "features": [{"type": "Feature", "geometry": extracted_geometry, "properties": {}}],
+            })
+
+    class FakeLabelImage:
+        def eq(self, _class_id):
+            return FakeMaskedImage()
+
+    class FakeCollection:
+        def filterDate(self, *_args):
+            return self
+
+        def filterBounds(self, *_args):
+            return self
+
+        def select(self, *_args):
+            return self
+
+        def mode(self):
+            return FakeLabelImage()
+
+    async def fake_ensure_gee(*_args, **_kwargs):
+        return True, None
+
+    async def fake_resolve_boundary(_args):
+        return boundary, object(), "Test Area", None
+
+    monkeypatch.setitem(
+        sys.modules,
+        "ee",
+        types.SimpleNamespace(ImageCollection=lambda _dataset: FakeCollection()),
+    )
+    monkeypatch.setattr("mcp_servers.gee_server._ensure_gee", fake_ensure_gee)
+    monkeypatch.setattr(gee_server, "_resolve_place_boundary", fake_resolve_boundary)
+
+    result = await gee_server.execute(
+        "extract_land_use_polygons",
+        {"target_class": "Built Area", "geojson": boundary},
+    )
+
+    assert result["status"] == "success"
+    assert result["polygons_extracted"] == 1
+    from shapely.geometry import shape
+
+    clipped = shape(result["geojson"]["features"][0]["geometry"])
+    assert clipped.bounds == (0.0, 0.0, 1.0, 1.0)
+
+
+@pytest.mark.asyncio
+async def test_extract_land_use_polygons_rejects_unresolved_geometry(gee_server, monkeypatch):
+    async def fake_ensure_gee(*_args, **_kwargs):
+        return True, None
+
+    async def fake_resolve_boundary(_args):
+        return {"type": "Polygon", "coordinates": []}, None, "Test Area", None
+
+    monkeypatch.setattr("mcp_servers.gee_server._ensure_gee", fake_ensure_gee)
+    monkeypatch.setattr(gee_server, "_resolve_place_boundary", fake_resolve_boundary)
+    monkeypatch.setattr("mcp_servers.gee_server._geojson_to_ee_geometry", lambda _geojson: None)
+
+    result = await gee_server.execute(
+        "extract_land_use_polygons",
+        {"target_class": "Built Area", "geojson": {"type": "Polygon", "coordinates": []}},
+    )
+
+    assert "Could not create a bounded Earth Engine geometry" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_place_boundary_uses_exact_selected_polygon(gee_server, monkeypatch):
+    selected_feature = {
+        "type": "Feature",
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[[76.0, 30.0], [77.0, 30.0], [77.0, 31.0], [76.0, 31.0], [76.0, 30.0]]],
+        },
+        "properties": {"name": "Mohali"},
+    }
+
+    async def fake_ensure_gee(*_args, **_kwargs):
+        return True, None
+
+    monkeypatch.setattr("mcp_servers.gee_server._ensure_gee", fake_ensure_gee)
+    monkeypatch.setattr(
+        "mcp_servers.gee_server._geojson_to_ee_geometry",
+        lambda geojson: geojson,
+    )
+
+    boundary, ee_geometry, name, bbox = await gee_server._resolve_place_boundary({
+        "place_name": "Mohali",
+        "_map_context": {
+            "selected_features": [{
+                "layerName": "Mohali boundary",
+                "geojson": selected_feature,
+            }]
+        },
+    })
+
+    assert boundary == selected_feature
+    assert ee_geometry == selected_feature
+    assert name == "Mohali"
+    assert bbox == {"west": 76.0, "south": 30.0, "east": 77.0, "north": 31.0}
