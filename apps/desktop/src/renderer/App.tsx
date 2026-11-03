@@ -934,8 +934,24 @@ function App() {
 
   const addLayer = useCallback(
     async (name: string, filePath: string, customColor?: string, customStyleSpec?: any) => {
-      if (layers.find((l) => l.filePath === filePath)) {
+      const existing = layers.find((l) => l.filePath === filePath || (name && l.name.toLowerCase() === name.toLowerCase()))
+      if (existing) {
+        setLayers((prev) => prev.map((l) => l.id === existing.id ? { ...l, visible: true } : l))
         setActiveLeftTab('layers')
+        setAppMode('map')
+        if (existing.data && existing.data.features && existing.data.features.length > 0) {
+          try {
+            const bbox = turf.bbox(existing.data)
+            if (bbox && bbox.length === 4 && bbox.every(isFinite)) {
+              const [west, south, east, north] = bbox
+              if (Math.abs(east - west) < 1e-5 && Math.abs(north - south) < 1e-5) {
+                setMapActions((prev) => [...prev, { type: 'fly_to', payload: { lng: west, lat: south, zoom: 14 } }])
+              } else {
+                setMapActions((prev) => [...prev, { type: 'fit_bounds', payload: { west, south, east, north } }])
+              }
+            }
+          } catch {}
+        }
         return
       }
       const content = await window.electronAPI.readFile(filePath)
@@ -990,11 +1006,16 @@ function App() {
         }
         setLayers((prev) => [...prev, layer])
         setActiveLeftTab('layers')
+        setAppMode('map')
         try {
           const bbox = turf.bbox(data)
           if (bbox && bbox.length === 4 && bbox.every(isFinite)) {
             const [west, south, east, north] = bbox
-            setMapActions((prev) => [...prev, { type: 'fit_bounds', payload: { west, south, east, north } }])
+            if (Math.abs(east - west) < 1e-5 && Math.abs(north - south) < 1e-5) {
+              setMapActions((prev) => [...prev, { type: 'fly_to', payload: { lng: west, lat: south, zoom: 14 } }])
+            } else {
+              setMapActions((prev) => [...prev, { type: 'fit_bounds', payload: { west, south, east, north } }])
+            }
           }
         } catch {
           // ignore
@@ -2003,12 +2024,16 @@ function App() {
     } : undefined)
 
     setLayers((prev) => {
-      const newLayer = {
+      const newLayer: GeoJSONLayer = {
         id: `layer-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         name: layerName,
         filePath: '',
         visible: true,
-        opacity: 0.5,
+        opacity: styleSpec?.opacity ?? 0.5,
+        fillColor: styleSpec?.fillColor,
+        fillOpacity: styleSpec?.fillOpacity,
+        lineColor: styleSpec?.strokeColor ?? styleSpec?.lineColor,
+        lineWidth: styleSpec?.lineWidth,
         data,
         color: layerColor,
         styleSpec: finalStyleSpec,
@@ -2555,6 +2580,15 @@ function App() {
           prev.map((l) => (l.id === existing.id ? { ...l, visible: true } : l)),
         )
         setActiveLeftTab('layers')
+        setAppMode('map')
+        const p = action.payload as any
+        const b = p?.bbox || p?.bounds
+        const c = p?.center || p?.centroid
+        if (b) {
+          setMapActions((prev) => [...prev, { type: 'fit_bounds', payload: b }])
+        } else if (c) {
+          setMapActions((prev) => [...prev, { type: 'fly_to', payload: c }])
+        }
         return
       }
       const id = `wms-${Date.now()}`
@@ -2570,25 +2604,21 @@ function App() {
       }
       setLayers((prev) => [...prev, newLayer])
       setActiveLeftTab('layers')
+      setAppMode('map')
+      const p = action.payload as any
+      const b = p?.bbox || p?.bounds
+      const c = p?.center || p?.centroid
+      if (b) {
+        setMapActions((prev) => [...prev, { type: 'fit_bounds', payload: b }])
+      } else if (c) {
+        setMapActions((prev) => [...prev, { type: 'fly_to', payload: c }])
+      }
       return
     }
     if (action.type === 'add_gee_layer') {
       const { url, dataset, vis_params, title } = action.payload
-      // Deduplicate by dataset name or title. GEE tile tokens expire after ~24h, so if
-      // the same dataset is re-added we update the URL (refresh token) and
-      // make the layer visible rather than creating a duplicate entry.
       setLayers((prev) => {
-        const existing = prev.find(
-          (l) => (l.geeSpec && l.geeSpec.dataset === dataset) || (title && l.name === title),
-        )
-        if (existing) {
-          return prev.map((l) =>
-            l.id === existing.id
-              ? { ...l, name: title || l.name, visible: true, opacity: l.opacity ?? 0.85, geeSpec: { url, dataset, vis_params } }
-              : l,
-          )
-        }
-        const id = `gee-${Date.now()}`
+        const id = `gee-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
         const newLayer: GeoJSONLayer = {
           id,
           name: title || dataset,
@@ -2602,6 +2632,15 @@ function App() {
         return [...prev, newLayer]
       })
       setActiveLeftTab('layers')
+      setAppMode('map')
+      const p = action.payload as any
+      const b = p?.bbox || p?.bounds
+      const c = p?.center || p?.centroid
+      if (b) {
+        setMapActions((prev) => [...prev, { type: 'fit_bounds', payload: b }])
+      } else if (c) {
+        setMapActions((prev) => [...prev, { type: 'fly_to', payload: c }])
+      }
       return
     }
     if (action.type === 'set_timeline') {
@@ -2647,11 +2686,12 @@ function App() {
     }
     if (action.type === 'add_geojson_file') {
       const { path, name, color, styleSpec } = action.payload
+      setAppMode('map')
       void addLayer(name, path, color, styleSpec)
       return
     }
     if (action.type === 'add_geojson') {
-      const { geojson, name, color } = action.payload
+      const { geojson, name, color, fillColor, fillOpacity, lineColor, lineWidth, styleSpec } = action.payload
       setAppMode('map') // Auto-switch to Map view
       const geometryTypes = ['Point', 'MultiPoint', 'LineString', 'MultiLineString', 'Polygon', 'MultiPolygon', 'GeometryCollection']
       const data: FeatureCollection =
@@ -2663,17 +2703,30 @@ function App() {
               ? { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: geojson as Geometry, properties: {} }] }
               : { type: 'FeatureCollection', features: [] }
       const layerName = name || 'AI Layer'
+      const customStyleSpec = styleSpec || (fillColor !== undefined || fillOpacity !== undefined || lineColor !== undefined || lineWidth !== undefined ? {
+        mode: 'simple' as const,
+        color: color || lineColor || '#3b82f6',
+        fillColor,
+        fillOpacity,
+        strokeColor: lineColor || color,
+        lineWidth: lineWidth ?? 2,
+        opacity: fillOpacity ?? 0.5,
+      } : undefined)
       if (isPointOnlyCollection(data)) {
         addGroupedPointFeaturesToLayers(layerName, data, color)
       } else {
-        upsertLayer(layerName, data, color)
+        upsertLayer(layerName, data, color, customStyleSpec)
       }
       try {
         if (data && data.features && data.features.length > 0) {
           const bbox = turf.bbox(data)
           if (bbox && bbox.length === 4 && bbox.every(isFinite)) {
             const [west, south, east, north] = bbox
-            setMapActions((prev) => [...prev, { type: 'fit_bounds', payload: { west, south, east, north } }])
+            if (Math.abs(east - west) < 1e-5 && Math.abs(north - south) < 1e-5) {
+              setMapActions((prev) => [...prev, { type: 'fly_to', payload: { lng: west, lat: south, zoom: 14 } }])
+            } else {
+              setMapActions((prev) => [...prev, { type: 'fit_bounds', payload: { west, south, east, north } }])
+            }
           }
         }
       } catch {
@@ -2724,11 +2777,30 @@ function App() {
     // AI-placed pins become separate one-point layers inside the persistent
     if (action.type === 'add_marker') {
       addAiMarkersToGroup([action.payload])
+      setAppMode('map')
+      const p = action.payload as any
+      const lng = p?.lng ?? p?.longitude ?? (Array.isArray(p?.center) ? p.center[0] : undefined)
+      const lat = p?.lat ?? p?.latitude ?? (Array.isArray(p?.center) ? p.center[1] : undefined)
+      if (Number.isFinite(lng) && Number.isFinite(lat)) {
+        setMapActions((prev) => [...prev, { type: 'fly_to', payload: { lng, lat, zoom: 15 } }])
+      }
       return
     }
     if (action.type === 'add_markers') {
       const list = Array.isArray(action.payload?.markers) ? action.payload.markers : []
       addAiMarkersToGroup(list)
+      setAppMode('map')
+      const validPts = list.filter((m: any) => Number.isFinite(m?.lng) && Number.isFinite(m?.lat))
+      if (validPts.length === 1) {
+        setMapActions((prev) => [...prev, { type: 'fly_to', payload: { lng: validPts[0].lng, lat: validPts[0].lat, zoom: 15 } }])
+      } else if (validPts.length > 1) {
+        const lngs = validPts.map((m: any) => m.lng)
+        const lats = validPts.map((m: any) => m.lat)
+        setMapActions((prev) => [...prev, {
+          type: 'fit_bounds',
+          payload: { west: Math.min(...lngs), south: Math.min(...lats), east: Math.max(...lngs), north: Math.max(...lats) }
+        }])
+      }
       return
     }
     if (action.type === 'clear_markers') {
@@ -3274,6 +3346,7 @@ function App() {
           filePath: layer?.filePath,
           featureCount: layer?.data?.features?.length || 1,
           properties: sf.feature.properties || {},
+          geojson: sf.feature,
           ...(bbox ? { bbox } : {}),
           ...(centroid ? { centroid } : {}),
         }

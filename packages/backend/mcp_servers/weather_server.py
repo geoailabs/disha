@@ -40,7 +40,11 @@ class WeatherServer:
             ),
             ToolDeclaration(
                 name="get_air_quality",
-                description="Get current air quality data (AQI, PM2.5, PM10, NO2, O3) for a location",
+                description=(
+                    "Get Open-Meteo's current European AQI and pollutant concentrations for one coordinate. "
+                    "This is not India's or the US's AQI; higher values indicate more polluted air. "
+                    "Do not describe a single coordinate as an area-wide AQI."
+                ),
                 parameters={
                     "type": "object",
                     "properties": {
@@ -153,8 +157,11 @@ class WeatherServer:
 
         try:
             current = data.get("current", {})
-            aqi = current.get("european_aqi", 0)
-            if aqi <= 20:
+            aqi = current.get("european_aqi")
+            # Open-Meteo's European AQI thresholds are not the US or India AQI thresholds.
+            if aqi is None:
+                quality = "Unavailable"
+            elif aqi <= 20:
                 quality = "Good"
             elif aqi <= 40:
                 quality = "Fair"
@@ -167,16 +174,23 @@ class WeatherServer:
             else:
                 quality = "Extremely Poor"
 
-            return {
+            pm25 = current.get("pm2_5")
+            pm10 = current.get("pm10")
+
+            result = {
                 "european_aqi": aqi,
+                "aqi_source": "Open-Meteo",
+                "european_aqi_scale": "European AQI; higher values indicate more polluted air",
                 "quality_label": quality,
-                "pm2_5": current.get("pm2_5"),
-                "pm10": current.get("pm10"),
-                "nitrogen_dioxide": current.get("nitrogen_dioxide"),
-                "ozone": current.get("ozone"),
-                "sulphur_dioxide": current.get("sulphur_dioxide"),
-                "carbon_monoxide": current.get("carbon_monoxide"),
+                "sample_location": {"lat": float(lat), "lng": float(lng)},
+                "pm2_5_ug_m3": pm25,
+                "pm10_ug_m3": pm10,
+                "nitrogen_dioxide_ug_m3": current.get("nitrogen_dioxide"),
+                "ozone_ug_m3": current.get("ozone"),
+                "sulphur_dioxide_ug_m3": current.get("sulphur_dioxide"),
+                "carbon_monoxide_ug_m3": current.get("carbon_monoxide"),
                 "units": "µg/m³ (all pollutants)",
             }
+            return result
         except Exception as e:
             return {"error": str(e)}

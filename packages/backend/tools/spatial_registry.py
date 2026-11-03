@@ -198,6 +198,14 @@ class SpatialRegistry:
         for p in self._polygons.values():
             if _normalize_name(p.name) == norm_target:
                 return p
+
+        # 2. Substring & token matches (e.g. 'mohali' matching 'S.A.S. Nagar (Mohali) Tahsil')
+        for p in self._polygons.values():
+            p_lower = p.name.lower().strip()
+            p_norm = _normalize_name(p.name)
+            if target in p_lower or (norm_target and norm_target in p_norm):
+                return p
+
         return None
 
     def list_polygons(self, source: str | None = None) -> list[dict[str, Any]]:

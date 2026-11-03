@@ -11,6 +11,19 @@ if str(BACKEND_DIR) not in sys.path:
 from tools.utility import UtilityServer
 from mcp_servers.gis_server import GISServer
 from mcp_servers.zoning_server import ZoningServer
+from mcp_servers.datameet_server import STATE_VILLAGE_CODES, _candidate_state_codes
+from mcp_servers.weather_server import WeatherServer
+from mcp_servers.google_environment_server import GoogleEnvironmentServer
+from routers.chat import _scope_tool_to_selection
+
+
+def test_datameet_server_uses_full_supported_state_registry_for_village_lookup():
+    codes = _candidate_state_codes("")
+    assert codes == list(STATE_VILLAGE_CODES.keys())
+
+    codes_for_known_state = _candidate_state_codes("pb")
+    assert codes_for_known_state[0] == "pb"
+    assert set(codes_for_known_state) == set(STATE_VILLAGE_CODES.keys())
 
 @pytest.mark.asyncio
 async def test_utility_server_declarations_and_math(tmp_path):
@@ -255,6 +268,101 @@ async def test_selected_features_prompt_formatting():
     assert "76.75485" in selected_block
 
 
+def test_selected_polygon_is_injected_for_matching_geometry_tool():
+    selected_geojson = {
+        "type": "Feature",
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[[1, 1], [2, 1], [2, 2], [1, 2], [1, 1]]],
+        },
+        "properties": {},
+    }
+    args = {"target_class": "Built Area", "place_name": "Mohali"}
+
+    _scope_tool_to_selection(
+        "extract_land_use_polygons",
+        args,
+        {"selected_features": [{
+            "layerName": "Mohali boundary",
+            "geojson": selected_geojson,
+        }]},
+    )
+
+    assert args["geojson"] == selected_geojson
+
+
+def test_selected_polygon_does_not_override_another_named_place():
+    args = {"target_class": "Built Area", "place_name": "Delhi"}
+    _scope_tool_to_selection(
+        "extract_land_use_polygons",
+        args,
+        {"selected_features": [{
+            "layerName": "Mohali boundary",
+            "geojson": {
+                "type": "Feature",
+                "geometry": {"type": "Polygon", "coordinates": []},
+                "properties": {},
+            },
+        }]},
+    )
+    assert "geojson" not in args
+
+
+@pytest.mark.asyncio
+async def test_weather_aqi_reports_provider_scale_without_inventing_india_aqi(monkeypatch):
+    async def fake_get_or_fetch(**_kwargs):
+        return {"current": {"european_aqi": 85, "pm2_5": 52.0, "pm10": 70.0}}
+
+    monkeypatch.setattr("mcp_servers.weather_server.cache.get_or_fetch", fake_get_or_fetch)
+    result = await WeatherServer().execute("get_air_quality", {"lat": 30.7, "lng": 76.7})
+
+    assert result["european_aqi"] == 85
+    assert result["aqi_source"] == "Open-Meteo"
+    assert result["quality_label"] == "Very Poor"
+    assert "india_naqi_pm25" not in result
+
+
+@pytest.mark.asyncio
+async def test_google_aqi_preserves_uaqi_direction_and_identity(monkeypatch):
+    async def fake_get_or_fetch(**kwargs):
+        return await kwargs["fetch_fn"]()
+
+    async def fake_call_v1(*_args, **_kwargs):
+        assert "LOCAL_AQI" in _kwargs["json_body"]["extraComputations"]
+        return {
+            "indexes": [
+                {
+                    "code": "uaqi",
+                    "displayName": "Universal AQI",
+                    "aqi": 70,
+                    "aqiDisplay": "70",
+                    "category": "Moderate",
+                    "dominantPollutant": "pm25",
+                },
+                {
+                    "code": "local_example",
+                    "displayName": "Local AQI",
+                    "aqi": 120,
+                    "aqiDisplay": "120",
+                    "category": "Poor",
+                },
+            ]
+        }
+
+    monkeypatch.setattr("mcp_servers.google_environment_server.cache.get_or_fetch", fake_get_or_fetch)
+    monkeypatch.setattr("mcp_servers.google_environment_server.call_v1", fake_call_v1)
+    result = await GoogleEnvironmentServer().execute(
+        "get_air_quality_google",
+        {"lat": 30.7, "lng": 76.7},
+    )
+
+    assert result["aqi"] == 70
+    assert result["aqi_index"] == "uaqi"
+    assert "higher values indicate cleaner" in result["aqi_scale"]
+    assert result["category"] == "Moderate"
+    assert result["local_indexes"][0]["code"] == "local_example"
+
+
 @pytest.mark.asyncio
 async def test_plot_server_and_multi_format_export(tmp_path):
     from mcp_servers.plot_server import PlotServer
@@ -282,7 +390,4 @@ async def test_plot_server_and_multi_format_export(tmp_path):
 
     b_xlsx, fn_xlsx, mime_xlsx = export_artifact_multi_format("Zonal Data", '{"columns": ["Zone", "Area"], "rows": [["R1", 120]]}', "xlsx")
     assert len(b_xlsx) > 0
-
-
-
 

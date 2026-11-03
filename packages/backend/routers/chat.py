@@ -357,7 +357,7 @@ SYSTEM_PROMPT = (
     "with dataset_ids, titles, and categories — call this first before importing), "
     "import_public_dataset (download and load a named dataset: national boundaries, states, districts, "
     "railway lines, stations, rivers, highways, urban agglomerations, etc.), "
-    "import_datameet_boundary (fetch state/district/village boundaries by administrative level).\n"
+    "import_datameet_boundary (fetch state, district, or individual village boundaries; for villages pass level='village', state='<state>', and village_name='<village>' to extract and display ONLY that specific village polygon).\n"
     "- Temporal Playback Timeline: "
     "set_timeline (display an interactive dark floating playback timeline scrubber on the map when the user requests temporal or multi-year data; pass title, start, end, steps, tool_name, and tool_args), "
     "close_timeline (dismiss/hide the timeline bar).\n\n"
@@ -401,7 +401,14 @@ SYSTEM_PROMPT = (
     "osm_boundary multiple times and then try manual coordinate stitching.\n"
     "10. AIR QUALITY: prefer get_air_quality_google (per-pollutant breakdown, AQI, health "
     "recommendations). If Google returns an error, HTTP 403, or upstream_unavailable, IMMEDIATELY "
-    "call get_air_quality (Open-Meteo, keyless fallback) so the user always receives live PM2.5, PM10, and AQI metrics.\n"
+    "call get_air_quality (Open-Meteo, keyless fallback) so the user receives its reported European AQI and pollutant metrics. "
+    "Report the provider, exact index name, value, category, and scale/direction supplied by the tool. "
+    "When Google returns a local AQI for the requested region, report that as the local index and show UAQI separately; "
+    "never calculate an official local AQI from one pollutant's concentration. "
+    "Google UAQI increases as air quality improves; Open-Meteo European AQI increases as pollution worsens. "
+    "Keep these opposite directions explicit and do not conflate their categories or scales. "
+    "Do not present a single-pollutant estimate as India's official overall AQI, and do not claim a provider's index "
+    "is the Indian or US AQI unless the tool explicitly returns that index.\n"
     "11. AMBIGUOUS PLACE NAMES: if the user types a partial or ambiguous place name, call "
     "places_autocomplete first to get candidate place_ids, then place_details on the best match "
     "to resolve to coordinates. Skip this for unambiguous queries — geocode is faster.\n"
@@ -548,14 +555,19 @@ SYSTEM_PROMPT = (
     "  - Never state unverified or uncited metrics; always specify the factual provenance.\n"
     "38. RASTER & EARTH ENGINE (GEE) EXECUTION MANDATE:\n"
     "  When the user asks to 'show', 'load', 'display', 'map', 'plot', or 'add' any raster layer, satellite imagery, population raster, surface temperature, elevation/DEM, atmospheric pollution, climate, or land cover (e.g. 'show population raster for <City>', 'show surface temperature of <City>', 'display DEM for <City>', 'show NO2 pollution for <City>', 'load Landsat imagery of <City>'):\n"
-    "  - You MUST execute the corresponding GEE tool (`get_population_layer`, `get_surface_temperature_layer`, `get_dem_layer`, `get_atmospheric_layer`, `get_sentinel_layer`, `get_landsat_layer`, `get_climate_layer`, `get_weather_layer`, `get_agriculture_layer`, `get_geophysical_layer`, `get_modis_layer`, `get_land_cover`).\n"
-    "  - Pass `place_name='<City>'` (and coordinates if known from Map Context).\n"
+    "  - You MUST execute the corresponding GEE tool (`get_population_layer`, `get_surface_temperature_layer`, `get_dem_layer`, `get_atmospheric_layer`, `get_sentinel_layer`, `get_landsat_layer`, `get_climate_layer`, `get_weather_layer`, `get_agriculture_layer`, `get_geophysical_layer`, `get_modis_layer`, `get_land_cover`, `add_gee_layer`).\n"
+    "  - ALWAYS pass `place_name='<City>'` (and coordinates if known from Map Context). When a specific place is specified, the backend will automatically resolve and display the boundary, adjust the map camera, and clip the Earth Engine raster strictly to the boundary so it is restricted to that place rather than covering the global map.\n"
     "  - NEVER claim in chat text that you loaded or added a raster, population map, or Earth Engine layer without actually executing the tool call in that turn.\n"
     "39. TEMPORAL PLAYBACK TIMELINE MANDATE:\n"
     "  - Whenever the user asks for time-series, temporal changes, historical comparisons, or data over a range of years or dates for Earth Engine / remote sensing datasets (e.g. 'show land cover change from 2018 to 2023 in <place>', 'display surface temperature between 2015 and 2024', 'Sentinel imagery over the last 5 years', 'hourly temperature from 10 PM to 2 AM'):\n"
     "  - You MUST execute the initial layer tool (e.g. `get_surface_temperature_layer` or `get_land_cover` or `get_sentinel_layer` for the start or current year/date) AND call `set_timeline`.\n"
     "  - In `set_timeline`, set `start` and `end` matching the user's prompt (e.g. start='2018', end='2023'), generate `steps` (e.g. ['2018', '2019', '2020', '2021', '2022', '2023']), set `tool_name` to the GEE tool invoked, and provide `tool_args`.\n"
     "  - The interactive dark floating timeline scrubber will appear on the map allowing the user to play, scrub, and edit the date range.\n"
+    "40. VILLAGE & RURAL SETTLEMENT BOUNDARIES:\n"
+    "  - When the user asks to mark, show, or plot the boundary of a village, rural settlement, or rural locality (e.g. 'boundary of village X', 'plot village boundary'):\n"
+    "  - NEVER substitute, fetch, or mark the parent district or county boundary when a village is requested. A village is not a district.\n"
+    "  - For Indian rural areas and villages, use `import_datameet_boundary(level='village', state='<State Name or Code>', village_name='<Village Name>')` (or `district='<District>'` if known) to fetch and extract the exact cadastral village boundary polygon from the official boundaries dataset.\n"
+    "  - Or use `osm_boundary(name='<Village Name>', place_type='village')`. If no boundary polygon exists in official datasets or OSM, the system will mark the village's centroid with a pin and navigate there — NEVER plot the surrounding district.\n"
 )
 
 
@@ -1412,6 +1424,82 @@ _TOOLS = _build_tools()
 
 # ── Tool execution ────────────────────────────────────────────────────────────
 
+def _selected_polygon_geojson(map_context: dict | None) -> dict | None:
+    selected = (map_context or {}).get("selected_features") or []
+    features = []
+    for item in selected:
+        feature = item.get("geojson")
+        if not isinstance(feature, dict):
+            continue
+        if feature.get("type") == "Feature":
+            geometry = feature.get("geometry")
+            properties = feature.get("properties") or {}
+        elif feature.get("type") in ("Polygon", "MultiPolygon"):
+            geometry = feature
+            properties = item.get("properties") or {}
+        else:
+            continue
+        if geometry and geometry.get("type") in ("Polygon", "MultiPolygon"):
+            features.append({
+                "type": "Feature",
+                "geometry": geometry,
+                "properties": properties,
+            })
+    if not features:
+        return None
+    if len(features) == 1:
+        return features[0]
+    return {"type": "FeatureCollection", "features": features}
+
+
+def _scope_tool_to_selection(name: str, args: dict, map_context: dict | None) -> None:
+    """Pass the selected polygon to geometry-aware tools when they support GeoJSON."""
+    selected_geojson = _selected_polygon_geojson(map_context)
+    if not selected_geojson or args.get("geojson"):
+        return
+
+    layer_names = [
+        str(item.get("layerName") or "").strip().casefold()
+        for item in (map_context or {}).get("selected_features", [])
+        if item.get("geojson")
+    ]
+    place_name = str(
+        args.get("place_name")
+        or args.get("city")
+        or args.get("location")
+        or args.get("study_area")
+        or args.get("boundary_name")
+        or args.get("boundary")
+        or args.get("place")
+        or ""
+    ).strip().casefold()
+    generic_places = {
+        "", "here", "this", "this place", "that place", "the boundary",
+        "boundary", "study area", "study region", "selected layer",
+    }
+    if place_name not in generic_places and not any(
+        place_name in layer_name or layer_name in place_name
+        for layer_name in layer_names
+        if layer_name
+    ):
+        return
+
+    declaration = next(
+        (
+            tool.get("function", {}).get("parameters", {}).get("properties", {})
+            for tool in _TOOLS
+            if tool.get("function", {}).get("name") == name
+        ),
+        {},
+    )
+    if "geojson" in declaration:
+        args["geojson"] = selected_geojson
+    elif name == "gis_clip" and "clip" in declaration and not args.get("clip"):
+        args["clip"] = selected_geojson
+    elif name == "nearby_places_in_polygon" and "polygon" in declaration and not args.get("polygon"):
+        args["geojson"] = selected_geojson
+
+
 async def _execute_tool(
     name: str,
     args: dict,
@@ -1423,6 +1511,8 @@ async def _execute_tool(
 ) -> str:
     if _is_cancelled():
         return json.dumps({"status": "cancelled"})
+
+    _scope_tool_to_selection(name, args, map_context)
 
     # 1. Sync live map layers to SpatialRegistry for real-time reactivity
     if map_context and "layers" in map_context:
@@ -1737,7 +1827,8 @@ async def _execute_tool(
             return json.dumps({"status": "success", "message": f"'{name}' triggered download on map."})
 
     # 4. Map action tools (send directly to frontend)
-    if name in _ACTION_TOOLS:
+    # Note: If add_gee_layer is called without a 'url', it needs backend resolution & clipping in EnvironmentHub
+    if name in _ACTION_TOOLS and not (name == "add_gee_layer" and not args.get("url")):
         if name == "draw_polygon":
             coords = args.get("coordinates")
             if isinstance(coords, list) and len(coords) >= 3:
@@ -2558,7 +2649,20 @@ async def chat_websocket(websocket: WebSocket):
                     print(f"[RAG] Document search error: {e}")
 
             if map_context:
-                system += f"\n\nCurrent map state:\n{json.dumps(map_context, indent=2)}"
+                prompt_map_context = {
+                    **map_context,
+                    "selected_features": [
+                        {key: value for key, value in feature.items() if key != "geojson"}
+                        for feature in map_context.get("selected_features", [])
+                    ],
+                }
+                system += f"\n\nCurrent map state:\n{json.dumps(prompt_map_context, indent=2)}"
+                if map_context.get("selected_features"):
+                    system += (
+                        "\nThe backend has the exact selected feature geometry. When the user refers to "
+                        "the selected feature/layer, use it as the study boundary; never substitute its "
+                        "bounding box, viewport, or a separately looked-up boundary."
+                    )
                 if map_context.get("selected_features"):
                     selected_block = "\n\n[USER SELECTED MAP ELEMENTS / HIGHLIGHTED LAYERS]\n"
                     for sf in map_context["selected_features"]:

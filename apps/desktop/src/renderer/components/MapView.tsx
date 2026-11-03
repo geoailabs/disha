@@ -857,7 +857,8 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
     }
 
     for (const layer of layers) {
-      const fillOpacity = layer.opacity ?? 0.5
+      const isTransparentFill = layer.fillColor === 'transparent' || layer.styleSpec?.fillColor === 'transparent' || layer.fillOpacity === 0 || layer.styleSpec?.fillOpacity === 0
+      const fillOpacity = isTransparentFill ? 0 : (layer.styleSpec?.fillOpacity ?? layer.fillOpacity ?? layer.styleSpec?.opacity ?? layer.opacity ?? 0.5)
       const hasSelection = selectedLayerIds && selectedLayerIds.size > 0
       const isSelected = !hasSelection || selectedLayerIds.has(layer.id)
       const opacityMultiplier = isSelected ? 1.0 : 0.35
@@ -878,7 +879,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
             type: 'raster',
             source: layer.id,
             layout: { visibility: layer.visible ? 'visible' : 'none' },
-            paint: { 'raster-opacity': (layer.opacity ?? 1.0) * opacityMultiplier },
+            paint: { 'raster-opacity': layer.opacity ?? 1.0 },
           })
           ownLayerIds.current.add(layer.id)
         } else if (layer.geeSpec) {
@@ -893,7 +894,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
             type: 'raster',
             source: layer.id,
             layout: { visibility: layer.visible ? 'visible' : 'none' },
-            paint: { 'raster-opacity': (layer.opacity ?? 1.0) * opacityMultiplier },
+            paint: { 'raster-opacity': layer.opacity ?? 0.85 },
           })
           ownLayerIds.current.add(layer.id)
         } else if (layer.rasterOverlaySpec) {
@@ -923,7 +924,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
               type: 'raster',
               source: layer.id,
               layout: { visibility: layer.visible ? 'visible' : 'none' },
-              paint: { 'raster-opacity': (layer.opacity ?? 0.8) * opacityMultiplier },
+              paint: { 'raster-opacity': layer.opacity ?? 0.8 },
             })
             ownLayerIds.current.add(layer.id)
           } else {
@@ -945,9 +946,9 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
           ],
           paint: {
             'fill-color': fillColorExpression(layer),
-            'fill-opacity': ['*', ['coalesce', ['get', 'fillOpacity'], fillOpacity], opacityMultiplier] as DataDrivenPropertyValueSpecification<number>,
+            'fill-opacity': isTransparentFill ? 0 : (['*', ['coalesce', ['get', 'fillOpacity'], fillOpacity], opacityMultiplier] as DataDrivenPropertyValueSpecification<number>),
           },
-          layout: { visibility: layer.visible ? 'visible' : 'none' },
+          layout: { visibility: (!layer.visible || isTransparentFill) ? 'none' : 'visible' },
         })
 
         map.addLayer({
@@ -962,7 +963,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
           paint: {
             'line-color': lineColorExpression(layer),
             'line-width': layer.styleSpec?.lineWidth ?? layer.lineWidth ?? 2,
-            'line-opacity': (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5) * opacityMultiplier,
+            'line-opacity': isTransparentFill ? 1.0 : (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5) * opacityMultiplier,
           },
           layout: { visibility: layer.visible ? 'visible' : 'none' },
         })
@@ -1070,20 +1071,20 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
               type: 'raster',
               source: layer.id,
               layout: { visibility: vis },
-              paint: { 'raster-opacity': (layer.opacity ?? 1.0) * opacityMultiplier },
+              paint: { 'raster-opacity': layer.opacity ?? 0.85 },
             })
           }
         } else if (layer.wmsSpec) {
           const vis = layer.visible ? 'visible' : 'none'
           if (map.getLayer(`${layer.id}-raster`)) {
             map.setLayoutProperty(`${layer.id}-raster`, 'visibility', vis)
-            map.setPaintProperty(`${layer.id}-raster`, 'raster-opacity', (layer.opacity ?? 1.0) * opacityMultiplier)
+            map.setPaintProperty(`${layer.id}-raster`, 'raster-opacity', layer.opacity ?? 1.0)
           }
         } else if (layer.rasterOverlaySpec) {
           const vis = layer.visible ? 'visible' : 'none'
           if (map.getLayer(`${layer.id}-raster`)) {
             map.setLayoutProperty(`${layer.id}-raster`, 'visibility', vis)
-            map.setPaintProperty(`${layer.id}-raster`, 'raster-opacity', (layer.opacity ?? 0.8) * opacityMultiplier)
+            map.setPaintProperty(`${layer.id}-raster`, 'raster-opacity', layer.opacity ?? 0.8)
           }
           const src = map.getSource(layer.id) as maplibregl.ImageSource
           if (src && src.setCoordinates && layer.rasterOverlaySpec.corners) {
@@ -1116,19 +1117,19 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
           const vis = layer.visible ? 'visible' : 'none'
           for (const suffix of ['-fill', '-outline', '-line', '-circle']) {
             if (map.getLayer(`${layer.id}${suffix}`)) {
-              map.setLayoutProperty(`${layer.id}${suffix}`, 'visibility', vis)
+              map.setLayoutProperty(`${layer.id}${suffix}`, 'visibility', (suffix === '-fill' && isTransparentFill) ? 'none' : vis)
             }
           }
           if (map.getLayer(`${layer.id}-fill`)) {
             map.setPaintProperty(`${layer.id}-fill`, 'fill-color', fillColorExpression(layer))
             map.setPaintProperty(
               `${layer.id}-fill`, 'fill-opacity',
-              ['*', ['coalesce', ['get', 'fillOpacity'], fillOpacity], opacityMultiplier] as DataDrivenPropertyValueSpecification<number>,
+              isTransparentFill ? 0 : (['*', ['coalesce', ['get', 'fillOpacity'], fillOpacity], opacityMultiplier] as DataDrivenPropertyValueSpecification<number>),
             )
           }
           if (map.getLayer(`${layer.id}-outline`)) {
             map.setPaintProperty(`${layer.id}-outline`, 'line-color', lineColorExpression(layer))
-            map.setPaintProperty(`${layer.id}-outline`, 'line-opacity', (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5) * opacityMultiplier)
+            map.setPaintProperty(`${layer.id}-outline`, 'line-opacity', isTransparentFill ? 1.0 : (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5) * opacityMultiplier)
             map.setPaintProperty(`${layer.id}-outline`, 'line-width', layer.styleSpec?.lineWidth ?? layer.lineWidth ?? 2)
           }
           if (map.getLayer(`${layer.id}-line`)) {
@@ -1567,12 +1568,32 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
 
       switch (type) {
         case 'fly_to': {
-          const { lng, lat, zoom } = payload
+          let lng = payload?.lng ?? payload?.longitude
+          let lat = payload?.lat ?? payload?.latitude
+          if ((lng === undefined || lat === undefined) && Array.isArray(payload?.center) && payload.center.length >= 2) {
+            lng = payload.center[0]
+            lat = payload.center[1]
+          }
+          if ((lng === undefined || lat === undefined) && Array.isArray(payload?.coordinates) && payload.coordinates.length >= 2) {
+            lng = payload.coordinates[0]
+            lat = payload.coordinates[1]
+          }
+          if ((lng === undefined || lat === undefined) && Array.isArray(payload?.coords) && payload.coords.length >= 2) {
+            lng = payload.coords[0]
+            lat = payload.coords[1]
+          }
+          if ((lng === undefined || lat === undefined) && Array.isArray(payload) && payload.length >= 2) {
+            lng = payload[0]
+            lat = payload[1]
+          }
+          lng = typeof lng === 'string' ? parseFloat(lng) : Number(lng)
+          lat = typeof lat === 'string' ? parseFloat(lat) : Number(lat)
+          const zoomVal = typeof payload?.zoom === 'number' ? payload.zoom : (typeof payload?.zoom === 'string' ? parseFloat(payload.zoom) : 15)
+          const zoom = Number.isFinite(zoomVal) && zoomVal > 0 ? zoomVal : 15
+
           if (
-            typeof lng === 'number' &&
-            typeof lat === 'number' &&
-            isFinite(lng) &&
-            isFinite(lat) &&
+            Number.isFinite(lng) &&
+            Number.isFinite(lat) &&
             lng >= -180 &&
             lng <= 180 &&
             lat >= -90 &&
@@ -1580,7 +1601,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
           ) {
             map.flyTo({
               center: [lng, lat],
-              zoom: zoom || 15,
+              zoom,
               duration: 2000,
               bearing: map.getBearing(),
               pitch: map.getPitch(),
@@ -1592,32 +1613,61 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
         }
 
         case 'fit_bounds': {
-          const { west, south, east, north } = payload
+          let w: any = payload?.west ?? payload?.minx
+          let s: any = payload?.south ?? payload?.miny
+          let e: any = payload?.east ?? payload?.maxx
+          let n: any = payload?.north ?? payload?.maxy
+
+          if ((w === undefined || s === undefined || e === undefined || n === undefined) && Array.isArray(payload?.bounds)) {
+            if (payload.bounds.length === 4) {
+              [w, s, e, n] = payload.bounds
+            } else if (payload.bounds.length === 2 && Array.isArray(payload.bounds[0]) && Array.isArray(payload.bounds[1])) {
+              w = payload.bounds[0][0]
+              s = payload.bounds[0][1]
+              e = payload.bounds[1][0]
+              n = payload.bounds[1][1]
+            }
+          }
+          if ((w === undefined || s === undefined || e === undefined || n === undefined) && Array.isArray(payload?.bbox) && payload.bbox.length === 4) {
+            [w, s, e, n] = payload.bbox
+          }
+          if ((w === undefined || s === undefined || e === undefined || n === undefined) && Array.isArray(payload) && payload.length === 4) {
+            [w, s, e, n] = payload
+          }
+
+          w = typeof w === 'string' ? parseFloat(w) : Number(w)
+          s = typeof s === 'string' ? parseFloat(s) : Number(s)
+          e = typeof e === 'string' ? parseFloat(e) : Number(e)
+          n = typeof n === 'string' ? parseFloat(n) : Number(n)
+
           if (
-            typeof west === 'number' &&
-            typeof south === 'number' &&
-            typeof east === 'number' &&
-            typeof north === 'number' &&
-            isFinite(west) &&
-            isFinite(south) &&
-            isFinite(east) &&
-            isFinite(north) &&
-            west >= -180 &&
-            west <= 180 &&
-            east >= -180 &&
-            east <= 180 &&
-            south >= -90 &&
-            south <= 90 &&
-            north >= -90 &&
-            north <= 90
+            Number.isFinite(w) && Number.isFinite(s) && Number.isFinite(e) && Number.isFinite(n) &&
+            w >= -180 && w <= 180 && e >= -180 && e <= 180 &&
+            s >= -90 && s <= 90 && n >= -90 && n <= 90
           ) {
-            map.fitBounds(
-              [
-                [west, south],
-                [east, north],
-              ],
-              { padding: 60, duration: 1500, bearing: map.getBearing(), pitch: map.getPitch() },
-            )
+            const minLng = Math.min(w, e)
+            const maxLng = Math.max(w, e)
+            const minLat = Math.min(s, n)
+            const maxLat = Math.max(s, n)
+
+            // If it's a single point or near-zero area, fitBounds can fail or zoom to infinity.
+            if (Math.abs(maxLng - minLng) < 1e-5 && Math.abs(maxLat - minLat) < 1e-5) {
+              map.flyTo({
+                center: [(minLng + maxLng) / 2, (minLat + maxLat) / 2],
+                zoom: 14,
+                duration: 1500,
+                bearing: map.getBearing(),
+                pitch: map.getPitch(),
+              })
+            } else {
+              map.fitBounds(
+                [
+                  [minLng, minLat],
+                  [maxLng, maxLat],
+                ],
+                { padding: 60, duration: 1500, maxZoom: 16, bearing: map.getBearing(), pitch: map.getPitch() },
+              )
+            }
           } else {
             console.error('Invalid bounds for fit_bounds:', payload)
           }

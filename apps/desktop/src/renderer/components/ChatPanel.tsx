@@ -1850,7 +1850,11 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
     }
 
     const activeSelection = mapContext.selected_features && mapContext.selected_features.length > 0
-      ? mapContext.selected_features
+      ? mapContext.selected_features.map(({ layerId, layerName, properties }) => ({
+          layerId,
+          layerName,
+          properties,
+        }))
       : undefined
 
     const userMessage: ChatMessage = {
