@@ -2311,7 +2311,6 @@ class SyncKeysRequest(BaseModel):
     openai_api_key: str | None = None
     google_maps_api_key: str | None = None
     gee_credentials: str | None = None
-    mapillary_token: str | None = None
 
 
 @router.post("/sync-keys")
@@ -2352,19 +2351,11 @@ async def sync_keys(req: SyncKeysRequest):
         else:
             os.environ.pop("GOOGLE_EARTH_ENGINE_CREDS", None)
 
-    if req.mapillary_token is not None:
-        clean_map = "".join(c for c in req.mapillary_token if 32 <= ord(c) <= 126).strip()
-        if clean_map:
-            os.environ["MAPILLARY_ACCESS_TOKEN"] = clean_map
-        else:
-            os.environ.pop("MAPILLARY_ACCESS_TOKEN", None)
-
     return {
         "status": "ok",
         "openai": bool(_env_openai_api_key()),
         "google_maps": bool(_env_google_maps_api_key()),
         "gee": bool(os.environ.get("GOOGLE_EARTH_ENGINE_CREDS")),
-        "mapillary": bool(os.environ.get("MAPILLARY_ACCESS_TOKEN")),
     }
 
 
@@ -2374,7 +2365,6 @@ async def key_status():
         "openai": bool(_env_openai_api_key()),
         "google_maps": bool(_env_google_maps_api_key()),
         "gee": bool(os.environ.get("GOOGLE_EARTH_ENGINE_CREDS")),
-        "mapillary": bool(os.environ.get("MAPILLARY_ACCESS_TOKEN")),
     }
 
 
@@ -2585,12 +2575,6 @@ async def chat_websocket(websocket: WebSocket):
 
             # Set the context-local variable for this WebSocket iteration
             google_maps_key_var.set(google_maps_api_key)
-
-            mapillary_token = (payload.get("mapillary_token") or "").strip()
-            if not mapillary_token:
-                mapillary_token = (os.environ.get("MAPILLARY_ACCESS_TOKEN") or "").strip()
-            if mapillary_token and not os.environ.get("MAPILLARY_ACCESS_TOKEN"):
-                os.environ["MAPILLARY_ACCESS_TOKEN"] = mapillary_token
 
             if not api_key:
                 await websocket.send_text(json.dumps({

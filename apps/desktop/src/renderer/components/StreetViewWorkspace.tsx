@@ -125,19 +125,44 @@ export default function StreetViewWorkspace({
 
   useEffect(() => {
     let cancelled = false
-    fetch(`${API}/token`)
-      .then((r) => r.json())
-      .then((data: { google_key?: string }) => {
-        if (!cancelled) {
-          setGoogleApiKey(data.google_key || '')
+
+    const loadGoogleKey = async () => {
+      if (window.electronAPI?.getGoogleMapsKey) {
+        try {
+          const key = await window.electronAPI.getGoogleMapsKey()
+          if (!cancelled && key) {
+            setGoogleApiKey(key)
+            return
+          }
+        } catch { /* fallback to fetch */ }
+      }
+      try {
+        const r = await fetch(`${API}/token`)
+        const data: { google_key?: string } = await r.json()
+        if (!cancelled && data.google_key) {
+          setGoogleApiKey(data.google_key)
         }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setGoogleApiKey('')
-        }
-      })
-    return () => { cancelled = true }
+      } catch {
+        if (!cancelled) setGoogleApiKey('')
+      }
+    }
+
+    loadGoogleKey()
+
+    const handleKeysUpdated = (e?: Event) => {
+      const customEvent = e as CustomEvent<{ google?: string }> | undefined
+      if (customEvent?.detail?.google !== undefined) {
+        setGoogleApiKey(customEvent.detail.google)
+      } else {
+        loadGoogleKey()
+      }
+    }
+    window.addEventListener('disha-api-keys-updated', handleKeysUpdated)
+
+    return () => {
+      cancelled = true
+      window.removeEventListener('disha-api-keys-updated', handleKeysUpdated)
+    }
   }, [])
 
   useEffect(() => {

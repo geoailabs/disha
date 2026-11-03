@@ -42,13 +42,11 @@ declare global {
     importSpatialFiles: (workspacePath: string) => Promise<string[]>
     getAPIKey: () => Promise<string>
     setAPIKey: (key: string) => Promise<boolean>
-    getKeyStatus: () => Promise<{ openai: boolean; google_maps: boolean; gee: boolean; mapillary: boolean }>
+    getKeyStatus: () => Promise<{ openai: boolean; google_maps: boolean; gee: boolean }>
     getGoogleMapsKey: () => Promise<string>
     setGoogleMapsKey: (key: string) => Promise<boolean>
     getGEEKey: () => Promise<string>
     setGEEKey: (key: string) => Promise<boolean>
-    getMapillaryKey: () => Promise<string>
-    setMapillaryKey: (key: string) => Promise<boolean>
     onAPIKeysUpdated?: (handler: () => void) => void
     savePDF: (htmlContent: string, defaultName: string) => Promise<boolean>
     onFullscreenChange: (handler: (isFullscreen: boolean) => void) => void

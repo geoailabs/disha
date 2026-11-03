@@ -31,10 +31,8 @@ export default function DiagnosticsPanel({ onClose, workspacePath }: Diagnostics
   const [openaiInput, setOpenaiInput] = useState('')
   const [googleInput, setGoogleInput] = useState('')
   const [geeInput, setGeeInput] = useState('')
-  const [mapillaryInput, setMapillaryInput] = useState('')
   const [showOpenai, setShowOpenai] = useState(false)
   const [showGoogle, setShowGoogle] = useState(false)
-  const [showMapillary, setShowMapillary] = useState(false)
   const [saveStatus, setSaveStatus] = useState<string | null>(null)
 
   const normalizeKey = (k: string, prefixRegex?: RegExp) => {
@@ -85,16 +83,13 @@ export default function DiagnosticsPanel({ onClose, workspacePath }: Diagnostics
         window.electronAPI.getAPIKey().catch(() => ''),
         window.electronAPI.getGoogleMapsKey().catch(() => ''),
         window.electronAPI.getGEEKey().catch(() => ''),
-        window.electronAPI.getMapillaryKey ? window.electronAPI.getMapillaryKey().catch(() => '') : Promise.resolve('')
-      ]).then(([oKey, gKey, geeKey, mKey]) => {
+      ]).then(([oKey, gKey, geeKey]) => {
         const cleanO = normalizeKey(oKey || '', /^(?:export\s+)?(?:OPENAI_API_KEY)\s*=\s*/i)
         const cleanG = normalizeKey(gKey || '', /^(?:export\s+)?(?:GOOGLE_MAPS_API_KEY|GOOGLE_API_KEY)\s*=\s*/i)
         const cleanGee = (geeKey || '').trim().replace(/[^\x20-\x7E\r\n\t]/g, '')
-        const cleanM = normalizeKey(mKey || '', /^(?:export\s+)?(?:MAPILLARY_ACCESS_TOKEN|MAPILLARY_CLIENT_TOKEN)\s*=\s*/i)
         if (cleanO) setOpenaiInput(cleanO)
         if (cleanG) setGoogleInput(cleanG)
         if (cleanGee) setGeeInput(cleanGee)
-        if (cleanM) setMapillaryInput(cleanM)
         runChecks()
       })
     } else {
@@ -131,21 +126,16 @@ export default function DiagnosticsPanel({ onClose, workspacePath }: Diagnostics
     const cleanO = normalizeKey(openaiInput, /^(?:export\s+)?(?:OPENAI_API_KEY)\s*=\s*/i)
     const cleanG = normalizeKey(googleInput, /^(?:export\s+)?(?:GOOGLE_MAPS_API_KEY|GOOGLE_API_KEY)\s*=\s*/i)
     const cleanGee = (geeInput || '').trim().replace(/[^\x20-\x7E\r\n\t]/g, '')
-    const cleanM = normalizeKey(mapillaryInput, /^(?:export\s+)?(?:MAPILLARY_ACCESS_TOKEN|MAPILLARY_CLIENT_TOKEN)\s*=\s*/i)
 
     setOpenaiInput(cleanO)
     setGoogleInput(cleanG)
     setGeeInput(cleanGee)
-    setMapillaryInput(cleanM)
 
     try {
       if (window.electronAPI) {
         await window.electronAPI.setAPIKey(cleanO)
         await window.electronAPI.setGoogleMapsKey(cleanG)
         await window.electronAPI.setGEEKey(cleanGee)
-        if (window.electronAPI.setMapillaryKey) {
-          await window.electronAPI.setMapillaryKey(cleanM)
-        }
 
         // Immediately sync keys to the running Python backend process
         try {
@@ -156,7 +146,6 @@ export default function DiagnosticsPanel({ onClose, workspacePath }: Diagnostics
               openai_api_key: cleanO,
               google_maps_api_key: cleanG,
               gee_credentials: cleanGee,
-              mapillary_token: cleanM,
             }),
           })
         } catch (syncErr) {
@@ -166,7 +155,7 @@ export default function DiagnosticsPanel({ onClose, workspacePath }: Diagnostics
         // Broadcast to ChatPanel and other components
         window.dispatchEvent(
           new CustomEvent('disha-api-keys-updated', {
-            detail: { openai: cleanO, google: cleanG, gee: cleanGee, mapillary: cleanM },
+            detail: { openai: cleanO, google: cleanG, gee: cleanGee },
           })
         )
 
@@ -366,28 +355,6 @@ export default function DiagnosticsPanel({ onClose, workspacePath }: Diagnostics
                   autoComplete="off"
                   spellCheck="false"
                 />
-              </div>
-
-              <div className="form-group">
-                <label htmlFor="mapillary_key">Mapillary Access Token (Optional — for Community Street View Imagery)</label>
-                <div className="input-row">
-                  <input
-                    type={showMapillary ? 'text' : 'password'}
-                    id="mapillary_key"
-                    placeholder="MLY|..."
-                    value={mapillaryInput}
-                    onChange={(e) => setMapillaryInput(e.target.value)}
-                    autoComplete="off"
-                    spellCheck="false"
-                  />
-                  <button
-                    type="button"
-                    className="input-toggle-btn"
-                    onClick={() => setShowMapillary((v) => !v)}
-                  >
-                    {showMapillary ? 'Hide' : 'Show'}
-                  </button>
-                </div>
               </div>
 
               <div className="form-actions">

@@ -25,7 +25,6 @@
     "highlight.js": "^11.11.1",
     "jspdf": "^4.2.1",
     "maplibre-gl": "^5.20.2",
-    "mapillary-js": "^4.1.2",
     "pdfjs-dist": "^5.7.284",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",

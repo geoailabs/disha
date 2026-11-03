@@ -471,7 +471,7 @@ Renderer interacts with Electron main via `window.electronAPI`:
 - **Defaults & Persistence:** `getLastWorkspace()`, `setLastWorkspace(path)`, `getDefaultDishaFolder()`, `getDefaultWorkspace()`, `setDefaultWorkspace(path)`, `onAppBeforeQuit(callback)`
 - **Spatial Import & Vision:** `importSpatialFiles(workspacePath)`, `readFileBase64(path)`, `savePDF(htmlContent, defaultName)`
 - **AI Model Selection:** `getModels()`, `getCurrentModel()`, `switchModel(modelId)`
-- **Credential Security (`safeStorage`):** `getAPIKey()`, `setAPIKey(key)`, `getKeyStatus()`, `getGoogleMapsKey()`, `setGoogleMapsKey(key)`, `getGEEKey()`, `setGEEKey(key)`, `getMapillaryKey()`, `setMapillaryKey(key)`, `onAPIKeysUpdated(callback)`
+- **Credential Security (`safeStorage`):** `getAPIKey()`, `setAPIKey(key)`, `getKeyStatus()`, `getGoogleMapsKey()`, `setGoogleMapsKey(key)`, `getGEEKey()`, `setGEEKey(key)`, `onAPIKeysUpdated(callback)`
 - **Window Controls & Lifecycle:** `minimizeWindow()`, `maximizeWindow()`, `closeWindow()`, `quitApp()`, `reloadWindow()`, `toggleFullscreen()`, `onFullscreenChange(callback)`, `onOpenPreferences(callback)`
 
 ## Graceful macOS Quit Lifecycle & Backend Process Termination
@@ -484,13 +484,12 @@ Disha implements full standard macOS application lifecycle semantics across its 
   4. The main process signals the FastAPI backend process with `SIGTERM` / `SIGKILL` and destroys all browser windows.
 - **`Cmd + W` / Window Close:** Closes the active window without terminating the backend, leaving the app resident in the macOS Dock for instant reactivation.
 
-## Universal 4-Credential Dynamic API Key Architecture
+## Universal 3-Credential Dynamic API Key Architecture
 
-Credential management in Disha handles four distinct geospatial planning tokens across the frontend, Electron secure storage, and the running FastAPI backend:
+Credential management in Disha handles three distinct geospatial planning tokens across the frontend, Electron secure storage, and the running FastAPI backend:
 1. **OpenAI API Key** (`OPENAI_API_KEY`)
 2. **Google Maps Platform API Key** (`GOOGLE_MAPS_API_KEY`)
 3. **Google Earth Engine Service Account JSON** (`GOOGLE_EARTH_ENGINE_CREDS`)
-4. **Mapillary Access Token** (`MAPILLARY_ACCESS_TOKEN`)
 
 ### Architecture Invariants:
 - **Controlled React State:** Secret inputs are strictly controlled (`value={...}`, `onChange={...}`) with show/hide password visibility toggles, avoiding DOM-based `getElementById` lookups that break during re-renders.

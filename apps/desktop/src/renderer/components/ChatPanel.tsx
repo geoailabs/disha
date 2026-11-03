@@ -621,15 +621,6 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
   const [geeKeyError, setGeeKeyError] = useState<string | null>(null)
   const [geeKeySuccess, setGeeKeySuccess] = useState(false)
 
-  // Mapillary Token State
-  const [mapillaryKey, setMapillaryKey] = useState('')
-  const [mapillaryInput, setMapillaryInput] = useState('')
-  const [showMapillaryPassword, setShowMapillaryPassword] = useState(false)
-  const [hasEnvMapillaryKey, setHasEnvMapillaryKey] = useState(false)
-  const [isSavingMapillaryKey, setIsSavingMapillaryKey] = useState(false)
-  const [mapillaryKeyError, setMapillaryKeyError] = useState<string | null>(null)
-  const [mapillaryKeySuccess, setMapillaryKeySuccess] = useState(false)
-
   // Deep research state
   const [researchPhase, setResearchPhase] = useState<ResearchPhase>('idle')
   const [researchSteps, setResearchSteps] = useState<string[]>([])
@@ -695,7 +686,6 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
   const messages = activeConversation?.messages ?? []
   const hasOpenAIKey = apiKey.trim().length > 0 || hasEnvApiKey
   const hasGoogleMapsKey = googleKey.trim().length > 0 || hasEnvGoogleKey
-  const hasMapillaryKey = mapillaryKey.trim().length > 0 || hasEnvMapillaryKey
   const onMessagesChangeRef = useRef(onMessagesChange)
   onMessagesChangeRef.current = onMessagesChange
   const onMapActionRef = useRef(onMapAction)
@@ -715,11 +705,9 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
     let storedApiKey = ''
     let storedGoogleKey = ''
     let storedGeeKey = ''
-    let storedMapillaryKey = ''
     let envOpenAI = false
     let envGoogle = false
     let envGee = false
-    let envMapillary = false
     let envStatusLoaded = false
 
     if (window.electronAPI) {
@@ -745,20 +733,10 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
       }
 
       try {
-        if (window.electronAPI.getMapillaryKey) {
-          const raw = await window.electronAPI.getMapillaryKey()
-          storedMapillaryKey = normalizeKey(raw || '', /^(?:export\s+)?(?:MAPILLARY_ACCESS_TOKEN|MAPILLARY_CLIENT_TOKEN)\s*=\s*/i)
-        }
-      } catch (err) {
-        console.error('Failed to load Mapillary key:', err)
-      }
-
-      try {
         const status = await window.electronAPI.getKeyStatus()
         envOpenAI = envOpenAI || !!status.openai
         envGoogle = envGoogle || !!status.google_maps
         envGee = envGee || !!status.gee
-        envMapillary = envMapillary || !!status.mapillary
       } catch (err) {
         console.error('Failed to detect Electron environment API keys:', err)
       }
@@ -770,7 +748,6 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
       envOpenAI = envOpenAI || !!status.openai
       envGoogle = envGoogle || !!status.google_maps
       envGee = envGee || !!status.gee
-      envMapillary = envMapillary || !!status.mapillary
       envStatusLoaded = true
     } catch (err) {
       console.error('Failed to detect backend environment API keys:', err)
@@ -782,16 +759,13 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
     setGoogleInput(storedGoogleKey || '')
     setGeeKey(storedGeeKey || '')
     setGeeInput(storedGeeKey || '')
-    setMapillaryKey(storedMapillaryKey || '')
-    setMapillaryInput(storedMapillaryKey || '')
 
     setHasEnvApiKey(envOpenAI)
     setHasEnvGoogleKey(envGoogle)
-    setHasEnvMapillaryKey(envMapillary)
     setIsKeyLoaded(true)
     setShowApiKeyInput(!(storedApiKey || envOpenAI))
 
-    if (storedApiKey || storedGoogleKey || storedGeeKey || storedMapillaryKey) {
+    if (storedApiKey || storedGoogleKey || storedGeeKey) {
       fetch('http://localhost:8765/api/chat/sync-keys', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -799,7 +773,6 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
           openai_api_key: storedApiKey,
           google_maps_api_key: storedGoogleKey,
           gee_credentials: storedGeeKey,
-          mapillary_token: storedMapillaryKey,
         }),
       }).catch(() => {})
     }
@@ -813,7 +786,7 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
     loadKeys()
 
     const handleKeysUpdated = (e?: Event) => {
-      const customEvent = e as CustomEvent<{ openai?: string; google?: string; gee?: string; mapillary?: string }> | undefined
+      const customEvent = e as CustomEvent<{ openai?: string; google?: string; gee?: string }> | undefined
       if (customEvent?.detail) {
         if (customEvent.detail.openai !== undefined) {
           const clean = normalizeKey(customEvent.detail.openai, /^(?:export\s+)?(?:OPENAI_API_KEY)\s*=\s*/i)
@@ -836,14 +809,6 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
           const clean = (customEvent.detail.gee || '').trim().replace(/[^\x20-\x7E\r\n\t]/g, '')
           setGeeKey(clean)
           setGeeInput(clean)
-        }
-        if (customEvent.detail.mapillary !== undefined) {
-          const clean = normalizeKey(customEvent.detail.mapillary, /^(?:export\s+)?(?:MAPILLARY_ACCESS_TOKEN|MAPILLARY_CLIENT_TOKEN)\s*=\s*/i)
-          setMapillaryKey(clean)
-          setMapillaryInput(clean)
-          if (clean.trim()) {
-            setHasEnvMapillaryKey(true)
-          }
         }
       }
       loadKeys()
@@ -1650,59 +1615,6 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
     }
   }
 
-  const saveMapillaryKey = async (explicitKey?: string): Promise<boolean> => {
-    const rawVal = explicitKey !== undefined ? explicitKey : mapillaryInput
-    const cleanKey = normalizeKey(rawVal, /^(?:export\s+)?(?:MAPILLARY_ACCESS_TOKEN|MAPILLARY_CLIENT_TOKEN)\s*=\s*/i)
-    setMapillaryInput(cleanKey)
-    if (!cleanKey) {
-      await clearMapillaryKey()
-      return true
-    }
-
-    setIsSavingMapillaryKey(true)
-    setMapillaryKeyError(null)
-    try {
-      if (window.electronAPI?.setMapillaryKey) {
-        const ok = await window.electronAPI.setMapillaryKey(cleanKey)
-        if (ok) {
-          setMapillaryKey(cleanKey)
-          setIsSavingMapillaryKey(false)
-          setMapillaryKeySuccess(true)
-          fetch('http://localhost:8765/api/chat/sync-keys', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ mapillary_token: cleanKey }),
-          }).catch(() => {})
-          setTimeout(() => setMapillaryKeySuccess(false), 2000)
-          return true
-        } else {
-          setMapillaryKeyError('Failed to save Mapillary token securely.')
-        }
-      }
-    } catch (err) {
-      setMapillaryKeyError('Failed to save Mapillary token.')
-    }
-    setIsSavingMapillaryKey(false)
-    return false
-  }
-
-  const clearMapillaryKey = async () => {
-    try {
-      if (window.electronAPI?.setMapillaryKey) {
-        await window.electronAPI.setMapillaryKey('')
-      }
-      setMapillaryKey('')
-      setMapillaryInput('')
-      fetch('http://localhost:8765/api/chat/sync-keys', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mapillary_token: '' }),
-      }).catch(() => {})
-    } catch (err: any) {
-      console.error('Failed to clear Mapillary token:', err)
-    }
-  }
-
   const removeAttachment = (index: number) => {
     setAttachments((prev) => prev.filter((_, i) => i !== index))
   }
@@ -1895,7 +1807,6 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
         map_context: mapContext,
         api_key: effectiveApiKey || apiKey.replace(/[^\x20-\x7E]/g, '').trim(),
         google_maps_api_key: (googleKey || '').replace(/[^\x20-\x7E]/g, '').trim(),
-        mapillary_token: (mapillaryKey || '').replace(/[^\x20-\x7E]/g, '').trim(),
         image: documentImage
           ? {
               base64: documentImage.base64,
@@ -2175,20 +2086,6 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
                     <span className="api-key-label">GEE Credentials inactive</span>
                   </div>
                 )}
-
-                {hasMapillaryKey ? (
-                  <div className="api-key-status success">
-                    <span className="api-key-indicator green">●</span>
-                    <span className="api-key-label">
-                      Mapillary active{!mapillaryKey.trim() && hasEnvMapillaryKey ? ' (env)' : ''}
-                    </span>
-                  </div>
-                ) : (
-                  <div className="api-key-status info">
-                    <span className="api-key-indicator gray">●</span>
-                    <span className="api-key-label">Mapillary inactive</span>
-                  </div>
-                )}
               </div>
 
               {/* API Settings toggle — gear outline with API text inside */}
@@ -2429,65 +2326,6 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
                       </svg>
                     </span>
                     <span>{geeKeyError}</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Mapillary Access Token Section */}
-              <div className="setting-field-group" style={{ marginTop: '12px', borderTop: '1px solid var(--border)', paddingTop: '12px' }}>
-                <label htmlFor="mapillary-key-input-element" className="setting-field-label">Mapillary Access Token (Optional)</label>
-                <div className="api-key-input-wrapper">
-                  <input
-                    type={showMapillaryPassword ? 'text' : 'password'}
-                    className="api-key-input-field"
-                    value={mapillaryInput}
-                    onChange={(e) => setMapillaryInput(e.target.value)}
-                    id="mapillary-key-input-element"
-                    placeholder="MLY|..."
-                    disabled={isSavingMapillaryKey}
-                    autoComplete="off"
-                    spellCheck="false"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        saveMapillaryKey()
-                      }
-                    }}
-                  />
-                  <button
-                    type="button"
-                    className="api-key-toggle-btn"
-                    onClick={() => setShowMapillaryPassword((v) => !v)}
-                    title={showMapillaryPassword ? 'Hide Key' : 'Show Key'}
-                  >
-                    {showMapillaryPassword ? 'Hide' : 'Show'}
-                  </button>
-                  <button
-                    className={`api-key-save-btn ${mapillaryKeySuccess ? 'success' : ''}`}
-                    onClick={() => saveMapillaryKey()}
-                    disabled={isSavingMapillaryKey}
-                  >
-                    {isSavingMapillaryKey ? 'Saving...' : mapillaryKeySuccess ? 'Saved' : 'Save'}
-                  </button>
-                  {mapillaryKey && (
-                    <button
-                      className="api-key-clear-btn"
-                      onClick={clearMapillaryKey}
-                      disabled={isSavingMapillaryKey}
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
-                {mapillaryKeyError && (
-                  <div className="api-key-error-msg">
-                    <span className="api-key-error-icon">
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <circle cx="12" cy="12" r="10" />
-                        <line x1="12" y1="8" x2="12" y2="12" />
-                        <line x1="12" y1="16" x2="12.01" y2="16" />
-                      </svg>
-                    </span>
-                    <span>{mapillaryKeyError}</span>
                   </div>
                 )}
               </div>

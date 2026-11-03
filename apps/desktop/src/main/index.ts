@@ -91,16 +91,14 @@ function getPrimaryConfigPath(filename: string): string {
   return path.join(app.getPath('userData'), filename)
 }
 
-function getKeyStatus(): { openai: boolean; google_maps: boolean; gee: boolean; mapillary: boolean } {
+function getKeyStatus(): { openai: boolean; google_maps: boolean; gee: boolean } {
   const openaiKey = normalizeApiKey(readEnvValue(['OPENAI_API_KEY'])) || readAndDecryptKey()
   const googleKey = normalizeApiKey(readEnvValue(['GOOGLE_MAPS_API_KEY', 'GOOGLE_API_KEY'])) || readAndDecryptGoogleMapsKey()
   const geeKey = normalizeGEEKey(readEnvValue(['GOOGLE_EARTH_ENGINE_CREDS', 'GEE_CREDENTIALS'])) || readAndDecryptGEEKey()
-  const mapillaryKey = normalizeApiKey(readEnvValue(['MAPILLARY_ACCESS_TOKEN', 'MAPILLARY_CLIENT_TOKEN'])) || readAndDecryptMapillaryKey()
   return {
     openai: Boolean(openaiKey && openaiKey.length >= 8),
     google_maps: Boolean(googleKey && googleKey.length >= 8),
     gee: Boolean(geeKey && geeKey.includes('service_account')),
-    mapillary: Boolean(mapillaryKey && mapillaryKey.length >= 8),
   }
 }
 
@@ -183,7 +181,7 @@ function normalizeApiKey(k: unknown): string {
   if (typeof k !== 'string') return ''
   let s = k.trim()
   // Strip shell export statements or env prefixes
-  s = s.replace(/^(?:export\s+)?(?:OPENAI_API_KEY|GOOGLE_MAPS_API_KEY|GOOGLE_API_KEY|MAPILLARY_ACCESS_TOKEN|MAPILLARY_CLIENT_TOKEN)\s*=\s*/i, '')
+  s = s.replace(/^(?:export\s+)?(?:OPENAI_API_KEY|GOOGLE_MAPS_API_KEY|GOOGLE_API_KEY)\s*=\s*/i, '')
   // Strip 'Bearer ' if user pasted curl auth header
   s = s.replace(/^Bearer\s+/i, '')
   // Strip surrounding quotes
@@ -227,11 +225,6 @@ function isValidGEEKey(k: unknown): k is string {
     norm.includes('service_account') &&
     norm.includes('private_key')
   )
-}
-
-function isValidMapillaryKey(k: unknown): k is string {
-  const norm = normalizeApiKey(k)
-  return Boolean(norm.length >= 8)
 }
 
 // API Key persistence with safeStorage encryption
@@ -576,109 +569,6 @@ function encryptAndSaveGEEKey(key: string): boolean {
   }
 }
 
-// Mapillary Access Token persistence with safeStorage encryption
-function readAndDecryptMapillaryKey(): string {
-  try {
-    for (const configPath of getConfigCandidates('mapillary-token.json')) {
-      if (!fs.existsSync(configPath)) continue
-      try {
-        const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
-        if (!config || typeof config !== 'object') continue
-
-        // 1. Try safeStorage if marked encrypted
-        if (config.encrypted && config.key && safeStorage.isEncryptionAvailable()) {
-          try {
-            const encryptedBuffer = Buffer.from(config.key, 'hex')
-            const decrypted = safeStorage.decryptString(encryptedBuffer)
-            if (isValidMapillaryKey(decrypted)) return normalizeApiKey(decrypted)
-          } catch (decryptErr) {
-            console.warn('safeStorage.decryptString failed for Mapillary:', decryptErr)
-          }
-        }
-
-        // 2. Try explicit fallback if present
-        if (config.fallback && typeof config.fallback === 'string') {
-          try {
-            const decrypted = Buffer.from(config.fallback, 'base64').toString('utf-8')
-            if (isValidMapillaryKey(decrypted)) {
-              return normalizeApiKey(decrypted)
-            }
-          } catch {}
-        }
-
-        // 3. Try legacy base64 or plaintext ONLY if not marked encrypted
-        if (!config.encrypted && config.key && typeof config.key === 'string') {
-          try {
-            const decrypted = Buffer.from(config.key, 'base64').toString('utf-8')
-            if (isValidMapillaryKey(decrypted)) return normalizeApiKey(decrypted)
-          } catch {}
-          if (isValidMapillaryKey(config.key)) return normalizeApiKey(config.key)
-        }
-      } catch {
-        continue
-      }
-    }
-    return ''
-  } catch (err) {
-    console.error('Failed to read/decrypt Mapillary token:', err)
-    return ''
-  }
-}
-
-function encryptAndSaveMapillaryKey(key: string): boolean {
-  try {
-    const cleanKey = normalizeApiKey(key)
-    const primary = getPrimaryConfigPath('mapillary-token.json')
-    if (!cleanKey) {
-      for (const p of getConfigCandidates('mapillary-token.json')) {
-        if (fs.existsSync(p)) {
-          try { fs.unlinkSync(p) } catch { /* ignore */ }
-        }
-      }
-      delete process.env['MAPILLARY_ACCESS_TOKEN']
-      return true
-    }
-
-    let storedValue: string
-    let useEncryption = false
-    try {
-      if (safeStorage.isEncryptionAvailable()) {
-        const encryptedBuffer = safeStorage.encryptString(cleanKey)
-        storedValue = encryptedBuffer.toString('hex')
-        useEncryption = true
-      } else {
-        storedValue = Buffer.from(cleanKey).toString('base64')
-      }
-    } catch {
-      storedValue = Buffer.from(cleanKey).toString('base64')
-      useEncryption = false
-    }
-
-    const fallback = Buffer.from(cleanKey).toString('base64')
-    const data = JSON.stringify({
-      key: storedValue,
-      encrypted: useEncryption,
-      fallback: fallback,
-    })
-    fs.mkdirSync(path.dirname(primary), { recursive: true })
-    fs.writeFileSync(primary, data)
-    if (isDev) {
-      const rootTmp = path.resolve(__dirname, '../../../../.tmp', 'mapillary-token.json')
-      if (rootTmp !== primary) {
-        try {
-          fs.mkdirSync(path.dirname(rootTmp), { recursive: true })
-          fs.writeFileSync(rootTmp, data)
-        } catch { /* ignore */ }
-      }
-    }
-    process.env['MAPILLARY_ACCESS_TOKEN'] = cleanKey
-    return true
-  } catch (err) {
-    console.error('Failed to encrypt/save Mapillary token:', err)
-    return false
-  }
-}
-
 interface ModelConfig {
   id: string
   name: string
@@ -783,10 +673,8 @@ async function startBackend(): Promise<void> {
   const env = { ...process.env }
   const storedOpenAI = readAndDecryptKey()
   const storedGoogle = readAndDecryptGoogleMapsKey()
-  const storedMapillary = readAndDecryptMapillaryKey()
   env['OPENAI_API_KEY'] = env['OPENAI_API_KEY'] || readEnvValue(['OPENAI_API_KEY']) || storedOpenAI
   env['GOOGLE_MAPS_API_KEY'] = env['GOOGLE_MAPS_API_KEY'] || readEnvValue(['GOOGLE_MAPS_API_KEY', 'GOOGLE_API_KEY']) || storedGoogle
-  env['MAPILLARY_ACCESS_TOKEN'] = env['MAPILLARY_ACCESS_TOKEN'] || readEnvValue(['MAPILLARY_ACCESS_TOKEN', 'MAPILLARY_CLIENT_TOKEN']) || storedMapillary
   const geeCreds = readAndDecryptGEEKey()
   if (geeCreds) {
     env['GOOGLE_EARTH_ENGINE_CREDS'] = geeCreds
@@ -878,14 +766,6 @@ ipcMain.handle('set-google-maps-key', (_e, key: string) => {
 ipcMain.handle('get-gee-key', () => readAndDecryptGEEKey())
 ipcMain.handle('set-gee-key', (_e, key: string) => {
   const ok = encryptAndSaveGEEKey(key)
-  if (ok && mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('api-keys-updated')
-  }
-  return ok
-})
-ipcMain.handle('get-mapillary-key', () => readAndDecryptMapillaryKey())
-ipcMain.handle('set-mapillary-key', (_e, key: string) => {
-  const ok = encryptAndSaveMapillaryKey(key)
   if (ok && mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('api-keys-updated')
   }

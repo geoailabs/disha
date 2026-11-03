@@ -37,8 +37,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setGoogleMapsKey: (key: string) => ipcRenderer.invoke('set-google-maps-key', key),
   getGEEKey: () => ipcRenderer.invoke('get-gee-key'),
   setGEEKey: (key: string) => ipcRenderer.invoke('set-gee-key', key),
-  getMapillaryKey: () => ipcRenderer.invoke('get-mapillary-key'),
-  setMapillaryKey: (key: string) => ipcRenderer.invoke('set-mapillary-key', key),
   onAPIKeysUpdated: (handler: () => void) => {
     ipcRenderer.removeAllListeners('api-keys-updated')
     ipcRenderer.on('api-keys-updated', () => handler())

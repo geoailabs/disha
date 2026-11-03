@@ -617,10 +617,10 @@ In a dual-process desktop architecture (Electron frontend + Python FastAPI backe
 
 ---
 
-## 🔑 29. Universal 4-Credential Dynamic API Key Architecture (`ChatPanel.tsx`, `DiagnosticsPanel.tsx`, `chat.py`)
+## 🔑 29. Universal 3-Credential Dynamic API Key Architecture (`ChatPanel.tsx`, `DiagnosticsPanel.tsx`, `chat.py`)
 
 ### The Challenge
-Urban planners interact with multiple disparate spatial APIs: OpenAI for reasoning, Google Maps Platform for Street View and Places, Google Earth Engine for satellite LULC and NDVI, and Mapillary for crowd-sourced street-level imagery. Users frequently copy keys formatted with shell statements (`export OPENAI_API_KEY="..."`), quotes, or `Bearer ` prefixes. In addition, uncontrolled DOM inputs (`defaultValue` and `document.getElementById`) would reset user-typed keys during re-renders, while strict online validation probes would block valid keys if scoped permissions (e.g. project keys without `models:read`) returned 403 or if the network timed out.
+Urban planners interact with multiple disparate spatial APIs: OpenAI for reasoning, Google Maps Platform for Street View and Places, and Google Earth Engine for satellite LULC and NDVI. Users frequently copy keys formatted with shell statements (`export OPENAI_API_KEY="..."`), quotes, or `Bearer ` prefixes. In addition, uncontrolled DOM inputs (`defaultValue` and `document.getElementById`) would reset user-typed keys during re-renders, while strict online validation probes would block valid keys if scoped permissions (e.g. project keys without `models:read`) returned 403 or if the network timed out.
 
 ### The Solution Implementation
 1. **Unified Controlled React State**:
