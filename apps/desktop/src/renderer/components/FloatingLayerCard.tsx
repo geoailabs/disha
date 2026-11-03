@@ -204,6 +204,11 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
   } | null>(null)
   const workspaceMenuRef = useRef<HTMLDivElement>(null)
 
+  // Inline layer rename state
+  const [editingLayerId, setEditingLayerId] = useState<string | null>(null)
+  const [editingLayerName, setEditingLayerName] = useState<string>('')
+
+
   // Export & Spatial Clip Modals
   const [showMapExportModal, setShowMapExportModal] = useState(false)
   const [showSpatialClipModal, setShowSpatialClipModal] = useState(false)
@@ -416,7 +421,7 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
                       <div
                         key={layer.id}
                         className={`flc-layer-item ${selectedLayerIds.includes(layer.id) ? 'is-selected' : ''} ${isDragging ? 'is-dragging' : ''} ${isDropAbove ? 'drop-above' : ''} ${isDropBelow ? 'drop-below' : ''}`}
-                        draggable={true}
+                        draggable={editingLayerId === null}
                         onDragStart={(e) => handleDragStart(e, index)}
                         onDragOver={(e) => handleDragOver(e, index)}
                         onDrop={(e) => handleDrop(e, index)}
@@ -483,10 +488,50 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
                         />
 
                         {/* Layer Name */}
-                        <div className="flc-layer-name-wrap" title={layer.name}>
-                          <span className={`flc-layer-name ${!isVisible ? 'is-hidden' : ''}`}>
-                            {layer.name}
-                          </span>
+                        <div
+                          className="flc-layer-name-wrap"
+                          title={editingLayerId === layer.id ? undefined : `${layer.name} (Double-click to rename)`}
+                          onDoubleClick={(e) => {
+                            e.stopPropagation()
+                            setEditingLayerId(layer.id)
+                            setEditingLayerName(layer.name)
+                          }}
+                        >
+                          {editingLayerId === layer.id ? (
+                            <input
+                              type="text"
+                              className="flc-layer-name-input"
+                              value={editingLayerName}
+                              autoFocus
+                              onClick={(e) => e.stopPropagation()}
+                              onDoubleClick={(e) => e.stopPropagation()}
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onChange={(e) => setEditingLayerName(e.target.value)}
+                              onKeyDown={(e) => {
+                                e.stopPropagation()
+                                if (e.key === 'Enter') {
+                                  const trimmed = editingLayerName.trim()
+                                  if (trimmed && trimmed !== layer.name) {
+                                    onRenameLayer(layer.id, trimmed)
+                                  }
+                                  setEditingLayerId(null)
+                                } else if (e.key === 'Escape') {
+                                  setEditingLayerId(null)
+                                }
+                              }}
+                              onBlur={() => {
+                                const trimmed = editingLayerName.trim()
+                                if (trimmed && trimmed !== layer.name) {
+                                  onRenameLayer(layer.id, trimmed)
+                                }
+                                setEditingLayerId(null)
+                              }}
+                            />
+                          ) : (
+                            <span className={`flc-layer-name ${!isVisible ? 'is-hidden' : ''}`}>
+                              {layer.name}
+                            </span>
+                          )}
                         </div>
 
                         {/* Feature Count / Type */}
@@ -643,6 +688,21 @@ export const FloatingLayerCard: React.FC<FloatingLayerCardProps> = ({
                 <line x1="8" y1="11" x2="14" y2="11" />
               </svg>
               <span>Zoom to Layer</span>
+            </button>
+            <button
+              type="button"
+              className="flc-dropdown-item"
+              onClick={() => {
+                setEditingLayerId(menuLayer.id)
+                setEditingLayerName(menuLayer.name)
+                setContextMenu(null)
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+              </svg>
+              <span>Rename Layer</span>
             </button>
             {!isRaster && (
               <button

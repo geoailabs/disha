@@ -134,6 +134,13 @@ export function composeFigure(
   return out
 }
 
+interface PlacedBBox {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+}
+
 function drawFeatureLabels(
   ctx: CanvasRenderingContext2D,
   labels: FigureLabel[],
@@ -142,22 +149,52 @@ function drawFeatureLabels(
   mapH: number,
 ): void {
   ctx.save()
-  ctx.font = '600 11px system-ui, -apple-system, sans-serif'
+  ctx.font = '600 11px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
+
+  const placedBoxes: PlacedBBox[] = []
+  const maxLabelsToDraw = 25
+
   for (const label of labels) {
-    if (label.x < 8 || label.y < 8 || label.x > mapW - 8 || label.y > mapH - 8) continue
-    const text = label.text.length > 64 ? `${label.text.slice(0, 61)}…` : label.text
+    if (placedBoxes.length >= maxLabelsToDraw) break
+    if (label.x < 12 || label.y < 12 || label.x > mapW - 12 || label.y > mapH - 12) continue
+
+    const rawText = (label.text || '').trim().replace(/\s+/g, ' ')
+    const text = rawText.length > 28 ? `${rawText.slice(0, 26)}…` : rawText
+    if (!text) continue
+
     const x = label.x
     const y = mapTop + label.y
-    ctx.lineWidth = 4
-    ctx.strokeStyle = 'rgba(255,255,255,0.95)'
+
+    const metrics = ctx.measureText(text)
+    const halfWidth = metrics.width / 2 + 6
+    const halfHeight = 9
+
+    const box: PlacedBBox = {
+      x1: x - halfWidth,
+      y1: y - halfHeight,
+      x2: x + halfWidth,
+      y2: y + halfHeight,
+    }
+
+    // Drop label if it collides with an already placed label to guarantee legibility
+    const collides = placedBoxes.some((b) =>
+      box.x1 < b.x2 && box.x2 > b.x1 && box.y1 < b.y2 && box.y2 > b.y1
+    )
+    if (collides) continue
+
+    placedBoxes.push(box)
+
+    ctx.lineWidth = 2.5
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)'
     ctx.strokeText(text, x, y)
-    ctx.fillStyle = label.color || '#111827'
+    ctx.fillStyle = label.color || '#1e293b'
     ctx.fillText(text, x, y)
   }
   ctx.restore()
 }
+
 
 function drawScaleBar(
   ctx: CanvasRenderingContext2D,

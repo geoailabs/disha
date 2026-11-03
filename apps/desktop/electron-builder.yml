@@ -7,14 +7,37 @@ files:
   - out/**/*
 mac:
   target:
-    - zip
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+    - target: zip
+      arch:
+        - arm64
+        - x64
   category: public.app-category.developer-tools
   artifactName: "Disha-${version}-${arch}.${ext}"
+dmg:
+  title: "Disha Spatial Studio"
+  artifactName: "Disha-${version}-${arch}.${ext}"
+  background: build/background.png
+  iconSize: 120
+  contents:
+    - x: 130
+      y: 190
+      type: file
+    - x: 410
+      y: 190
+      type: link
+      path: /Applications
+  window:
+    width: 540
+    height: 380
 win:
   target:
     - nsis
     - zip
-  artifactName: "Disha-${version}-${arch}.${ext}"
+  artifactName: "Disha-${version}-win-${arch}.${ext}"
 linux:
   target:
     - AppImage

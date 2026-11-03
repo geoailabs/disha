@@ -69,6 +69,23 @@ type MarkerInput = {
   description?: string
 }
 
+const AI_MARKERS_LAYER = 'AI Markers'
+const AI_MARKER_STYLE: LayerStyleSpec = {
+  mode: 'simple',
+  fillColor: '#ff1744',
+  strokeColor: '#ffffff',
+  lineWidth: 2.5,
+  opacity: 1,
+  label: {
+    enabled: true,
+    property: 'label',
+    size: 12,
+    color: '#111827',
+    haloColor: '#ffffff',
+    minZoom: 0,
+  },
+}
+
 function markerFeature(marker: MarkerInput): Feature {
   return {
     type: 'Feature',
@@ -395,6 +412,13 @@ function App() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Global shortcut for quitting Disha (Cmd+Q on Mac, Ctrl+Q on Win/Linux)
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'q') {
+        e.preventDefault()
+        window.electronAPI?.quitApp?.()
+        return
+      }
+
       const target = e.target as HTMLElement
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
         return
@@ -455,8 +479,6 @@ function App() {
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const saveDocsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const dirtyLayerIdsRef = useRef<Set<string>>(new Set())
-  const AI_MARKERS_LAYER = 'AI Markers'
-
   useEffect(() => { bookmarksRef.current = bookmarks }, [bookmarks])
   useEffect(() => { mapBoundsRef.current = mapBounds }, [mapBounds])
 
@@ -2030,6 +2052,7 @@ function App() {
           groupName: AI_MARKERS_LAYER,
           data: { type: 'FeatureCollection', features: [feature] },
           color,
+          styleSpec: AI_MARKER_STYLE,
         }
       })
       colorIndexRef.current += nextLayers.length

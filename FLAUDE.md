@@ -1,14 +1,19 @@
 # FLAUDE.md — AI Coding Assistant Reference
 
+[![Release](https://img.shields.io/badge/release-v0.1.8-blue.svg)](https://github.com/geoailabs/disha/releases/tag/v0.1.8)
+[![Version](https://img.shields.io/badge/version-0.1.8-emerald.svg)](https://github.com/geoailabs/disha/releases)
+
+**Current Version:** `v0.1.8` (Developer Preview)
+
 **Fast reference handbook for AI pair programmers working on Disha.**
 
 ---
 
 ## 1. Quick Orientation
 
-Disha is a desktop IDE for urban and regional planners combining an interactive **MapLibre GL** canvas with a Python **FastAPI** backend structured into **7 Core Planning Domain Hubs and 1 Cross-Cutting Utility Hub**.
+Disha is a desktop IDE for urban and regional planners combining an interactive **MapLibre GL 5+** canvas with a Python **FastAPI** backend structured into **7 Core Planning Domain Hubs and 1 Cross-Cutting Utility Hub**.
 
-- **Frontend:** Electron + React 19 + TypeScript (`apps/desktop/src/renderer`)
+- **Frontend:** Electron 41+ + React 19 + TypeScript (`apps/desktop/src/renderer`)
 - **Backend:** Python 3.11+ FastAPI on port `8765` (`packages/backend`)
 - **Communication:** WebSocket `ws://localhost:8765/api/chat/ws` (streaming chat & map actions) + HTTP `/api/*` (10 routers) + Electron IPC (`window.electronAPI`)
 

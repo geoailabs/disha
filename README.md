@@ -1,10 +1,17 @@
 # Disha
 
+[![Release](https://img.shields.io/badge/release-v0.1.8-blue.svg)](https://github.com/geoailabs/disha/releases/tag/v0.1.8)
+[![Version](https://img.shields.io/badge/version-0.1.8-emerald.svg)](https://github.com/geoailabs/disha/releases)
+[![Electron](https://img.shields.io/badge/electron-41.0.3-47848F.svg)](https://www.electronjs.org/)
+[![React](https://img.shields.io/badge/react-19.2.4-61DAFB.svg)](https://react.dev/)
+[![MapLibre GL](https://img.shields.io/badge/maplibre--gl-5.20.2-blueviolet.svg)](https://maplibre.org/)
+[![Python](https://img.shields.io/badge/python-3.11+-3776AB.svg)](https://www.python.org/)
+
 **A geospatial-first, AI-native desktop IDE for urban and regional planners.**
 
 Disha unifies an interactive spatial map canvas with a multi-domain AI reasoning engine. Planners can explore, analyze, model, and document complex urban environments through natural conversation and direct spatial interaction — bridging computational GIS, planning analytics, and cartography into a unified desktop workspace.
 
-> **Architecture:** Electron + React 19 + MapLibre GL desktop frontend connected to a Python FastAPI backend powered by **7 Core Urban Planning Domains + 1 Cross-Cutting Utility Engine**.
+> **Current Version:** `v0.1.8` (Developer Preview) · **Architecture:** Electron 41+ + React 19 + MapLibre GL 5+ desktop frontend connected to a Python FastAPI backend powered by **7 Core Urban Planning Domains + 1 Cross-Cutting Utility Engine**.
 
 <p align="center">
   <img src="assets/screenshots/02_main_workspace_clean.png" alt="Disha Desktop IDE - Main Map Canvas and Agentic Planning Workspace" width="100%" />
@@ -39,6 +46,8 @@ Disha unifies an interactive spatial map canvas with a multi-domain AI reasoning
 - **Multi-format publication exports** — Export planning reports, figures, and tables into **11 modalities**: PDF (`ReportLab` native `%PDF-1.4` with automated Mermaid diagram compilation), Word (`.docx`), HTML, Markdown (`.md`), PNG Image, JPEG Image, SVG, TIFF, WebP, GeoJSON, Excel (`.xlsx`), JSON, and TXT.
 - **Unified Map Navigation Stack** — Circular compass rose docked above `+`/`−` zoom controls in a top-right glassmorphic pill. Clicking the compass rose smoothly eases bearing and pitch back to true North in a 2D flat view (`easeTo({ bearing: 0, pitch: 0 })`).
 - **Zero-Overlap Glassmorphic Shell** — Workspace views (`DocumentView`, `ArtifactsPanel`, `ScenarioBuilderPanel`, `DiagnosticsPanel`) inset safely between the floating `AppSidebar` and `ChatDrawer` using Canva Sans typography, frosted glass blur, categorized header export dropdowns, and compact spatial source popovers.
+- **Resizable Multi-Panel IDE Layout** — Interactive split dividers between sidebar, canvas, and chat drawer with persistent dimension scaling and 50% default layer opacity for multi-layer spatial visibility.
+- **Hardware-Backed Credential Security** — OS-level keychain encryption via Electron `safeStorage` for OpenAI, Google Maps, and Earth Engine keys, paired with automated ASCII sanitization and graceful plaintext fallback.
 - **Zero-Config First Launch & Default Workspace** — Automatic initialization of `~/Documents/Disha` with a first-launch welcome modal, enabling instant drag-and-drop spatial file analysis.
 - **Document analysis & digitization mode** — Drop in a planning PDF or map image; the AI analyzes land use, zoning, transport networks, and labels via vision, with georeferencing and vector digitization tools.
 - **Centralized Spatial & Polygon Registry** — Tracks study areas and boundaries with $\ge 90\%$ IoU deduplication, WGS84 ellipsoidal geodesic math (`pyproj.Geod`), and live map synchronization.
@@ -220,9 +229,9 @@ Backend (packages/backend/) talks to:
 
 | Layer | Stack |
 |---|---|
-| Desktop shell | Electron 34+ |
+| Desktop shell | Electron 41+ |
 | Renderer | React 19 + Vite (electron-vite) + TypeScript |
-| Map | MapLibre GL 4+ + Turf.js + pannellum (Street View) |
+| Map | MapLibre GL 5+ + Turf.js + pannellum (Street View) |
 | Backend | Python 3.11+, FastAPI, uvicorn |
 | LLM | OpenAI Chat Completions (streaming, tool calling) + Responses API (deep research) + Embeddings (`text-embedding-3-small`) |
 | Geo APIs | Overpass, Nominatim, OSRM, Open-Meteo, Overture, WorldPop, Photon, Google Earth Engine, Google Maps Platform |

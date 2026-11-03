@@ -1,5 +1,10 @@
 # Workspace Rules: Disha
 
+[![Release](https://img.shields.io/badge/release-v0.1.8-blue.svg)](https://github.com/geoailabs/disha/releases/tag/v0.1.8)
+[![Version](https://img.shields.io/badge/version-0.1.8-emerald.svg)](https://github.com/geoailabs/disha/releases)
+
+**Current Version:** `v0.1.8` (Developer Preview)
+
 This file documents rules and guidelines for pair programming on this repository.
 
 ## GIS Desktop App Patterns
@@ -83,4 +88,23 @@ This file documents rules and guidelines for pair programming on this repository
 ### 14. Artifacts Header & Categorized Exports
 * **Categorized Dropdown:** All artifact export formats must be accessible via the categorized header download dropdown (`⬇ Download`). Do not add sprawling rows of export buttons to the bottom of detail views.
 * **Compact Header Provenance:** Display spatial provenance via the header `ℹ Sources` popover button instead of full-width inline cards, preserving vertical space for report content.
+
+### 15. SafeStorage Keychain Credential Management & ASCII Sanitization
+* **Graceful OS Keychain Fallback:** In `apps/desktop/src/main/index.ts`, always verify `safeStorage.isEncryptionAvailable()` before calling `safeStorage.encryptString()`. In headless environments, Linux CI runners, or systems without a configured Secret Service, fall back gracefully to encoded storage rather than throwing fatal exceptions.
+* **ASCII Codec Sanitization:** Always sanitize API keys (`sanitizeApiKey()`) by stripping non-ASCII characters, carriage returns, and leading/trailing whitespace before storing them or injecting them into backend process environments to prevent Python `UnicodeDecodeError: 'ascii' codec can't decode byte` crashes.
+
+### 16. Panel Resizing Constraints & 50% Default Layer Opacity
+* **Clamped Layout Dimensions:** Resizable panels in `App.tsx` must respect safe boundary constraints (`--sidebar-min-width: 280px`, `--chat-min-width: 380px`) to prevent map canvas or workspace insets from collapsing.
+* **Default 50% Layer Opacity:** When newly creating or loading vector layers, initialize fill opacity to `0.50` (`opacity: 0.5`) to ensure stacked polygons remain mutually transparent and basemaps remain visible.
+
+### 17. Graceful macOS Quit Lifecycle & Backend Termination
+* **`Cmd + Q` and Dock Quit:** Quitting the application via `Cmd + Q`, MenuBar "Quit Disha", or macOS Dock menu must invoke `app.quit()`. The `app.on('before-quit')` lifecycle hook in `src/main/index.ts` triggers an asynchronous auto-save flush with a 3-second safety timer, cleanly terminates the spawned Python FastAPI backend process, and destroys windows.
+* **`Cmd + W` / Window Close:** Closing the window with `Cmd + W` or the red titlebar close button must only close the window and leave Disha resident in the macOS Dock per standard Apple Human Interface Guidelines.
+
+### 18. Controlled React State & Multi-Source Normalization for Secret Credentials
+* **Controlled React Inputs:** Never bind API keys or credentials to uncontrolled DOM inputs (`defaultValue` and `document.getElementById`). Always bind credentials to controlled React state (`value={...}`, `onChange={(e) => setInput(e.target.value)}`) to prevent input erasure or state desynchronization during re-renders or background network calls.
+* **Resilient Key Normalization:** Always pass raw user inputs through `normalizeApiKey()` / `normalizeGEEKey()`: strip surrounding quotes (`"..."`, `'...'`, `` `...` ``), shell prefixes (`export KEY=`, `Bearer `), whitespace, and non-printable characters.
+* **Immediate Local Save & Dynamic Sync:** Credentials must be saved immediately to `safeStorage` (with base64 fallback so local saving is never blocked by OS keychain permission errors) and dynamically synchronized to the running backend via `/api/chat/sync-keys`. Never block local credential saving on online network validation timeouts or scoped permission restrictions (such as project keys lacking `models:read`).
+
+
 

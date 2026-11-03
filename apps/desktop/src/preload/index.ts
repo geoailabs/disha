@@ -37,6 +37,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setGoogleMapsKey: (key: string) => ipcRenderer.invoke('set-google-maps-key', key),
   getGEEKey: () => ipcRenderer.invoke('get-gee-key'),
   setGEEKey: (key: string) => ipcRenderer.invoke('set-gee-key', key),
+  getMapillaryKey: () => ipcRenderer.invoke('get-mapillary-key'),
+  setMapillaryKey: (key: string) => ipcRenderer.invoke('set-mapillary-key', key),
   onAPIKeysUpdated: (handler: () => void) => {
     ipcRenderer.removeAllListeners('api-keys-updated')
     ipcRenderer.on('api-keys-updated', () => handler())
@@ -49,6 +51,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   minimizeWindow: () => ipcRenderer.invoke('window-minimize'),
   maximizeWindow: () => ipcRenderer.invoke('window-maximize'),
   closeWindow: () => ipcRenderer.invoke('window-close'),
+  quitApp: () => ipcRenderer.invoke('app-quit'),
   reloadWindow: () => ipcRenderer.invoke('window-reload'),
   toggleFullscreen: () => ipcRenderer.invoke('window-toggle-fullscreen'),
+  onOpenPreferences: (handler: () => void) => {
+    ipcRenderer.removeAllListeners('open-preferences')
+    ipcRenderer.on('open-preferences', () => handler())
+  },
+  onMenuOpenWorkspace: (handler: () => void) => {
+    ipcRenderer.removeAllListeners('menu-open-workspace')
+    ipcRenderer.on('menu-open-workspace', () => handler())
+  },
 })

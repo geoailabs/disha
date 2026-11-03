@@ -1,10 +1,15 @@
 # AGENTS.md
 
+[![Release](https://img.shields.io/badge/release-v0.1.8-blue.svg)](https://github.com/geoailabs/disha/releases/tag/v0.1.8)
+[![Version](https://img.shields.io/badge/version-0.1.8-emerald.svg)](https://github.com/geoailabs/disha/releases)
+
+**Current Version:** `v0.1.8` (Developer Preview)
+
 Orientation for AI coding assistants (Claude Code, Codex, Antigravity, Cursor, OpenCode) working in this repository. Read this first; then jump to the specific subsystem or domain hub file you need.
 
 ## What this is
 
-A geospatial-first, AI-native desktop IDE for urban and regional planners. Disha unifies an interactive spatial map canvas (MapLibre GL) with a multi-domain AI reasoning engine structured across **7 core urban planning domains and 1 cross-cutting utility engine**.
+A geospatial-first, AI-native desktop IDE for urban and regional planners. Disha unifies an interactive spatial map canvas (MapLibre GL 5+) with a multi-domain AI reasoning engine structured across **7 core urban planning domains and 1 cross-cutting utility engine**. Built on Electron 41+ and React 19.
 
 **Quality bar:** Solid production-grade prototype. Golden paths must work and not crash. Automated backend unit tests exist in `packages/backend/tests/`; do not introduce regressions in the chat → tool-call → map-action flow or workspace persistence.
 
@@ -136,6 +141,8 @@ Pure React `useState`/`useRef`. **No** external state library (no Zustand, Redux
 8. **Document Visualization & Output Preservation:** When the user requests separate visuals under separate headings, generate a separate distinct visual for each heading; do not combine them unless explicitly requested. Each visual must contain only layers and information relevant to its corresponding request, with only necessary geographic context (no cross-section layer contamination). To achieve layer isolation without deleting canvas layers, specify `layers_to_show` in `export_map_jpeg`/`export_map_png`/`export_map_pdf` containing only the constant study area boundary and the section's target feature/route layer. Preserve all created layers on the interactive map canvas (never remove or delete canvas layers during document compilation). When compiling a document, infer the structure from requested headings and generate all required underlying maps, plots, statistics, and artifacts before assembling the document.
 9. **Zero-Overlap Layout Insets:** Always enforce dynamic safe margins on `.mundi-workspace-view` (`left: calc(var(--sidebar-width) + 26px)`, `right: var(--chat-drawer-offset)`, `top: 14px`, `bottom: 14px`) to prevent workspace views from overlapping with the floating sidebar or sliding chat drawer.
 10. **Map Navigation Stack Integrity:** Map orientation and zooming are managed by the unified glassmorphic `.map-nav-stack` component. Clicking the rotating compass rose must invoke `mapRef.current.easeTo({ bearing: 0, pitch: 0, duration: 800 })` to ease camera bearing and pitch to North in a 2D flat perspective. Do not re-inject default unstyled MapLibre `NavigationControl` instances.
+11. **Graceful macOS Quit Lifecycle & Backend Termination:** Quitting via `Cmd + Q`, MenuBar "Quit Disha", or macOS Dock menu must invoke `app.quit()`, triggering `app.on('before-quit')` in `src/main/index.ts` to asynchronously flush workspace state to disk with a 3-second safety timer and cleanly terminate the spawned Python FastAPI backend process before destroying windows. Window close (`Cmd + W` / red button) must leave Disha resident in the macOS Dock per Apple Human Interface Guidelines.
+12. **Controlled React State for Credentials:** Never bind API keys or credentials to uncontrolled DOM inputs (`defaultValue` and `document.getElementById`). Always maintain controlled React state (`value` + `onChange`), strip surrounding quotes and shell prefixes (`export KEY=`, `Bearer `), save to secure storage immediately, and sync dynamically via `/api/chat/sync-keys`.
 
 ## Run Instructions
 

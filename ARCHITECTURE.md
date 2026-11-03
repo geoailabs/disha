@@ -1,5 +1,10 @@
 # Disha — Architecture & Features
 
+[![Release](https://img.shields.io/badge/release-v0.1.8-blue.svg)](https://github.com/geoailabs/disha/releases/tag/v0.1.8)
+[![Version](https://img.shields.io/badge/version-0.1.8-emerald.svg)](https://github.com/geoailabs/disha/releases)
+
+**Current Version:** `v0.1.8` (Developer Preview)
+
 **A geospatial-first, AI-native desktop IDE for urban and regional planners.**
 
 Disha unifies an interactive spatial map canvas with a multi-domain AI reasoning engine. Planners can explore, analyze, model, and document complex urban environments through natural conversation and direct spatial interaction — bridging computational GIS, domain-specific planning analytics, and cartography into a unified desktop workspace.
@@ -135,9 +140,9 @@ The panel features a compact header **"Sources"** popover dropdown for spatial p
 
 | Layer | Technologies |
 |---|---|
-| **Desktop Shell** | Electron 34+ |
+| **Desktop Shell** | Electron 41+ |
 | **Frontend Renderer** | React 19, TypeScript, Vite (`electron-vite`), CSS3 |
-| **Map & Cartography** | MapLibre GL 4+, Turf.js, pannellum (Street View) |
+| **Map & Cartography** | MapLibre GL 5+, Turf.js, pannellum (Street View) |
 | **Backend Framework** | Python 3.11+, FastAPI, uvicorn, Pydantic |
 | **LLM & Reasoning** | OpenAI API (Chat Completions streaming, tool calling), OpenAI Responses API (`o4-mini-deep-research`), OpenAI Embeddings (`text-embedding-3-small`) |
 | **Geospatial & Analysis** | Shapely, pyproj (WGS84 ellipsoidal geodesic math), DuckDB `spatial`, GeoPandas, Fiona, NetworkX |
@@ -462,14 +467,38 @@ Disha MCP Server (llm/opencode/mcp_server.py)
 ## Electron IPC Surface (`apps/desktop/src/preload/index.ts`)
 
 Renderer interacts with Electron main via `window.electronAPI`:
-- `selectWorkspace()`: Opens native folder dialog.
-- `readDirectory(dirPath)`: Lists directory contents.
-- `readFile(path)` / `writeFile(path, content)`: Text file I/O.
-- `readFileBase64(path)`: Binary base64 reading for PDF rasterization and vision.
-- `openFile({ filters })`: File picker with extension filters.
-- `getLastWorkspace()` / `setLastWorkspace(path)`: Last workspace persistence.
-- `getModels()` / `getCurrentModel()` / `switchModel(modelId)`: Model configuration management.
-- `onAppBeforeQuit(callback)`: Flushes project saves before window unload.
+- **Workspace & File System:** `selectWorkspace()`, `readDirectory(dirPath)`, `readFile(path)`, `writeFile(path, content)`, `writeBinaryFile(path, base64Content)`, `openFile({ filters })`, `showSaveDialog(opts)`, `showItemInFolder(path)`, `selectFolder(title)`
+- **Defaults & Persistence:** `getLastWorkspace()`, `setLastWorkspace(path)`, `getDefaultDishaFolder()`, `getDefaultWorkspace()`, `setDefaultWorkspace(path)`, `onAppBeforeQuit(callback)`
+- **Spatial Import & Vision:** `importSpatialFiles(workspacePath)`, `readFileBase64(path)`, `savePDF(htmlContent, defaultName)`
+- **AI Model Selection:** `getModels()`, `getCurrentModel()`, `switchModel(modelId)`
+- **Credential Security (`safeStorage`):** `getAPIKey()`, `setAPIKey(key)`, `getKeyStatus()`, `getGoogleMapsKey()`, `setGoogleMapsKey(key)`, `getGEEKey()`, `setGEEKey(key)`, `getMapillaryKey()`, `setMapillaryKey(key)`, `onAPIKeysUpdated(callback)`
+- **Window Controls & Lifecycle:** `minimizeWindow()`, `maximizeWindow()`, `closeWindow()`, `quitApp()`, `reloadWindow()`, `toggleFullscreen()`, `onFullscreenChange(callback)`, `onOpenPreferences(callback)`
+
+## Graceful macOS Quit Lifecycle & Backend Process Termination
+
+Disha implements full standard macOS application lifecycle semantics across its dual-process Electron and Python runtime:
+- **`Cmd + Q` and Dock Quit (`app.quit()`):** When triggered via the macOS native application menu (`setupApplicationMenu`), `Cmd + Q`, MenuBar "Quit Disha", or the Dock context menu:
+  1. `app.on('before-quit')` sets `isQuitting = true` and fires an IPC event `app-before-quit` to the renderer.
+  2. The renderer executes an asynchronous flush of workspace state (`project.json`, `documents.json`, open files).
+  3. A 3-second safety timer guarantees that if state takes longer to persist, the shutdown does not hang.
+  4. The main process signals the FastAPI backend process with `SIGTERM` / `SIGKILL` and destroys all browser windows.
+- **`Cmd + W` / Window Close:** Closes the active window without terminating the backend, leaving the app resident in the macOS Dock for instant reactivation.
+
+## Universal 4-Credential Dynamic API Key Architecture
+
+Credential management in Disha handles four distinct geospatial planning tokens across the frontend, Electron secure storage, and the running FastAPI backend:
+1. **OpenAI API Key** (`OPENAI_API_KEY`)
+2. **Google Maps Platform API Key** (`GOOGLE_MAPS_API_KEY`)
+3. **Google Earth Engine Service Account JSON** (`GOOGLE_EARTH_ENGINE_CREDS`)
+4. **Mapillary Access Token** (`MAPILLARY_ACCESS_TOKEN`)
+
+### Architecture Invariants:
+- **Controlled React State:** Secret inputs are strictly controlled (`value={...}`, `onChange={...}`) with show/hide password visibility toggles, avoiding DOM-based `getElementById` lookups that break during re-renders.
+- **Normalization Engine:** Strips outer quotes (`"..."`, `'...'`, `` `...` ``), shell prefixes (`export KEY=`, `Bearer `), whitespace, and non-printable characters.
+- **Immediate Local Persistence:** Writes immediately to Electron's hardware-backed `safeStorage` (with base64 fallback on headless Linux or CI runners).
+- **Dynamic Backend Synchronization (`/api/chat/sync-keys`):** Injects new tokens into `os.environ` of the active Python backend process in real time, broadcasting the `disha-api-keys-updated` event across components without requiring an app reload.
+- **Non-Blocking Verification:** Online checks (`/api/chat/validate-key`) use a 3.5s timeout and permissive handling so scoped project keys or offline environments never block local saving.
+
 
 ## Zero-Overlap Workspace Layout Architecture & UI Aesthetics
 

@@ -30,7 +30,22 @@ export default function DiagnosticsPanel({ onClose, workspacePath }: Diagnostics
   // API Key Inputs
   const [openaiInput, setOpenaiInput] = useState('')
   const [googleInput, setGoogleInput] = useState('')
+  const [geeInput, setGeeInput] = useState('')
+  const [mapillaryInput, setMapillaryInput] = useState('')
+  const [showOpenai, setShowOpenai] = useState(false)
+  const [showGoogle, setShowGoogle] = useState(false)
+  const [showMapillary, setShowMapillary] = useState(false)
   const [saveStatus, setSaveStatus] = useState<string | null>(null)
+
+  const normalizeKey = (k: string, prefixRegex?: RegExp) => {
+    let s = (k || '').trim()
+    if (prefixRegex) s = s.replace(prefixRegex, '')
+    s = s.replace(/^Bearer\s+/i, '')
+    if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")) || (s.startsWith('`') && s.endsWith('`'))) {
+      s = s.slice(1, -1).trim()
+    }
+    return s.replace(/[^\x20-\x7E]/g, '').trim()
+  }
 
   const runChecks = useCallback(async () => {
     setLoading(true)
@@ -68,12 +83,18 @@ export default function DiagnosticsPanel({ onClose, workspacePath }: Diagnostics
     if (window.electronAPI) {
       Promise.all([
         window.electronAPI.getAPIKey().catch(() => ''),
-        window.electronAPI.getGoogleMapsKey().catch(() => '')
-      ]).then(([oKey, gKey]) => {
-        const cleanO = (oKey || '').replace(/[^\x20-\x7E]/g, '').trim()
-        const cleanG = (gKey || '').replace(/[^\x20-\x7E]/g, '').trim()
+        window.electronAPI.getGoogleMapsKey().catch(() => ''),
+        window.electronAPI.getGEEKey().catch(() => ''),
+        window.electronAPI.getMapillaryKey ? window.electronAPI.getMapillaryKey().catch(() => '') : Promise.resolve('')
+      ]).then(([oKey, gKey, geeKey, mKey]) => {
+        const cleanO = normalizeKey(oKey || '', /^(?:export\s+)?(?:OPENAI_API_KEY)\s*=\s*/i)
+        const cleanG = normalizeKey(gKey || '', /^(?:export\s+)?(?:GOOGLE_MAPS_API_KEY|GOOGLE_API_KEY)\s*=\s*/i)
+        const cleanGee = (geeKey || '').trim().replace(/[^\x20-\x7E\r\n\t]/g, '')
+        const cleanM = normalizeKey(mKey || '', /^(?:export\s+)?(?:MAPILLARY_ACCESS_TOKEN|MAPILLARY_CLIENT_TOKEN)\s*=\s*/i)
         if (cleanO) setOpenaiInput(cleanO)
         if (cleanG) setGoogleInput(cleanG)
+        if (cleanGee) setGeeInput(cleanGee)
+        if (cleanM) setMapillaryInput(cleanM)
         runChecks()
       })
     } else {
@@ -81,17 +102,50 @@ export default function DiagnosticsPanel({ onClose, workspacePath }: Diagnostics
     }
   }, [])
 
+  const handleImportGeeFile = async () => {
+    if (!window.electronAPI?.openFile) return
+    try {
+      const filePath = await window.electronAPI.openFile({
+        filters: [{ name: 'JSON Files', extensions: ['json'] }]
+      })
+      if (!filePath) return
+      const content = await window.electronAPI.readFile(filePath)
+      if (content) {
+        try {
+          const parsed = JSON.parse(content)
+          if (parsed && typeof parsed === 'object') {
+            setGeeInput(JSON.stringify(parsed, null, 2))
+          }
+        } catch {
+          setGeeInput(content)
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to import GEE file:', err)
+    }
+  }
+
   const handleSaveKeys = async (e: React.FormEvent) => {
     e.preventDefault()
     setSaveStatus('Saving keys...')
-    const cleanO = openaiInput.replace(/[^\x20-\x7E]/g, '').trim()
-    const cleanG = googleInput.replace(/[^\x20-\x7E]/g, '').trim()
+    const cleanO = normalizeKey(openaiInput, /^(?:export\s+)?(?:OPENAI_API_KEY)\s*=\s*/i)
+    const cleanG = normalizeKey(googleInput, /^(?:export\s+)?(?:GOOGLE_MAPS_API_KEY|GOOGLE_API_KEY)\s*=\s*/i)
+    const cleanGee = (geeInput || '').trim().replace(/[^\x20-\x7E\r\n\t]/g, '')
+    const cleanM = normalizeKey(mapillaryInput, /^(?:export\s+)?(?:MAPILLARY_ACCESS_TOKEN|MAPILLARY_CLIENT_TOKEN)\s*=\s*/i)
+
     setOpenaiInput(cleanO)
     setGoogleInput(cleanG)
+    setGeeInput(cleanGee)
+    setMapillaryInput(cleanM)
+
     try {
       if (window.electronAPI) {
         await window.electronAPI.setAPIKey(cleanO)
         await window.electronAPI.setGoogleMapsKey(cleanG)
+        await window.electronAPI.setGEEKey(cleanGee)
+        if (window.electronAPI.setMapillaryKey) {
+          await window.electronAPI.setMapillaryKey(cleanM)
+        }
 
         // Immediately sync keys to the running Python backend process
         try {
@@ -101,6 +155,8 @@ export default function DiagnosticsPanel({ onClose, workspacePath }: Diagnostics
             body: JSON.stringify({
               openai_api_key: cleanO,
               google_maps_api_key: cleanG,
+              gee_credentials: cleanGee,
+              mapillary_token: cleanM,
             }),
           })
         } catch (syncErr) {
@@ -110,7 +166,7 @@ export default function DiagnosticsPanel({ onClose, workspacePath }: Diagnostics
         // Broadcast to ChatPanel and other components
         window.dispatchEvent(
           new CustomEvent('disha-api-keys-updated', {
-            detail: { openai: cleanO, google: cleanG },
+            detail: { openai: cleanO, google: cleanG, gee: cleanGee, mapillary: cleanM },
           })
         )
 
@@ -240,33 +296,103 @@ export default function DiagnosticsPanel({ onClose, workspacePath }: Diagnostics
           </section>
 
           <section className="diag-section credentials-form">
-            <h3>API Keys Setup</h3>
+            <h3>API Keys & Credentials Setup</h3>
             <form onSubmit={handleSaveKeys}>
               <div className="form-group">
-                <label htmlFor="openai_key">OpenAI API Key</label>
-                <input
-                  type="password"
-                  id="openai_key"
-                  placeholder="sk-proj-..."
-                  value={openaiInput}
-                  onChange={(e) => setOpenaiInput(e.target.value)}
+                <label htmlFor="openai_key">OpenAI API Key (Required for AI Chat & Reasoning)</label>
+                <div className="input-row">
+                  <input
+                    type={showOpenai ? 'text' : 'password'}
+                    id="openai_key"
+                    placeholder="sk-proj-..."
+                    value={openaiInput}
+                    onChange={(e) => setOpenaiInput(e.target.value)}
+                    autoComplete="off"
+                    spellCheck="false"
+                  />
+                  <button
+                    type="button"
+                    className="input-toggle-btn"
+                    onClick={() => setShowOpenai((v) => !v)}
+                  >
+                    {showOpenai ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="google_key">Google Maps API Key (Optional — for Street View & Places)</label>
+                <div className="input-row">
+                  <input
+                    type={showGoogle ? 'text' : 'password'}
+                    id="google_key"
+                    placeholder="AIzaSy..."
+                    value={googleInput}
+                    onChange={(e) => setGoogleInput(e.target.value)}
+                    autoComplete="off"
+                    spellCheck="false"
+                  />
+                  <button
+                    type="button"
+                    className="input-toggle-btn"
+                    onClick={() => setShowGoogle((v) => !v)}
+                  >
+                    {showGoogle ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <div className="label-row">
+                  <label htmlFor="gee_key">Google Earth Engine Service Account JSON (Optional — for Satellite & LULC)</label>
+                  <button
+                    type="button"
+                    className="import-json-btn"
+                    onClick={handleImportGeeFile}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                      <polyline points="17 8 12 3 7 8"></polyline>
+                      <line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                    Import JSON File
+                  </button>
+                </div>
+                <textarea
+                  id="gee_key"
+                  placeholder='{ "type": "service_account", "project_id": "...", "private_key": "..." }'
+                  value={geeInput}
+                  onChange={(e) => setGeeInput(e.target.value)}
+                  autoComplete="off"
+                  spellCheck="false"
                 />
               </div>
 
               <div className="form-group">
-                <label htmlFor="google_key">Google Maps API Key</label>
-                <input
-                  type="password"
-                  id="google_key"
-                  placeholder="AIzaSy..."
-                  value={googleInput}
-                  onChange={(e) => setGoogleInput(e.target.value)}
-                />
+                <label htmlFor="mapillary_key">Mapillary Access Token (Optional — for Community Street View Imagery)</label>
+                <div className="input-row">
+                  <input
+                    type={showMapillary ? 'text' : 'password'}
+                    id="mapillary_key"
+                    placeholder="MLY|..."
+                    value={mapillaryInput}
+                    onChange={(e) => setMapillaryInput(e.target.value)}
+                    autoComplete="off"
+                    spellCheck="false"
+                  />
+                  <button
+                    type="button"
+                    className="input-toggle-btn"
+                    onClick={() => setShowMapillary((v) => !v)}
+                  >
+                    {showMapillary ? 'Hide' : 'Show'}
+                  </button>
+                </div>
               </div>
 
               <div className="form-actions">
                 <button type="submit" className="diag-save-btn">
-                  Save Credentials
+                  Save All Credentials
                 </button>
               </div>
 

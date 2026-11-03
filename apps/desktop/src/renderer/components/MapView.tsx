@@ -209,6 +209,10 @@ function lineColorExpression(layer: GeoJSONLayer): ColorExpr {
   return dataDrivenColor(layer.styleSpec, 'strokeColor', layer.styleSpec?.strokeColor ?? layer.lineColor ?? layer.color)
 }
 
+function isAiMarkerLayer(layer: GeoJSONLayer): boolean {
+  return layer.groupName?.toLowerCase() === 'ai markers'
+}
+
 function fillOpacityValue(layer: GeoJSONLayer): number {
   return layer.styleSpec?.opacity ?? layer.opacity ?? 0.5
 }
@@ -767,28 +771,57 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       })
       for (const layer of labelLayers) {
         const labelSpec = layer.styleSpec?.label
-        // Labels already enabled in MapLibre are present in the canvas. Add a
-        // fallback only for layers without an enabled label style to avoid
-        // drawing duplicate text in exports.
-        if (labelSpec?.enabled && labelSpec.property) continue
-        const featureLimit = Math.min(layer.data.features.length, 40)
+        const isPointMarkerLayer =
+          layer.name.toLowerCase().includes('marker') ||
+          layer.name.toLowerCase().includes('terminal') ||
+          layer.name.toLowerCase().includes('stops') ||
+          layer.name.toLowerCase().includes('waypoints') ||
+          layer.name.toLowerCase().includes('isbt')
+
+        // Only export labels if explicitly enabled by user/agent style or for dedicated point markers
+        const shouldLabel = Boolean(labelSpec?.enabled && labelSpec.property) || isPointMarkerLayer
+        if (!shouldLabel) continue
+
+        const targetProperty = labelSpec?.enabled && labelSpec.property ? labelSpec.property : null
+        const featureLimit = Math.min(layer.data.features.length, 25)
+
         for (const feature of layer.data.features.slice(0, featureLimit)) {
+          // Never draw centroid labels on line strings (routes, roads, contours) in exports
+          const geomType = feature.geometry?.type
+          if (geomType === 'LineString' || geomType === 'MultiLineString') {
+            continue
+          }
+
           const props = feature.properties || {}
-          const property = ['label', 'name', 'title', 'display_name', 'address']
-            .find((key) => props[key] != null && String(props[key]).trim())
+          const property =
+            targetProperty ||
+            ['label', 'name', 'title', 'display_name', 'address'].find(
+              (key) => props[key] != null && String(props[key]).trim(),
+            )
           if (!property || !feature.geometry) continue
+
           try {
             const point = turf.pointOnFeature(feature as any)
             const projected = map.project(point.geometry.coordinates as [number, number])
-            if (projected.x < 4 || projected.y < 4 || projected.x > map.getCanvas().width / (window.devicePixelRatio || 1) - 4 || projected.y > map.getCanvas().height / (window.devicePixelRatio || 1) - 4) continue
-            const text = String(props[property]).trim().replace(/\s+/g, ' ')
-            if (text) exportLabels.push({ text: text.slice(0, 64), x: projected.x, y: projected.y, color: layer.lineColor || layer.color })
+            const canvasW = map.getCanvas().width / (window.devicePixelRatio || 1)
+            const canvasH = map.getCanvas().height / (window.devicePixelRatio || 1)
+            if (projected.x < 12 || projected.y < 12 || projected.x > canvasW - 12 || projected.y > canvasH - 12) continue
+
+            const rawText = String(props[property]).trim().replace(/\s+/g, ' ')
+            if (rawText) {
+              exportLabels.push({
+                text: rawText.slice(0, 36),
+                x: projected.x,
+                y: projected.y,
+                color: labelSpec?.color || layer.lineColor || layer.color,
+              })
+            }
           } catch {
             // Ignore malformed feature geometry or coordinates.
           }
-          if (exportLabels.length >= 120) break
+          if (exportLabels.length >= 25) break
         }
-        if (exportLabels.length >= 120) break
+        if (exportLabels.length >= 25) break
       }
 
       // Restore camera view and layer visibility immediately after all export
@@ -967,11 +1000,11 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
           ],
           paint: {
             'circle-color': fillColorExpression(layer),
-            'circle-radius': 6,
-            'circle-opacity': (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5) * opacityMultiplier,
+            'circle-radius': isAiMarkerLayer(layer) ? 8 : 6,
+            'circle-opacity': (isAiMarkerLayer(layer) ? 1 : (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5)) * opacityMultiplier,
             'circle-stroke-color': lineColorExpression(layer),
-            'circle-stroke-width': layer.styleSpec?.lineWidth ?? layer.lineWidth ?? 1.5,
-            'circle-stroke-opacity': (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5) * opacityMultiplier,
+            'circle-stroke-width': isAiMarkerLayer(layer) ? 2.5 : (layer.styleSpec?.lineWidth ?? layer.lineWidth ?? 1.5),
+            'circle-stroke-opacity': (isAiMarkerLayer(layer) ? 1 : (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5)) * opacityMultiplier,
           },
           layout: { visibility: layer.visible ? 'visible' : 'none' },
         })
@@ -1111,10 +1144,11 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
           }
           if (map.getLayer(`${layer.id}-circle`)) {
             map.setPaintProperty(`${layer.id}-circle`, 'circle-color', fillColorExpression(layer))
-            map.setPaintProperty(`${layer.id}-circle`, 'circle-opacity', (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5) * opacityMultiplier)
+            map.setPaintProperty(`${layer.id}-circle`, 'circle-radius', isAiMarkerLayer(layer) ? 8 : 6)
+            map.setPaintProperty(`${layer.id}-circle`, 'circle-opacity', (isAiMarkerLayer(layer) ? 1 : (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5)) * opacityMultiplier)
             map.setPaintProperty(`${layer.id}-circle`, 'circle-stroke-color', lineColorExpression(layer))
-            map.setPaintProperty(`${layer.id}-circle`, 'circle-stroke-width', layer.styleSpec?.lineWidth ?? layer.lineWidth ?? 1.5)
-            map.setPaintProperty(`${layer.id}-circle`, 'circle-stroke-opacity', (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5) * opacityMultiplier)
+            map.setPaintProperty(`${layer.id}-circle`, 'circle-stroke-width', isAiMarkerLayer(layer) ? 2.5 : (layer.styleSpec?.lineWidth ?? layer.lineWidth ?? 1.5))
+            map.setPaintProperty(`${layer.id}-circle`, 'circle-stroke-opacity', (isAiMarkerLayer(layer) ? 1 : (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5)) * opacityMultiplier)
           }
           // Labels: re-apply field/size/color and visibility (gated by enabled +
           // feature cap, AND the layer's own visibility).
