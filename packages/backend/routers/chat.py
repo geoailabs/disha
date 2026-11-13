@@ -272,7 +272,8 @@ SYSTEM_PROMPT = (
     "- Zoning: analyze_zones (analyse uploaded zoning layers for density, floor-area-ratio, and coverage metrics), "
     "detect_zone_overlaps (find geometry overlaps or conflicts between zone polygons — use for compliance auditing, not for general spatial overlap).\n"
     "- Artifacts & Documents: "
-    "create_artifact (create a BRAND NEW document artifact — use for new documents; format options: pdf/docx/html/png/jpg/xlsx/txt/json/markdown/table/geojson; "
+    "create_artifact (create a BRAND NEW document artifact — use for new documents; format options: pdf/docx/html/gif/png/jpg/xlsx/txt/json/markdown/table/geojson; "
+    "For an animated GIF, use ordered `frames`/`meta.frames` paths or data URIs. If the user asks for current-map animation and supplies no frames, autonomously export distinct map PNG frames first, then call create_artifact with those returned paths; do not ask the user to provide frame IDs. "
     "PDF/HTML exports render fenced Mermaid diagrams (```mermaid ... ```); use Mermaid flowchart or sequenceDiagram syntax when the user explicitly requests a process diagram, workflow, decision tree, or system diagram. "
     "NEVER pass an existing artifact_id — always creates fresh), "
     "edit_artifact (add/update sections in an EXISTING artifact by title or ID — use when user says 'add to', 'edit', 'update', or 'insert into' a specific artifact; "
@@ -339,6 +340,7 @@ SYSTEM_PROMPT = (
     "get_sentinel_layer (Sentinel-2 optical RGB/NIR/SWIR/NDVI/NDWI and Sentinel-1 SAR C-band radar backscatter VV/VH for flood mapping and ground texture), "
     "get_high_resolution_imagery (sub-meter USDA NAIP aerial orthoimagery 0.6m–1m and Sentinel-2 10m optical imagery), "
     "get_modis_layer (global MODIS products: reflectance, NDVI/EVI vegetation, daily LST, active fires FIRMS thermal anomalies, snow cover, burned area), "
+    "compare_modis_fire_history (village-by-village MODIS burned-area hectares and FIRMS active-fire pixel-day differences across a year range; accepts any village_names list and resolves each official boundary automatically, or accepts GeoJSON), "
     "get_land_cover (full 9-class or 11-class LULC raster tile overlay from Dynamic World or ESA WorldCover — ONLY use when the user asks for the complete multi-class land cover map; DO NOT use for a single class), "
     "analyze_lulc_change (compare two years of Dynamic World to detect built-up expansion, deforestation, or wetland loss — adds a changed-areas mask + class-transition layer), "
     "analyze_land_use_zonal_stats (calculate exact area in km² and percentage composition breakdown of land cover classes inside a study polygon/boundary), "
@@ -453,6 +455,8 @@ SYSTEM_PROMPT = (
     "20. REGIONAL & METROPOLITAN BOUNDARIES (e.g. metropolitan regions, regional urban clusters, or multi-district conurbations): When asked to display a metropolitan region consisting of multiple contiguous districts or administrative units, retrieve and merge the contiguous boundaries (using osm_boundary_union or import_datameet_boundary) so they form a clean regional boundary. If asked to mark both a central core and the broader metropolitan region in different colors, add them as two separate distinct layers and style them with contrasting colors (e.g. green outline/fill for Core City, blue or orange for Metro Region) using set_layer_style.\n"
     "21. JUNCTIONS AND POI PINNING: When pinning a specific point of interest, landmark, chowk, junction, intersection, or address, ALWAYS first call the `geocode` tool with the full descriptive name and containing context (e.g. '<Landmark / Junction Name>, <Sub-district / Sector>, <City / Region>') to resolve its exact point coordinate. DO NOT call `osm_boundary` or `osm_search` for a specific junction/chowk unless you want to search for adjacent amenities or the city boundary. To display the pinned point on the map, call `add_marker` at the resolved coordinate. When the user asks to route/cross through waypoints, ensure each waypoint is geocoded and explicitly passed in the routing tool's `waypoints` argument, and pass the corresponding color or label if customized.\n"
     "22. AUTOMATIC ARTIFACT & MULTI-FORMAT EXPORT PERSISTENCE: Whenever you generate ANY planning report, summary card, demographic profile, plot/histogram, or structured analysis, call `create_artifact` with a descriptive title and format ('pdf', 'docx', 'html', 'png', 'jpg', 'xlsx', 'txt', 'json', 'markdown', 'table', 'geojson'). You CAN create PNG, JPEG, PDF, Word (.docx), HTML, and Excel (.xlsx) artifacts directly using `create_artifact`. For charts and histograms, call `create_plot` to generate clean plot image artifacts.\n"
+    "22a. GIF CREATION: GIFs support any ordered number of image frames (PNG, JPEG, WebP, or data URIs). For a requested animated map GIF without supplied frames, create the frames yourself with separate `export_map_png` calls, collect each returned `file_path`, and pass them in order via `frames` or `meta.frames` to `create_artifact(format='gif')`. If the request names a place, resolve that place boundary first, fit the map to it, and use that resolved geography for every frame; never reuse an unrelated current-map extent. `prepare_scenario_plan` or a scenario/storyboard artifact is only an intermediate step: for a GIF request, continue autonomously to export the frames and compile the final GIF. A GIF request is not complete until the GIF artifact is saved and the automatic completion check passes.\n"
+    "22b. MODIS FIRE COMPARISONS: For requests comparing fire/stubble-burning history, call `compare_modis_fire_history` with every requested village/place, use the last 3 completed calendar years unless another range is specified, resolve each named boundary independently, return burned-area hectares plus FIRMS active-fire pixel-days and year-over-year differences, preserve unresolved names explicitly, and keep the saved comparison artifact. Never substitute a broad viewport or invent village metrics.\n"
     "23. ATTRIBUTE FILTERING & VECTOR SUBSETS: When the user asks to filter/extract/isolate specific features from a loaded layer or dataset (e.g. 'filter coastal districts in study state', 'show only commercial parcels', 'extract expressways'), ALWAYS call `gis_filter` with the layer_name or path, target values array, and output_layer_name. Do NOT try to highlight features one by one, do NOT paste raw geometries in chat, and do NOT claim you cannot filter without asking the user for a file.\n"
     "24. MULTI-SELECTED LAYERS IN CHAT CONTEXT: When the user Shift-clicks or selects multiple layers on the map or in the layers sidebar panel, all selected layers appear under [USER SELECTED MAP ELEMENTS / HIGHLIGHTED LAYERS] with their layer names, centroids, and attributes. When the user asks to analyze, compare, overlay, buffer, intersect, or compute stats/charts for 'these layers', 'selected regions', or 'both areas', directly reference and process ALL selected layers by their exact names/attributes in your spatial GIS tools (e.g. gis_intersection, gis_difference, gis_area, gis_union) and demographic/plotting tools (create_plot).\n"
     "25. ZERO PLACEHOLDER POLICY IN ARTIFACTS / DOCUMENTS:\n"
@@ -505,6 +509,7 @@ SYSTEM_PROMPT = (
     "  - When the user requests a document, report, map, plot, analysis, or other artifact that requires data to be retrieved or generated first, execute the necessary intermediate operations automatically before producing the requested artifact.\n"
     "  - Do NOT stop to ask the user to confirm that you should proceed when the requested outputs and their geographic scope are already clear.\n"
     "  - Do NOT stop to ask interactive questions (`ask_question`) or ask the user to confirm whether to generate a new image or use an existing one when editing a document or adding a requested map section. Automatically execute the feature tool, export the map image with `layers_to_show=['<Target Layer>', '<Boundary>']`, and call `edit_artifact` or `create_artifact`.\n"
+    "  - AUTOMATIC COMPLETION VALIDATION (ALL TASKS): After any tool-driven task, you MUST let the backend completion check inspect the entire current turn before declaring success. This happens automatically even when the user does not ask you to verify. Confirm every required tool returned success, every generated file exists and is readable, and every requested map/artifact action was dispatched. If any check fails, continue the tool loop to repair it; never claim completion from prose alone.\n"
     "  - Do NOT ask the user to select administrative levels, datasets, data providers, GIS operations, or other implementation details unless the request is genuinely ambiguous and the choice materially affects the requested result.\n"
     "  - Do NOT ask the user to say 'proceed', 'yes', or otherwise confirm execution when the task is already sufficiently specified.\n"
     "  - If required data or maps are not yet available, retrieve or generate them using the appropriate available tools. Never invent figures, statistics, maps, or images; obtain them through the available data and analysis tools.\n"
@@ -1962,6 +1967,15 @@ async def _run_agent(
     if tools is None:
         tools = _TOOLS
     max_rounds = 35  # Complex pipelines (4 boundaries + 4 exports + chart + doc) need many rounds
+    # Keep the beginning of the user's turn stable across the whole agent loop.
+    # A tool call normally happens in one round and the model's final prose in
+    # the next; resetting this inside the loop made the final check see only
+    # prose and silently skip the tool results that needed verification.
+    # The current user message is already appended when this loop starts. Keep
+    # it in the validation window so task-specific postconditions (for example
+    # “GIF” requiring a saved .gif file) can be inferred automatically.
+    task_check_start = max(0, len(messages) - 1) if messages and messages[-1].get("role") == "user" else len(messages)
+    completion_repair_attempts = 0
 
     for _ in range(max_rounds):
         if _is_cancelled():
@@ -2030,6 +2044,32 @@ async def _run_agent(
             # If no tool calls, we're done. Tool calls MUST be answered even if
             # finish_reason == "stop" — leaving them unanswered breaks the next turn.
             if not tool_calls_acc:
+                # Emit a model-independent completion assessment so the UI and
+                # audit trail can distinguish a verified task from plain text.
+                if _PIPELINE_AVAILABLE:
+                    from tools.task_pipeline import assess_task_completion
+                    completion_check = assess_task_completion(
+                        messages,
+                        task_check_start,
+                        workspace=(map_context or {}).get("workspace"),
+                    )
+                    await ws.send_text(json.dumps({"type": "task_check", **completion_check}))
+                    if completion_check.get("status") == "failed" and completion_repair_attempts < 3:
+                        completion_repair_attempts += 1
+                        await ws.send_text(json.dumps({"type": "stream_replace", "content": ""}))
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                "[SYSTEM COMPLETION CHECK] The task is not verified yet. "
+                                f"Failed checks: {completion_check.get('failures')}. "
+                                "Inspect the latest tool results, repair the failed or missing output, "
+                                "and call the necessary tools again. Do not report completion until the "
+                                "postconditions pass: every required tool succeeded, every generated "
+                                "file exists and is readable, and every requested map/artifact action "
+                                "was actually dispatched."
+                            ),
+                        })
+                        continue
                 # ── Hallucination Detector ─────────────────────────────────────────
                 # If the model generated chat text CLAIMING an artifact was saved
                 # (e.g. "I created the Word document ... artifacts_store/32.docx")

@@ -174,7 +174,9 @@ class UtilityServer:
                     "ALWAYS call this tool whenever the user asks to create, make, generate, or compile a document, report, or Word file (.docx). "
                     "Every call to create_artifact generates a clean, independent new document with a unique artifact ID. "
                     "Use format='docx' to compile a Word document (.docx), format='pdf' for a PDF report, "
-                    "format='html' for HTML, format='markdown' for markdown notes, format='geojson' for map layers. "
+                    "format='html' for HTML, format='gif' for a static or animated GIF (pass frames or meta.frames for any ordered image paths/data URIs). "
+                    "If the user asks for an animated current-map GIF and does not provide frames, export the required map frames first, then compile them. "
+                    "format='markdown' for markdown notes, format='geojson' for map layers. "
                     "Pass the complete structured markdown (headings #, ##, text, tables, and embedded ![Figure: Caption](artifacts_store/ID.png) images) in the 'content' field."
                 ),
                 parameters={
@@ -186,7 +188,7 @@ class UtilityServer:
                         },
                         "format": {
                             "type": "string",
-                            "enum": ["docx", "pdf", "html", "markdown", "table", "geojson", "xlsx", "txt", "json", "png", "jpg", "jpeg"],
+                            "enum": ["docx", "pdf", "html", "gif", "markdown", "table", "geojson", "xlsx", "txt", "json", "png", "jpg", "jpeg"],
                             "description": "Payload format. Use 'docx' for Word documents, 'pdf' for PDF reports, 'markdown' for notes, 'geojson' for layers.",
                         },
                         "artifact_type": {
@@ -214,6 +216,28 @@ class UtilityServer:
                                     "basis_or_assumptions": {"type": "string", "description": "Analytical formula, calculation norms, or baseline assumptions"},
                                 },
                                 "required": ["name", "basis_or_assumptions"],
+                            },
+                        },
+                        "map_image_base64": {
+                            "type": "string",
+                            "description": "Optional base64/data-URI image payload for image artifacts or a single-frame GIF.",
+                        },
+                        "frames": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional ordered image paths or data URIs for a static/animated GIF. Use this for any number of PNG, JPEG, or WebP frames.",
+                        },
+                        "meta": {
+                            "type": "object",
+                            "description": "Optional export metadata. For animated GIFs, pass frames as ordered artifact paths or data URIs.",
+                            "properties": {
+                                "frames": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "Ordered image paths/data URIs to compile into an animated GIF.",
+                                },
+                                "duration_ms": {"type": "integer", "minimum": 20},
+                                "loop": {"type": "integer", "minimum": 0},
                             },
                         },
                     },
@@ -639,6 +663,7 @@ class UtilityServer:
         try:
             from tools.artifact_store import save_artifact
             from tools.export_engine import export_artifact_multi_format
+            import re
 
             title = args.get("title", "Untitled")
             artifact_type = args.get("artifact_type", "note")
@@ -653,16 +678,62 @@ class UtilityServer:
             content, merged_sources = synthesize_sources_section(raw_sources, content, title=title, map_context=map_context)
 
             meta = args.get("meta") or {}
+            if fmt == "gif" and args.get("frames") and not meta.get("frames"):
+                meta["frames"] = args["frames"]
             if merged_sources:
                 meta["sources"] = merged_sources
 
+            # The chat model often records freshly exported frame paths in the
+            # GIF content instead of constructing the nested meta.frames field.
+            # Make that natural workflow equivalent to the structured form,
+            # while keeping the explicit field authoritative when supplied.
+            if fmt == "gif" and not meta.get("frames"):
+                frame_paths = re.findall(
+                    r"(?:^|[(/\s])((?:artifacts_store/)[^\s)\]]+\.(?:png|jpe?g|webp))",
+                    content,
+                    flags=re.IGNORECASE,
+                )
+                if frame_paths:
+                    meta["frames"] = list(dict.fromkeys(frame_paths))
+
+            # Never allow a temporal GIF request to degrade into a one-frame
+            # snapshot merely because the model supplied a storyboard first.
+            # The model can still create a legitimate static GIF when the
+            # title/content does not request animation or a time sequence.
+            if fmt == "gif":
+                frame_refs = list(meta.get("frames") or [])
+                temporal_request = bool(re.search(
+                    r"\b(animated?|animation|year[- ]by[- ]year|frame|timeline|10[- ]year|over the next)\b",
+                    f"{title} {content}".lower(),
+                ))
+                request_text = f"{title} {content}".lower()
+                year_match = re.search(r"\b(\d+)\s*[- ]?(?:year|frame)", request_text)
+                range_match = re.search(r"\b(20\d{2})\s+through\s+(20\d{2})\b", request_text)
+                required_frames = int(year_match.group(1)) if year_match else 2
+                if range_match:
+                    required_frames = max(required_frames, abs(int(range_match.group(2)) - int(range_match.group(1))) + 1)
+                if temporal_request and len(frame_refs) < 2:
+                    raise ValueError(
+                        "Animated GIF requests require at least 2 ordered frame images. "
+                        "Export the individual year/frame PNGs first, then pass all paths in meta.frames."
+                    )
+                if temporal_request and len(set(map(str, frame_refs))) < required_frames:
+                    raise ValueError(
+                        f"This {required_frames}-year GIF request requires {required_frames} ordered frame images; "
+                        f"received {len(set(map(str, frame_refs)))} distinct references."
+                    )
+                if temporal_request and len(set(map(str, frame_refs))) < 2:
+                    raise ValueError("Animated GIF frames must be distinct ordered image references.")
+
             file_bytes = None
             file_ext = None
-            if fmt in ("png", "jpg", "jpeg", "pdf", "docx", "html", "xlsx", "txt", "json"):
+            if fmt in ("png", "jpg", "jpeg", "gif", "pdf", "docx", "html", "xlsx", "txt", "json"):
                 file_bytes, filename, mime = export_artifact_multi_format(
                     title=title,
                     content=content,
                     format_target=fmt,
+                    map_image_base64=args.get("map_image_base64"),
+                    meta=meta,
                     workspace=workspace,
                 )
                 file_ext = fmt

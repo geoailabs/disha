@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -170,3 +171,141 @@ def inject_new_artifact_instruction(tool_calls: list[dict]) -> list[dict]:
                 pass
         patched.append(tc)
     return patched
+
+
+def assess_task_completion(messages: list[dict], since: int = 0, workspace: str | None = None) -> dict:
+    """Run a cheap deterministic postcondition check for the current turn.
+
+    This is deliberately independent of the model: a response is only marked
+    verified when tool results are successful, generated files exist, and no
+    tool was cancelled or returned an error.
+    """
+    recent = messages[since:]
+    user_text = " ".join(
+        str(msg.get("content") or "")
+        for msg in recent
+        if msg.get("role") == "user"
+    ).lower()
+    requested_gif = bool(re.search(r"\bgif\b", user_text))
+    requested_modis_fire = bool(
+        re.search(r"\b(?:modis|stubble(?:[- ]burning)?|fire(?:s| history)?|burn(?:ing|ed) area)\b", user_text)
+    )
+    requested_animation = requested_gif and bool(
+        re.search(r"\b(animated?|animation|year[- ]by[- ]year|frame|timeline|over the next)\b", user_text)
+    )
+    year_match = re.search(r"\b(\d+)\s*[- ]?(?:year|frame)", user_text)
+    range_match = re.search(r"\b(20\d{2})\s+through\s+(20\d{2})\b", user_text)
+    requested_frame_count = int(year_match.group(1)) if requested_animation and year_match else 2
+    if requested_animation and range_match:
+        requested_frame_count = max(
+            requested_frame_count,
+            abs(int(range_match.group(2)) - int(range_match.group(1))) + 1,
+        )
+    tool_results = []
+    for msg in recent:
+        if msg.get("role") != "tool":
+            continue
+        try:
+            value = json.loads(msg.get("content") or "{}")
+        except Exception:
+            value = {"status": "error", "error": "Malformed tool result"}
+        tool_results.append(value)
+
+    failures = []
+    missing_files = []
+    generated_paths = []
+    gif_paths = []
+    modis_results = [
+        result for result in tool_results
+        if isinstance(result.get("results"), list)
+        and result.get("start_year") is not None
+        and result.get("end_year") is not None
+    ]
+    for result in tool_results:
+        status = result.get("status")
+        if result.get("error") or status in ("error", "cancelled"):
+            failures.append(result.get("error") or status)
+        file_path = result.get("file_path")
+        if not file_path and isinstance(result.get("artifact"), dict):
+            file_path = result["artifact"].get("file_path")
+        if file_path:
+            normalized_path = str(file_path).lower()
+            generated_paths.append(normalized_path)
+            if normalized_path.endswith(".gif"):
+                gif_paths.append(str(file_path))
+            candidate = Path(file_path)
+            exists = candidate.is_file() and candidate.stat().st_size > 0
+            if not exists and not candidate.is_absolute() and str(file_path).startswith("artifacts_store/"):
+                try:
+                    from tools.artifact_store import get_artifacts_dir
+                    resolved = get_artifacts_dir(workspace) / candidate.name
+                    exists = resolved.is_file() and resolved.stat().st_size > 0
+                except Exception:
+                    exists = False
+            if not exists:
+                missing_files.append(file_path)
+
+    # A GIF request has a concrete binary postcondition even if the model
+    # creates an intermediate scenario plan or storyboard first.
+    if requested_gif and not any(path.endswith(".gif") for path in generated_paths):
+        missing_files.append("requested GIF artifact")
+
+    if requested_modis_fire and not any(result.get("results") for result in modis_results):
+        missing_files.append("MODIS fire comparison results")
+
+    # A temporal/animated request must not be satisfied by a one-frame GIF
+    # labelled as a storyboard. Static GIFs remain valid for ordinary GIF
+    # requests; animation language makes the stronger postcondition explicit.
+    if requested_animation and gif_paths:
+        animated = False
+        try:
+            from PIL import Image
+            from tools.artifact_store import get_artifacts_dir
+
+            for raw_path in gif_paths:
+                candidate = Path(raw_path)
+                if not candidate.is_file() and not candidate.is_absolute() and raw_path.startswith("artifacts_store/"):
+                    candidate = get_artifacts_dir(workspace) / candidate.name
+                if not candidate.is_file():
+                    continue
+                with Image.open(candidate) as image:
+                    frame_count = int(getattr(image, "n_frames", 1))
+                    if frame_count < requested_frame_count:
+                        continue
+                    # Count distinct rendered states as well as GIF frames;
+                    # repeating one frame under multiple year labels is not a
+                    # valid year-by-year animation.
+                    import hashlib
+                    distinct_states = set()
+                    for frame_index in range(frame_count):
+                        image.seek(frame_index)
+                        rendered = image.convert("RGB")
+                        distinct_states.add(hashlib.sha256(rendered.tobytes()).digest())
+                    if len(distinct_states) >= requested_frame_count:
+                        animated = True
+                        break
+        except Exception as exc:
+            logger.warning("Could not inspect GIF animation frames: %s", exc)
+        if not animated:
+            missing_files.append(
+                f"requested animated GIF must contain at least {requested_frame_count} frames"
+            )
+
+    if failures:
+        state = "failed"
+    elif missing_files:
+        state = "failed"
+        failures.extend(f"missing file: {p}" for p in missing_files)
+    elif tool_results:
+        state = "verified"
+    else:
+        state = "not_applicable"
+    return {
+        "status": state,
+        "checks": {
+            "tool_results_present": bool(tool_results),
+            "all_tool_results_successful": not failures,
+            "artifact_files_exist": not missing_files,
+        },
+        "failures": failures,
+    }

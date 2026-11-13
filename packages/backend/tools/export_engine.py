@@ -5,6 +5,7 @@ XLSX, TXT, JSON, and Image formats from stored artifacts, markdown reports, and 
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 import re
@@ -175,6 +176,46 @@ def export_artifact_multi_format(
             ext = "jpg" if fmt in ("jpg", "jpeg") else "png"
             mime = "image/jpeg" if fmt in ("jpg", "jpeg") else "image/png"
             return buf.getvalue(), f"{safe_title}.{ext}", mime
+
+    elif fmt == "gif":
+        # GIF used to fall through to markdown, which created an artifact with a
+        # .gif label but text bytes.  Accept either one image (static GIF) or a
+        # list of image references (animated GIF).  References may be data URIs,
+        # artifact paths, or workspace paths, just like document figures.
+        frame_refs = (meta or {}).get("frames") or []
+        if map_image_base64 and not frame_refs:
+            frame_refs = [map_image_base64]
+        if not frame_refs:
+            raise ValueError("GIF export requires map_image_base64 or meta.frames")
+
+        from PIL import Image as PILImage
+        frames = []
+        frame_digests = []
+        for ref in frame_refs:
+            raw = _resolve_image_bytes(str(ref), workspace)
+            if raw is None:
+                raise ValueError(f"Could not resolve GIF frame: {ref}")
+            frame_digests.append(hashlib.sha256(raw).hexdigest())
+            with PILImage.open(io.BytesIO(raw)) as frame:
+                # Palette conversion keeps GIF output predictable and avoids
+                # RGBA disposal issues across Pillow versions.
+                frames.append(frame.convert("P", palette=PILImage.Palette.ADAPTIVE))
+        if not frames:
+            raise ValueError("GIF export received no usable frames")
+        if len(frames) > 1 and len(set(frame_digests)) != len(frame_digests):
+            raise ValueError("GIF export received duplicate frame images; each animated frame must represent a distinct state.")
+        buf = io.BytesIO()
+        gif_meta = meta or {}
+        frames[0].save(
+            buf,
+            format="GIF",
+            save_all=len(frames) > 1,
+            append_images=frames[1:],
+            duration=max(20, int(gif_meta.get("duration_ms", 500))),
+            loop=max(0, int(gif_meta.get("loop", 0))),
+            optimize=False,
+        )
+        return buf.getvalue(), f"{safe_title}.gif", "image/gif"
 
     elif fmt in ("json", "geojson"):
         if content.strip().startswith("{") or content.strip().startswith("["):

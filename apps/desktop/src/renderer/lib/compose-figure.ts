@@ -276,11 +276,31 @@ function drawLegend(
   const padY = 8
   const titleH = 16
 
+  // Keep the baked-in legend from obscuring the map. Raster/classified layers
+  // can legitimately expose dozens of palette rows (and a timeline can expose
+  // the same palette once per year), so an unbounded legend makes otherwise
+  // correct PNG/GIF frames unreadable. Preserve the first useful rows and add
+  // a compact overflow marker instead.
+  const maxEntries = 2
+  const maxRows = 8
+  const visibleEntries: LegendEntry[] = []
+  let rowsLeft = maxRows
+  for (const entry of entries) {
+    if (visibleEntries.length >= maxEntries || rowsLeft <= 0) break
+    const rows = entry.rows.slice(0, rowsLeft)
+    const omitted = entry.rows.length - rows.length
+    if (omitted > 0 && rows.length > 0) {
+      rows[rows.length - 1] = { color: '#9ca3af', label: `… ${omitted} more` }
+    }
+    visibleEntries.push({ ...entry, rows })
+    rowsLeft -= rows.length
+  }
+
   ctx.font = '11px system-ui, -apple-system, sans-serif'
   // Measure width + height.
   let maxText = 0
   let totalRows = 0
-  for (const e of entries) {
+  for (const e of visibleEntries) {
     ctx.font = '600 11px system-ui, -apple-system, sans-serif'
     maxText = Math.max(maxText, ctx.measureText(`${e.title}${e.property ? ' · ' + e.property : ''}`).width)
     ctx.font = '11px system-ui, -apple-system, sans-serif'
@@ -290,7 +310,7 @@ function drawLegend(
     }
   }
   const boxW = Math.min(maxText + padX * 2, 260)
-  const boxH = padY * 2 + entries.length * titleH + totalRows * rowH
+  const boxH = padY * 2 + visibleEntries.length * titleH + totalRows * rowH
   const boxX = rightX - boxW
   const boxY = bottomY - boxH
 
@@ -304,7 +324,7 @@ function drawLegend(
 
   let cy = boxY + padY
   ctx.textBaseline = 'top'
-  for (const e of entries) {
+  for (const e of visibleEntries) {
     ctx.fillStyle = '#111827'
     ctx.font = '600 11px system-ui, -apple-system, sans-serif'
     const heading = `${e.title}${e.property ? ' · ' + e.property : ''}`

@@ -1599,10 +1599,30 @@ function App() {
       const mapView = mapViewRef.current
       if (!mapView) return null
 
-      const layersToShow = options?.layers_to_show || (options?.layer_name ? [options.layer_name] : undefined)
-      const snapshot = mapView.fitBboxAndSnapshot
-        ? await mapView.fitBboxAndSnapshot(options?.bbox, 40, layersToShow)
-        : mapView.getCanvas()
+      const explicitLayersToShow = options?.layers_to_show || (options?.layer_name ? [options.layer_name] : undefined)
+      // For timeline/built-up exports, infer the thematic layer when the
+      // model omitted layers_to_show. This prevents stale land-cover rasters
+      // from contaminating a built-area PNG/GIF frame and its legend.
+      const titleLower = (title || '').toLowerCase()
+      const isUrbanisationExport = /built[- ]?area|built[- ]?up|urbani[sz]ation|urban growth|urban footprint/.test(titleLower)
+      const inferredLayersToShow = !explicitLayersToShow?.length && isUrbanisationExport
+        ? layers
+            .filter((l) => l.visible && /built[- ]?area|built[- ]?up|urban|boundary/.test(l.name.toLowerCase()))
+            .map((l) => l.id)
+        : undefined
+      const layersToShow = explicitLayersToShow?.length ? explicitLayersToShow : inferredLayersToShow
+      // Preserve the live map camera for ordinary exports. Previously,
+      // fitBboxAndSnapshot() implicitly combined every visible layer when no
+      // bbox/layer filter was supplied. Old layers from another place could
+      // therefore pull a Chandigarh export to an unrelated geography. Only
+      // refit when the caller explicitly supplies a bbox or target layers.
+      let snapshot: any
+      if (mapView.fitBboxAndSnapshot && (options?.bbox || layersToShow?.length)) {
+        snapshot = await mapView.fitBboxAndSnapshot(options?.bbox, 40, layersToShow)
+      } else {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+        snapshot = mapView.getCanvas()
+      }
       const canvas = snapshot && 'canvas' in snapshot ? snapshot.canvas : snapshot
       if (!canvas) return null
 
@@ -1610,7 +1630,13 @@ function App() {
       const activeLayers = layersToShow && layersToShow.length > 0
         ? layers.filter((l) =>
             layersToShow.some(
-              (q) => l.name.toLowerCase().includes(q.toLowerCase()) || q.toLowerCase().includes(l.name.toLowerCase()) || l.id.toLowerCase() === q.toLowerCase(),
+              (q) => {
+                const query = q.toLowerCase().trim()
+                const name = l.name.toLowerCase().trim()
+                const isBoundaryQuery = query.includes('boundary')
+                if (isBoundaryQuery) return name === query || (name.endsWith('boundary') && !name.includes('land cover'))
+                return name.includes(query) || query.includes(name) || l.id.toLowerCase() === query
+              },
             ),
           )
         : layers

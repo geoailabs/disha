@@ -447,6 +447,7 @@ class GEEServer:
         "get_sentinel_layer",
         "get_high_resolution_imagery",
         "get_modis_layer",
+        "compare_modis_fire_history",
         "get_dem_layer",
         "get_land_cover",
         "get_agriculture_layer",
@@ -684,6 +685,33 @@ class GEEServer:
                         "year": {"type": "integer", "description": "Year (default 2023)."},
                         "title": {"type": "string", "description": "Layer title."},
                     },
+                },
+            ),
+            ToolDeclaration(
+                name="compare_modis_fire_history",
+                description=(
+                    "Compare MODIS burned area and active-fire history for multiple villages across a year range. "
+                    "Returns per-village annual burned hectares, active-fire pixel-days, year-over-year differences, "
+                    "and a ranked summary. Pass villages as [{name, geojson}] or a GeoJSON FeatureCollection."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "villages": {
+                            "type": "array",
+                            "description": "Village names or geometries; objects may contain name and geojson Feature/geometry.",
+                            "items": {"oneOf": [{"type": "string"}, {"type": "object"}]},
+                        },
+                        "village_names": {
+                            "type": "array",
+                            "description": "Any village/place names. Official boundaries are resolved automatically before analysis.",
+                            "items": {"type": "string"},
+                        },
+                        "geojson": {"type": "object", "description": "FeatureCollection whose features are villages; NAME/name is used as the village name."},
+                        "start_year": {"type": "integer", "description": "First year, inclusive. Defaults to current year minus 2."},
+                        "end_year": {"type": "integer", "description": "Last completed year, inclusive. Defaults to previous calendar year."},
+                    },
+                    "required": [],
                 },
             ),
             ToolDeclaration(
@@ -968,6 +996,8 @@ class GEEServer:
             return await self._get_high_resolution_imagery(args)
         if tool_name == "get_modis_layer":
             return await self._get_modis_layer(args)
+        if tool_name == "compare_modis_fire_history":
+            return await self._compare_modis_fire_history(args)
         if tool_name == "get_dem_layer":
             return await self._get_dem_layer(args)
         if tool_name == "get_land_cover":
@@ -2133,6 +2163,150 @@ class GEEServer:
 
         except Exception as exc:
             return {"error": f"MODIS layer failed: {exc}", "code": "gee_error"}
+
+    async def _compare_modis_fire_history(self, args: dict) -> dict:
+        """Calculate comparable annual MODIS fire/burned-area metrics per village."""
+        from datetime import date
+
+        raw_villages = args.get("villages") or []
+        raw_villages = [({"name": v} if isinstance(v, str) else v) for v in raw_villages]
+        raw_villages.extend({"name": v} for v in (args.get("village_names") or []))
+        if not raw_villages:
+            gj = args.get("geojson") or {}
+            if gj.get("type") == "FeatureCollection":
+                raw_villages = gj.get("features", [])
+            elif gj:
+                raw_villages = [gj]
+        if not raw_villages:
+            return {"error": "Provide village geometries in villages or a GeoJSON FeatureCollection."}
+
+        # Use completed calendar years by default; the current year is usually
+        # incomplete and would make annual fire comparisons misleading.
+        end_year = int(args.get("end_year") or (date.today().year - 1))
+        start_year = int(args.get("start_year") or (end_year - 2))
+        if end_year < start_year or end_year - start_year > 10:
+            return {"error": "The year range must be valid and no longer than 11 years."}
+        years = list(range(start_year, end_year + 1))
+        workspace = args.get("_workspace")
+        ok, err = await _ensure_gee(workspace)
+        if not ok:
+            return {"error": err, "code": "upstream_unavailable"}
+
+        try:
+            import ee
+
+            unresolved = []
+
+            async def resolve_named(item):
+                if not isinstance(item, dict):
+                    return None, None
+                has_geometry = bool(item.get("geojson") or item.get("geometry") or item.get("type"))
+                if has_geometry or not item.get("name"):
+                    return item, None
+                boundary, _ee_geom, matched_name, _bbox = await self._resolve_place_boundary({
+                    "place_name": str(item["name"]),
+                    "_workspace": workspace,
+                    "_map_context": {},
+                })
+                if boundary:
+                    return {"name": matched_name or item["name"], "geojson": boundary}, None
+                return None, str(item["name"])
+
+            resolved_pairs = await asyncio.gather(*(resolve_named(item) for item in raw_villages))
+            resolved_villages = []
+            for item, missing in resolved_pairs:
+                if item:
+                    resolved_villages.append(item)
+                if missing:
+                    unresolved.append(missing)
+
+            def feature_geometry(item):
+                props = item.get("properties", {}) if isinstance(item, dict) else {}
+                name = (item.get("name") if isinstance(item, dict) else None) or props.get("NAME") or props.get("name") or props.get("Name") or "Village"
+                geom = item.get("geojson") if isinstance(item, dict) else None
+                if not geom and isinstance(item, dict):
+                    geom = item.get("geometry") or item
+                if isinstance(geom, dict) and geom.get("type") == "Feature":
+                    geom = geom.get("geometry")
+                return str(name), _geojson_to_ee_geometry(geom)
+
+            village_geoms = [feature_geometry(v) for v in resolved_villages]
+            if not village_geoms:
+                return {"error": "No village boundaries could be resolved.", "unresolved_villages": unresolved}
+
+            def compute():
+                # Batch all village geometries into one FeatureCollection and
+                # use reduceRegions once per dataset/year. The previous
+                # village-by-village loop made 42 blocking getInfo() calls for
+                # seven villages over three years and often appeared hung.
+                village_fc = ee.FeatureCollection([
+                    ee.Feature(geom, {"village": name}) for name, geom in village_geoms
+                ])
+                annual_by_village = {name: {} for name, _ in village_geoms}
+                for year in years:
+                    burned = (ee.ImageCollection("MODIS/061/MCD64A1")
+                              .filterDate(f"{year}-01-01", f"{year + 1}-01-01")
+                              .select("BurnDate").max().gt(0).selfMask())
+                    burned_regions = ee.Image.pixelArea().updateMask(burned).reduceRegions(
+                        collection=village_fc,
+                        reducer=ee.Reducer.sum(),
+                        scale=500,
+                        maxPixels=1e8,
+                    ).getInfo().get("features", [])
+
+                    fires = (ee.ImageCollection("FIRMS")
+                             .filterDate(f"{year}-01-01", f"{year + 1}-01-01")
+                             .select("T21")
+                             .map(lambda image: image.gt(300).rename("fire"))
+                             .sum())
+                    fire_regions = fires.reduceRegions(
+                        collection=village_fc,
+                        reducer=ee.Reducer.sum(),
+                        scale=1000,
+                        maxPixels=1e8,
+                    ).getInfo().get("features", [])
+
+                    burned_values = {
+                        str(f.get("properties", {}).get("village")): f.get("properties", {}).get("sum", 0)
+                        for f in burned_regions
+                    }
+                    fire_values = {
+                        str(f.get("properties", {}).get("village")): f.get("properties", {}).get("sum", 0)
+                        for f in fire_regions
+                    }
+                    for name, _ in village_geoms:
+                        annual_by_village[name][str(year)] = {
+                            "burned_area_hectares": round(float(burned_values.get(name, 0) or 0) / 10000.0, 3),
+                            "active_fire_pixel_days": round(float(fire_values.get(name, 0) or 0), 3),
+                        }
+
+                rows = []
+                for name, _ in village_geoms:
+                    annual = annual_by_village[name]
+                    deltas = {}
+                    for prev, curr in zip(years, years[1:]):
+                        p, c = annual[str(prev)], annual[str(curr)]
+                        deltas[f"{prev}_to_{curr}"] = {
+                            "burned_area_hectares_difference": round(c["burned_area_hectares"] - p["burned_area_hectares"], 3),
+                            "burned_area_percent_difference": round(((c["burned_area_hectares"] - p["burned_area_hectares"]) / p["burned_area_hectares"] * 100), 2) if p["burned_area_hectares"] else None,
+                            "active_fire_pixel_days_difference": round(c["active_fire_pixel_days"] - p["active_fire_pixel_days"], 3),
+                        }
+                    rows.append({"village": name, "annual": annual, "differences": deltas})
+                return rows
+
+            rows = await asyncio.get_event_loop().run_in_executor(None, compute)
+            return {
+                "status": "success",
+                "source": "NASA MODIS MCD64A1 burned area + FIRMS active fires via Google Earth Engine",
+                "start_year": start_year,
+                "end_year": end_year,
+                "villages_count": len(rows),
+                "unresolved_villages": unresolved,
+                "results": rows,
+                "message": f"Compared MODIS fire history for {len(rows)} villages from {start_year} through {end_year}.",
+            }
+        except Exception as exc:
+            return {"error": f"MODIS fire comparison failed: {exc}", "code": "gee_error"}
 
     # ── 10. Digital Elevation Models & Terrain Derivatives ─────────────────────
 

@@ -638,6 +638,9 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
           const isMatch = normalizedFilter.some((f) => {
             if (!f) return false
             if (layerIdLower === f || layerNameLower === f) return true
+            if (f.includes('boundary')) {
+              return layerNameLower.endsWith('boundary') && !layerNameLower.includes('land cover')
+            }
             if (genericWords.has(f)) {
               return layerNameLower === f
             }
@@ -676,6 +679,9 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
                 const f = fRaw.toLowerCase().trim()
                 if (!f) return false
                 if (id === f || n === f) return true
+                if (f.includes('boundary')) {
+                  return n.endsWith('boundary') && !n.includes('land cover')
+                }
                 if (genericWords.has(f)) return n === f
                 return n.includes(f) || f.includes(n)
               })
@@ -766,7 +772,11 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
         const id = layer.id.toLowerCase().trim()
         return layersToShow.some((raw) => {
           const filter = raw.toLowerCase().trim()
-          return Boolean(filter) && (id === filter || name === filter || name.includes(filter) || filter.includes(name))
+          if (!filter) return false
+          if (filter.includes('boundary')) {
+            return name.endsWith('boundary') && !name.includes('land cover')
+          }
+          return id === filter || name === filter || name.includes(filter) || filter.includes(name)
         })
       })
       for (const layer of labelLayers) {

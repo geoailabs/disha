@@ -186,10 +186,54 @@ class EnvironmentHub(BaseDomainHub):
             if map_action:
                 clean_data["displayed_on_map"] = True
 
+            # Fire-history comparisons are analytical deliverables, not only
+            # transient tool JSON. Persist a compact, auditable markdown table
+            # so the result remains available in Artifacts and can be exported.
+            artifact = None
+            if tool_name == "compare_modis_fire_history" and res.get("status") == "success":
+                rows = res.get("results") or []
+                years = list(range(int(res.get("start_year")), int(res.get("end_year")) + 1))
+                report_lines = [
+                    f"# MODIS Fire History Comparison ({res.get('start_year')}–{res.get('end_year')})",
+                    "",
+                    "Source: NASA MODIS MCD64A1 burned area and FIRMS active-fire observations via Google Earth Engine.",
+                    "",
+                    "| Village | Year | Burned area (ha) | Active-fire pixel-days |",
+                    "|---|---:|---:|---:|",
+                ]
+                for row in rows:
+                    name = str(row.get("village", "Village")).replace("|", "\\|")
+                    annual = row.get("annual") or {}
+                    for year in years:
+                        metrics = annual.get(str(year), {})
+                        report_lines.append(
+                            f"| {name} | {year} | {metrics.get('burned_area_hectares', 0)} | {metrics.get('active_fire_pixel_days', 0)} |"
+                        )
+                report_lines.extend(["", "## Year-over-year differences", ""])
+                for row in rows:
+                    report_lines.append(f"### {row.get('village', 'Village')}")
+                    report_lines.append("")
+                    report_lines.append("| Interval | Burned area difference (ha) | Burned area difference (%) | Active-fire pixel-day difference |")
+                    report_lines.append("|---|---:|---:|---:|")
+                    for interval, diff in (row.get("differences") or {}).items():
+                        report_lines.append(
+                            f"| {interval} | {diff.get('burned_area_hectares_difference', 0)} | {diff.get('burned_area_percent_difference', '—')} | {diff.get('active_fire_pixel_days_difference', 0)} |"
+                        )
+                unresolved = res.get("unresolved_villages") or []
+                if unresolved:
+                    report_lines.extend(["", "Unresolved villages: " + ", ".join(map(str, unresolved))])
+                artifact = {
+                    "title": f"MODIS Fire History Comparison — {res.get('start_year')}–{res.get('end_year')}",
+                    "artifact_type": "report",
+                    "format": "markdown",
+                    "content": "\n".join(report_lines),
+                }
+
             return ToolResult(
                 status=res.get("status", "success"),
                 data=clean_data,
                 map_action=map_action,
+                artifact=artifact,
             )
 
         # ── 3. Weather & Air Quality ──

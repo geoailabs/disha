@@ -19,7 +19,7 @@ def get_artifacts_dir(workspace: str | None = None) -> Path:
         return ws_dir
     return ARTIFACTS_DIR
 
-ALLOWED_FORMATS = {"markdown", "table", "image", "geojson", "html", "pdf", "docx", "txt", "xlsx", "json", "png", "jpg", "jpeg"}
+ALLOWED_FORMATS = {"markdown", "table", "image", "geojson", "html", "pdf", "docx", "txt", "xlsx", "json", "png", "jpg", "jpeg", "gif"}
 
 
 def _extract_coordinates(geometry: dict) -> list[list[float]]:
