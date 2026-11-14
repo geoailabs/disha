@@ -1778,18 +1778,41 @@ async def _execute_tool(
                     "route": ["route", "path", "directions"],
                     "catchment": ["catchment", "isochrone", "shed", "walk"],
                     "buffer": ["buffer", "radius"],
-                    "built": ["built", "urban", "land cover"]
+                    "built": ["built", "urban", "land cover"],
+                    "modis": ["modis", "firms", "burned", "burnt", "fire", "stubble"],
                 }
                 for l in current_layers:
                     lname_lower = l.get("name", "").lower()
                     for theme, title_kws in kw_map.items():
                         if any(kw in title_lower for kw in title_kws):
-                            if theme in lname_lower:
+                            if theme == "modis":
+                                # MODIS/fire figures may include a requested
+                                # boundary, but must never inherit unrelated
+                                # land-cover, urbanisation, or raster layers.
+                                if any(kw in lname_lower for kw in title_kws):
+                                    matched_layers.append(l.get("name", ""))
+                                elif lname_lower.endswith("boundary") and "land cover" not in lname_lower:
+                                    matched_layers.append(l.get("name", ""))
+                            elif theme in lname_lower:
                                 matched_layers.append(l.get("name", ""))
 
             # Deduplicate while preserving order
             if matched_layers:
                 args["layers_to_show"] = list(dict.fromkeys(matched_layers))
+            elif any(kw in title_lower for kw in ("modis", "firms", "burned", "burnt", "fire", "stubble")):
+                return json.dumps({
+                    "status": "blocked",
+                    "error": (
+                        f"CANVAS FEATURE MISSING: '{title}' requests a MODIS/fire figure, "
+                        "but no MODIS/fire layer is loaded on the map canvas. "
+                        "The export was blocked so unrelated canvas layers cannot appear in the MODIS output."
+                    ),
+                    "required_action": (
+                        "Call get_modis_layer(product='active_fires' or product='burned_area', "
+                        "place_name='<study area>', year=<year>) first, then export again with "
+                        "layers_to_show containing only the MODIS layer and the requested boundary."
+                    ),
+                })
 
         if save_to_art:
             from tools.artifact_store import save_artifact as _save_artifact, get_artifacts_dir

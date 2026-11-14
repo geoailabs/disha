@@ -2251,7 +2251,7 @@ class GEEServer:
                         collection=village_fc,
                         reducer=ee.Reducer.sum(),
                         scale=500,
-                        maxPixels=1e8,
+                        tileScale=4,
                     ).getInfo().get("features", [])
 
                     fires = (ee.ImageCollection("FIRMS")
@@ -2263,7 +2263,7 @@ class GEEServer:
                         collection=village_fc,
                         reducer=ee.Reducer.sum(),
                         scale=1000,
-                        maxPixels=1e8,
+                        tileScale=4,
                     ).getInfo().get("features", [])
 
                     burned_values = {

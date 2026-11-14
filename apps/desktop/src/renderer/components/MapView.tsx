@@ -670,7 +670,8 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
 
       if (!boundsToFit && layersRef.current.length > 0) {
         let combinedBbox: [number, number, number, number] | null = null
-        const targetLayers = layersToShow && layersToShow.length > 0
+        const hasLayerFilter = Boolean(layersToShow && layersToShow.length > 0)
+        const targetLayers = hasLayerFilter
           ? layersRef.current.filter((layer) => {
               const n = layer.name.toLowerCase().trim()
               const id = layer.id.toLowerCase().trim()
@@ -688,7 +689,10 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
             })
           : layersRef.current.filter((layer) => layer.visible)
 
-        for (const layer of (targetLayers.length > 0 ? targetLayers : layersRef.current)) {
+        // A requested layer filter is strict. Falling back to every canvas layer
+        // silently contaminates MODIS/section exports when a name is stale or
+        // slightly different from the current layer name.
+        for (const layer of targetLayers) {
           if (layer.data) {
             try {
               const b = turf.bbox(layer.data)
