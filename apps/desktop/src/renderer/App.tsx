@@ -3103,15 +3103,20 @@ function App() {
         })
         const data = await resp.json()
         if (data.status === 'success') {
+          // Update exactly the layer controlled by this timeline. The old
+          // Boolean(l.geeSpec) fallback refreshed every GEE raster on the
+          // canvas, so unrelated layers changed together and GIF frames were
+          // visually wrong.
+          const namedTargetExists = layers.some((l) => l.name === timelineSpec.title)
+          const matchesTimelineLayer = (l: typeof layers[number]) => {
+            if (timelineSpec.layerId) return l.id === timelineSpec.layerId
+            if (namedTargetExists) return l.name === timelineSpec.title
+            return Boolean(timelineSpec.dataset && l.geeSpec?.dataset === timelineSpec.dataset)
+          }
           if (data.tile_url) {
             setLayers((prev) =>
               prev.map((l) => {
-                const matches =
-                  (timelineSpec.layerId && l.id === timelineSpec.layerId) ||
-                  (timelineSpec.dataset && l.geeSpec?.dataset === timelineSpec.dataset) ||
-                  (l.name === timelineSpec.title) ||
-                  Boolean(l.geeSpec)
-                if (matches && l.geeSpec) {
+                if (matchesTimelineLayer(l) && l.geeSpec) {
                   return {
                     ...l,
                     geeSpec: {
@@ -3127,10 +3132,7 @@ function App() {
           } else if (data.geojson) {
             setLayers((prev) =>
               prev.map((l) => {
-                const matches =
-                  (timelineSpec.layerId && l.id === timelineSpec.layerId) ||
-                  (l.name === timelineSpec.title)
-                if (matches) {
+                if (matchesTimelineLayer(l)) {
                   return { ...l, data: data.geojson }
                 }
                 return l
@@ -3144,7 +3146,7 @@ function App() {
         setIsTimelineLoading(false)
       }
     },
-    [timelineSpec, workspacePath, defaultWorkspacePath],
+    [timelineSpec, layers, workspacePath, defaultWorkspacePath],
   )
 
   const handleTimelineUpdateSpec = useCallback((updated: Partial<TimelineSpec>) => {
