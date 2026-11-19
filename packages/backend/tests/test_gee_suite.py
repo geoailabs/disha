@@ -605,3 +605,120 @@ async def test_resolve_place_boundary_uses_exact_selected_polygon(gee_server, mo
     assert ee_geometry == selected_feature
     assert name == "Mohali"
     assert bbox == {"west": 76.0, "south": 30.0, "east": 77.0, "north": 31.0}
+
+
+@pytest.mark.asyncio
+async def test_get_gee_zonal_stats_uses_integer_max_pixels(gee_server, monkeypatch):
+    reduction_args = {}
+
+    class FakeReducer:
+        def combine(self, *_args, **_kwargs):
+            return self
+
+    class FakeImage:
+        def select(self, *_args):
+            return self
+
+        def reduceRegion(self, **kwargs):
+            reduction_args.update(kwargs)
+            return types.SimpleNamespace(getInfo=lambda: {"value_mean": 1})
+
+    async def fake_ensure_gee(*_args, **_kwargs):
+        return True, None
+
+    async def fake_resolve_boundary(_args):
+        return None, None, None, None
+
+    fake_ee = types.SimpleNamespace(
+        Geometry=lambda geojson: geojson,
+        Image=lambda _dataset: FakeImage(),
+        Reducer=types.SimpleNamespace(
+            mean=lambda: FakeReducer(),
+            minMax=lambda: FakeReducer(),
+            stdDev=lambda: FakeReducer(),
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "ee", fake_ee)
+    monkeypatch.setattr("mcp_servers.gee_server._ensure_gee", fake_ensure_gee)
+    monkeypatch.setattr(gee_server, "_resolve_place_boundary", fake_resolve_boundary)
+    monkeypatch.setattr("mcp_servers.gee_server._get_dataset_defaults", lambda _dataset: (None, False))
+
+    result = await gee_server._get_gee_zonal_stats({
+        "dataset": "test/image",
+        "geojson": {"type": "Polygon", "coordinates": []},
+    })
+
+    assert result["status"] == "success"
+    assert reduction_args["maxPixels"] == 1_000_000_000
+    assert isinstance(reduction_args["maxPixels"], int)
+
+
+@pytest.mark.asyncio
+async def test_compare_modis_fire_history_uses_tile_scale(gee_server, monkeypatch):
+    reduction_args = []
+    village_geometry = {"type": "Polygon", "coordinates": []}
+
+    class FakeImage:
+        def gt(self, *_args):
+            return self
+
+        def selfMask(self):
+            return self
+
+        def updateMask(self, *_args):
+            return self
+
+        def rename(self, *_args):
+            return self
+
+        def reduceRegions(self, **kwargs):
+            reduction_args.append(kwargs)
+            return types.SimpleNamespace(getInfo=lambda: {
+                "features": [{"properties": {"village": "Village A", "sum": 10}}]
+            })
+
+    class FakeCollection:
+        def filterDate(self, *_args):
+            return self
+
+        def select(self, *_args):
+            return self
+
+        def max(self):
+            return FakeImage()
+
+        def map(self, callback):
+            callback(FakeImage())
+            return self
+
+        def sum(self):
+            return FakeImage()
+
+    async def fake_ensure_gee(*_args, **_kwargs):
+        return True, None
+
+    fake_ee = types.SimpleNamespace(
+        Feature=lambda geometry, properties: {"geometry": geometry, "properties": properties},
+        FeatureCollection=lambda features: features,
+        Image=types.SimpleNamespace(pixelArea=lambda: FakeImage()),
+        ImageCollection=lambda _dataset: FakeCollection(),
+        Reducer=types.SimpleNamespace(sum=lambda: object()),
+    )
+    monkeypatch.setitem(sys.modules, "ee", fake_ee)
+    monkeypatch.setattr("mcp_servers.gee_server._ensure_gee", fake_ensure_gee)
+    monkeypatch.setattr(
+        "mcp_servers.gee_server._geojson_to_ee_geometry",
+        lambda _geojson: village_geometry,
+    )
+
+    result = await gee_server._compare_modis_fire_history({
+        "villages": [{"name": "Village A", "geojson": village_geometry}],
+        "start_year": 2020,
+        "end_year": 2020,
+    })
+
+    assert result["status"] == "success"
+    assert len(reduction_args) == 2
+    for kwargs in reduction_args:
+        assert kwargs["tileScale"] == 4
+        assert "maxPixels" not in kwargs

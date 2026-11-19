@@ -2822,7 +2822,7 @@ class GEEServer:
                     ),
                     geometry=stats_geom,
                     scale=100,
-                    maxPixels=1e9,
+                    maxPixels=1_000_000_000,
                 ).getInfo()
 
                 return stats
@@ -3266,7 +3266,7 @@ class GEEServer:
                     reducer=ee.Reducer.sum().group(groupField=1, groupName="class_id"),
                     geometry=ee_geom,
                     scale=10,
-                    maxPixels=1e9,
+                    maxPixels=1_000_000_000,
                 ).getInfo()
 
                 groups = stats.get("groups", [])
