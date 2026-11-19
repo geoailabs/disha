@@ -93,6 +93,18 @@ def test_modis_catalog_dataset_defaults_are_image_collections():
     assert vis.get("bands") is not None
 
 
+def test_population_catalog_dataset_defaults_are_image_collections():
+    pop_collections = [
+        "WorldPop/GP/100m/pop",
+        "JRC/GHSL/P2023A/GHS_POP",
+        "CIESIN/GPWv411/GPW_Population_Density",
+    ]
+    for dataset in pop_collections:
+        vis, is_collection = _get_dataset_defaults(dataset)
+        assert is_collection is True, f"{dataset} must be classified as an ImageCollection for GEE raster and zonal stats"
+        assert vis.get("palette") is not None
+
+
 @pytest.mark.asyncio
 async def test_modis_layer_uses_explicit_palette_and_class_ranges(gee_server, monkeypatch):
     class FakeImage:

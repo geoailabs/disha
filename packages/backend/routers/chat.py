@@ -331,7 +331,7 @@ SYSTEM_PROMPT = (
     "estimate_scenario_emissions (calculate tailpipe CO₂, PM2.5, NOx, CO and ambient PM2.5 using the Gifford-Hanna box model — "
     "use for emissions impact assessment of a transport or land use scenario).\n"
     "- Earth Engine Remote Sensing & Raster Overlays (GEE): "
-    "get_population_layer (render a 100m WorldPop or CIESIN GPWv4 population density raster tile layer on the map — ALWAYS call this for 'population raster', 'population density map', 'WorldPop', or 'demographic heat map' requests; pass place_name='<place>' or country_iso and year=2020), "
+    "get_population_layer (render a 100m WorldPop or JRC GHSL population density raster tile layer on the map — ALWAYS call this for 'population raster', 'population density map', 'WorldPop', 'GHSL', or 'demographic heat map' requests; pass place_name='<place>' and the requested year; supports historical, current, and future projections 2000-2030), "
     "get_surface_temperature_layer (Land Surface Temperature LST in °C from Landsat 8/9 ST_B10, MODIS MOD11A1, or ERA5-Land — use for urban heat islands UHI, thermal mapping, heat risk; supports place_name, year, min_temp, max_temp), "
     "get_dem_layer (elevation, hillshade, slope, or aspect terrain raster layer from SRTM 30m, Copernicus GLO-30, NASADEM, ALOS — use for topography, slope analysis, flood risk modeling), "
     "get_atmospheric_layer (Sentinel-5P tropospheric air pollution column density for NO2, CO, SO2, O3, AER_AI aerosol index, HCHO, CH4, and MODIS AOD aerosol optical depth — use for regional air quality and pollution plumes), "

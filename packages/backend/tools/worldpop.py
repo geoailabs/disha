@@ -21,7 +21,7 @@ from tools import cache, http as http_client
 _STATS_URL = "https://api.worldpop.org/v1/services/stats"
 _TASK_URL = "https://api.worldpop.org/v1/tasks/"
 _DATASET = "wpgppop"
-_YEAR = 2020
+_DEFAULT_YEAR = 2020
 _POLL_INTERVAL = 1.5
 _POLL_TIMEOUT = 60.0
 
@@ -30,14 +30,14 @@ class WorldPopUnavailable(RuntimeError):
     """Raised internally when no usable population number can be obtained."""
 
 
-async def _submit(geometry: dict) -> str:
+async def _submit(geometry: dict, year: int = _DEFAULT_YEAR) -> str:
     geom_str = json.dumps(geometry, separators=(",", ":"))
     resp = await http_client.fetch_json(
         _STATS_URL,
         namespace="worldpop",
         params={
             "dataset": _DATASET,
-            "year": _YEAR,
+            "year": year,
             "geojson": geom_str,
             "runasync": "true",
         },
@@ -76,23 +76,26 @@ async def _poll(taskid: str) -> float | None:
         await asyncio.sleep(_POLL_INTERVAL)
 
 
-async def population_in_polygon(geometry: dict) -> float | None:
+async def population_in_polygon(geometry: dict, year: int | None = None) -> float | None:
     """Return total population inside a GeoJSON Polygon/MultiPolygon, or ``None``.
 
+    Supports years 2000-2020 (WorldPop wpgppop product range). Defaults to 2020.
     Returns ``None`` on any upstream error so callers can degrade gracefully.
     Cached 30 days, keyed on the geometry JSON + dataset + year.
     """
     if not geometry or geometry.get("type") not in ("Polygon", "MultiPolygon"):
         return None
 
+    valid_year = min(max(int(year or _DEFAULT_YEAR), 2000), 2020)
+
     cache_key = {
         "geom": json.dumps(geometry, sort_keys=True, separators=(",", ":")),
         "dataset": _DATASET,
-        "year": _YEAR,
+        "year": valid_year,
     }
 
     async def _fetch() -> dict:
-        taskid = await _submit(geometry)
+        taskid = await _submit(geometry, year=valid_year)
         pop = await _poll(taskid)
         return {"population": pop}
 

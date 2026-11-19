@@ -412,3 +412,31 @@ async def test_plot_server_and_multi_format_export(tmp_path):
     b_xlsx, fn_xlsx, mime_xlsx = export_artifact_multi_format("Zonal Data", '{"columns": ["Zone", "Area"], "rows": [["R1", 120]]}', "xlsx")
     assert len(b_xlsx) > 0
 
+
+@pytest.mark.asyncio
+async def test_demographics_server_dynamic_year_handling():
+    from mcp_servers.demographics_server import DemographicsServer
+
+    srv = DemographicsServer()
+    # 1. Test get_demographics declaration exposes year parameter
+    decls = {d.name: d for d in srv.get_declarations()}
+    assert "year" in decls["get_demographics"].parameters["properties"]
+    assert "base_year" in decls["project_population"].parameters["properties"]
+    assert "base_year" in decls["project_employment"].parameters["properties"]
+
+    # 2. Test project_population with custom base_year and base_population
+    res = await srv.execute("project_population", {
+        "base_population": 100000,
+        "base_year": 2024,
+        "growth_rate": 0.02,
+        "target_years": [2030, 2040],
+        "model_type": "linear",
+    })
+    assert res["status"] == "success"
+    assert res["baseline"]["year"] == 2024
+    assert res["baseline"]["population"] == 100000
+    assert len(res["projections"]) == 2
+    assert res["projections"][0]["year"] == 2030
+    assert res["projections"][0]["projected_population"] == 112000  # 100000 * (1 + 0.02 * 6)
+
+

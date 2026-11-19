@@ -49,38 +49,53 @@ class DemographicsServer:
             ToolDeclaration(
                 name="get_demographics",
                 description=(
-                    "Estimate population around a point. Primary source: WorldPop's "
-                    "wpgppop 100m gridded population (2020). Returns a hard number for "
-                    "`population` plus reverse-geocoded place context and any nearby "
-                    "OSM-tagged populations. Falls back to OSM tag scrape if WorldPop "
-                    "is unavailable."
+                    "Estimate total population and population density for a boundary or around coordinates. "
+                    "Multi-tier sources: WorldPop 100m grid, JRC GHSL multitemporal, and OSM tagged populations. "
+                    "Returns total population, population density in persons/ha and persons/km², urban density classification, "
+                    "and study area size. Supports place_name, polygon GeoJSON, or lat/lng with search radius across years 2000-2030."
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
-                        "lat": {"type": "number"},
-                        "lng": {"type": "number"},
+                        "place_name": {
+                            "type": "string",
+                            "description": "Place name or city to query (e.g. 'Austin, Texas', 'Oxford'). Resolves administrative boundary.",
+                        },
+                        "geojson": {
+                            "type": "object",
+                            "description": "Optional GeoJSON Feature, FeatureCollection, or Polygon to aggregate population within.",
+                        },
+                        "lat": {"type": "number", "description": "Center latitude (if querying point radius)."},
+                        "lng": {"type": "number", "description": "Center longitude (if querying point radius)."},
                         "radius_meters": {
                             "type": "number",
-                            "description": "Search radius (default 8000, max 25000).",
+                            "description": "Search radius in meters when using lat/lng (default 8000, max 25000).",
+                        },
+                        "year": {
+                            "type": "integer",
+                            "description": "Year of population data (2000-2030, default 2020).",
                         },
                     },
-                    "required": ["lat", "lng"],
+                    "required": [],
                 },
             ),
             ToolDeclaration(
                 name="project_population",
                 description=(
-                    "Forecast future population growth for a study area. Can automatically retrieve the current baseline "
-                    "population at a coordinate, or accept an explicit baseline population value. Supports linear, "
-                    "exponential, and logistic models with annual growth rate, target years, and carrying capacity constraints."
+                    "Forecast future population growth for a study area. Can automatically retrieve the baseline "
+                    "population at a coordinate for a specific year, or accept an explicit baseline population value. Supports linear, "
+                    "exponential, and logistic models with annual growth rate, baseline year, target years, and carrying capacity constraints."
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
                         "base_population": {
                             "type": "integer",
-                            "description": "Baseline population. If not specified, lat and lng must be provided to fetch current gridded population."
+                            "description": "Baseline population. If not specified, lat and lng must be provided to fetch gridded population."
+                        },
+                        "base_year": {
+                            "type": "integer",
+                            "description": "Baseline year corresponding to base_population (default 2020 for gridded data, or current planning year like 2026)."
                         },
                         "growth_rate": {
                             "type": "number",
@@ -165,6 +180,10 @@ class DemographicsServer:
                             "type": "integer",
                             "description": "Baseline job count. If not specified, lat, lng, and workspace must be provided to estimate current baseline jobs."
                         },
+                        "base_year": {
+                            "type": "integer",
+                            "description": "Baseline year corresponding to base_jobs (default current year, e.g. 2026)."
+                        },
                         "growth_rate": {
                             "type": "number",
                             "description": "Annual employment growth rate as a decimal (e.g. 0.03 for 3% growth). Default: 0.025"
@@ -228,40 +247,159 @@ class DemographicsServer:
         lat = float(args.get("lat", 0))
         lng = float(args.get("lng", 0))
         radius = min(int(args.get("radius_meters", 8000)), 25000)
+        req_year = args.get("year")
+        year = int(req_year) if req_year is not None else 2020
+        valid_year = min(max(year, 2000), 2020)
+        place_name = (args.get("place_name") or "").strip()
+        geojson_input = args.get("geojson")
+
+        polygon = None
+        resolved_place = place_name
+
+        # 1. Resolve geometry from GeoJSON, place name, or point radius
+        if geojson_input:
+            if isinstance(geojson_input, dict):
+                gtype = geojson_input.get("type")
+                if gtype in ("Polygon", "MultiPolygon"):
+                    polygon = geojson_input
+                elif gtype == "Feature":
+                    polygon = geojson_input.get("geometry")
+                elif gtype == "FeatureCollection":
+                    feats = geojson_input.get("features", [])
+                    if feats:
+                        polygon = feats[0].get("geometry")
+
+        if polygon is None and place_name:
+            try:
+                nom_res = await http_client.fetch_json(
+                    "https://nominatim.openstreetmap.org/search",
+                    namespace="nominatim",
+                    params={
+                        "q": place_name,
+                        "format": "json",
+                        "polygon_geojson": 1,
+                        "limit": 1,
+                    },
+                )
+                if nom_res and isinstance(nom_res, list) and len(nom_res) > 0:
+                    entry = nom_res[0]
+                    resolved_place = entry.get("display_name", place_name)
+                    if lat == 0 and lng == 0:
+                        lat = float(entry.get("lat", 0))
+                        lng = float(entry.get("lon", 0))
+                    g = entry.get("geojson")
+                    if g and g.get("type") in ("Polygon", "MultiPolygon"):
+                        polygon = g
+            except Exception:
+                pass
+
+        if polygon is None:
+            point_geom = {"type": "Point", "coordinates": [lng, lat]}
+            polygon = geodesic_buffer(point_geom, radius)
+
+        # 2. Compute study area metrics
+        area_m2 = geodesic_area_m2(polygon)
+        area_ha = round(area_m2 / 10000.0, 2)
+        area_km2 = round(area_m2 / 1000000.0, 3)
 
         out: dict = {
-            "input": {"lat": lat, "lng": lng, "radius_meters": radius},
+            "status": "success",
+            "input": {"lat": lat, "lng": lng, "radius_meters": radius, "year": year, "place_name": place_name or None},
+            "place_name": resolved_place or None,
             "population": None,
             "population_source": None,
+            "population_year": valid_year,
+            "area_ha": area_ha,
+            "area_km2": area_km2,
+            "population_density_ha": None,
+            "population_density_sqkm": None,
+            "density_classification": None,
             "places_with_population": [],
             "reverse_geocode_summary": None,
             "notes": (
-                "WorldPop = ML-modeled 100m grid (2020); OSM = tagged values, "
-                "may be outdated or missing. Use official census for statutory work."
+                f"Multi-tier demographics: WorldPop (100m grid, 2000-2020), JRC GHSL (1975-2030), "
+                "and OSM tagged populations. Density benchmark: <25 pph (Rural), 25-75 (Suburban), 75-150 (Urban), 150+ (High Density Core)."
             ),
         }
 
-        try:
-            point_geom = {"type": "Point", "coordinates": [lng, lat]}
-            polygon = geodesic_buffer(point_geom, radius)
-            wp_pop = await worldpop.population_in_polygon(polygon)
-        except Exception as e:
-            wp_pop = None
-            out["worldpop_error"] = str(e)
+        # 3. Multi-tier population calculation
+        # Tier 1: WorldPop API (for years <= 2020)
+        wp_pop = None
+        if year <= 2020:
+            try:
+                wp_pop = await worldpop.population_in_polygon(polygon, year=valid_year)
+            except Exception as e:
+                out["worldpop_error"] = str(e)
 
         if wp_pop is not None:
             out["population"] = round(wp_pop)
-            out["population_source"] = "worldpop"
+            out["population_source"] = f"WorldPop 100m grid ({valid_year})"
+            out["population_year"] = valid_year
+        else:
+            # Tier 2: Fall back to GEE if available (for fast cloud execution or year > 2020 via GHSL)
+            try:
+                from mcp_servers.gee_server import _ensure_gee
+                ok, _ = await _ensure_gee()
+                if ok:
+                    import ee
+                    if year > 2020:
+                        ghsl_years = [1975, 1980, 1985, 1990, 1995, 2000, 2005, 2010, 2015, 2020, 2025, 2030]
+                        closest_yr = min(ghsl_years, key=lambda y: abs(y - year))
+                        coll = ee.ImageCollection("JRC/GHSL/P2023A/GHS_POP").filterDate(f"{closest_yr}-01-01", f"{closest_yr}-12-31")
+                        pop_img = coll.first()
+                        gee_source = f"JRC GHSL ({closest_yr})"
+                        resolved_gee_yr = closest_yr
+                    else:
+                        coll = ee.ImageCollection("WorldPop/GP/100m/pop").filter(ee.Filter.eq("year", valid_year))
+                        pop_img = coll.mosaic()
+                        gee_source = f"WorldPop GEE ({valid_year})"
+                        resolved_gee_yr = valid_year
 
-        out["reverse_geocode_summary"] = await self._reverse_summary(lat, lng)
-        out["places_with_population"] = await self._osm_population_tags(lat, lng, radius)
+                    ee_geom = ee.Geometry(polygon)
+                    stats = pop_img.reduceRegion(
+                        reducer=ee.Reducer.sum(),
+                        geometry=ee_geom,
+                        scale=100,
+                        maxPixels=1_000_000_000,
+                    ).getInfo()
+                    if stats:
+                        val = next(iter(stats.values()), None)
+                        if val is not None and val > 0:
+                            out["population"] = round(float(val))
+                            out["population_source"] = gee_source
+                            out["population_year"] = resolved_gee_yr
+            except Exception as gee_err:
+                out["gee_error"] = str(gee_err)
 
+        if lat != 0 and lng != 0:
+            out["reverse_geocode_summary"] = await self._reverse_summary(lat, lng)
+            out["places_with_population"] = await self._osm_population_tags(lat, lng, radius)
+
+        # Tier 3: OSM tagged values fallback
         if out["population"] is None and out["places_with_population"]:
             tagged = [_to_int(p["population"]) for p in out["places_with_population"]]
             tagged = [t for t in tagged if t is not None]
             if tagged:
                 out["population"] = max(tagged)
-                out["population_source"] = "osm"
+                out["population_source"] = "OSM tagged values"
+
+        # 4. Standardized population density calculations
+        if out["population"] is not None and area_ha > 0:
+            dens_ha = round(out["population"] / area_ha, 2)
+            dens_km2 = round(out["population"] / area_km2, 1) if area_km2 > 0 else 0.0
+
+            if dens_ha < 25.0:
+                dens_class = "Rural (<25 pph)"
+            elif dens_ha < 75.0:
+                dens_class = "Suburban (25-75 pph)"
+            elif dens_ha < 150.0:
+                dens_class = "Urban (75-150 pph)"
+            else:
+                dens_class = "High-Density Core (150+ pph)"
+
+            out["population_density_ha"] = dens_ha
+            out["population_density_sqkm"] = dens_km2
+            out["density_classification"] = dens_class
 
         return out
 
@@ -361,24 +499,29 @@ class DemographicsServer:
         lat_arg = args.get("lat")
         lng_arg = args.get("lng")
         radius = int(args.get("radius_meters", 5000))
+        user_base_year = args.get("base_year")
 
         # 1. Resolve base population
         base_population = None
+        base_year = None
         source_summary = ""
 
         if base_pop_arg is not None:
             try:
                 base_population = int(base_pop_arg)
-                source_summary = "User-supplied explicit baseline value"
+                base_year = int(user_base_year) if user_base_year is not None else 2026
+                source_summary = f"User-supplied explicit baseline value for year {base_year}"
             except (ValueError, TypeError):
                 return {"error": "Invalid base_population value. Must be an integer."}
 
         elif lat_arg is not None and lng_arg is not None:
             # Query WorldPop/OSM demographics at these coordinates
-            demog_args = {"lat": float(lat_arg), "lng": float(lng_arg), "radius_meters": radius}
+            req_year = int(user_base_year) if user_base_year is not None else 2020
+            demog_args = {"lat": float(lat_arg), "lng": float(lng_arg), "radius_meters": radius, "year": req_year}
             demog_res = await self._get_demographics(demog_args)
             if demog_res.get("population") is not None:
                 base_population = demog_res["population"]
+                base_year = int(user_base_year) if user_base_year is not None else demog_res.get("population_year", 2020)
                 # Extract a human-readable place name from the reverse geocode summary
                 rev = demog_res.get("reverse_geocode_summary") or {}
                 addr = rev.get("address", {})
@@ -391,10 +534,10 @@ class DemographicsServer:
                     or ""
                 )
                 source_summary = (
-                    f"Geolocated baseline near {place_name_raw} ({lat_arg}, {lng_arg}) "
+                    f"Geolocated baseline ({base_year}) near {place_name_raw} ({lat_arg}, {lng_arg}) "
                     f"using {demog_res['population_source']} source."
                     if place_name_raw
-                    else f"Geolocated baseline around coordinates ({lat_arg}, {lng_arg}) using {demog_res['population_source']} source."
+                    else f"Geolocated baseline ({base_year}) around coordinates ({lat_arg}, {lng_arg}) using {demog_res['population_source']} source."
                 )
             else:
                 return {"error": f"Could not determine baseline population at coordinates ({lat_arg}, {lng_arg}). Please specify base_population explicitly."}
@@ -415,13 +558,14 @@ class DemographicsServer:
                 return {"error": f"Carrying capacity ceiling ({carrying_capacity}) must be greater than the base population ({base_population})."}
 
         # 2. Run projection
-        base_year = 2026  # default planning baseline year
+        if base_year is None:
+            base_year = int(user_base_year) if user_base_year is not None else 2020
         results = []
 
         # Sort years to be chronological
         sorted_years = sorted(list(set([int(y) for y in target_years if int(y) > base_year])))
         if not sorted_years:
-            return {"error": f"All target years must be greater than the current baseline year {base_year}."}
+            return {"error": f"All target years must be greater than the baseline year {base_year}."}
 
         for yr in sorted_years:
             dt = yr - base_year
@@ -1110,7 +1254,8 @@ class DemographicsServer:
             if carrying_capacity <= base_jobs:
                 return {"error": f"Carrying capacity ceiling ({carrying_capacity}) must be greater than baseline jobs ({base_jobs})."}
 
-        base_year = 2026
+        user_base_year = args.get("base_year")
+        base_year = int(user_base_year) if user_base_year is not None else 2026
         results = []
 
         sorted_years = sorted(list(set([int(y) for y in target_years if int(y) > base_year])))

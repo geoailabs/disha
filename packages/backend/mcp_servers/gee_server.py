@@ -87,7 +87,7 @@ def parse_gee_credentials_data(creds_input: str | Path | dict | None) -> dict | 
 
 def _find_gee_creds(workspace: str | None = None) -> str | None:
     """Locate service account credentials in priority order, returning path or JSON string."""
-    env = os.environ.get("GOOGLE_EARTH_ENGINE_CREDS")
+    env = os.environ.get("GOOGLE_EARTH_ENGINE_CREDS") or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     if env and parse_gee_credentials_data(env):
         return env
 
@@ -367,9 +367,9 @@ def _get_dataset_defaults(dataset: str) -> tuple[dict, bool]:
             "palette_labels": _MODIS_IGBP_LABELS,
         }, True
 
-    # 5. Population
-    if "worldpop" in d or "landscan" in d or "gpw" in d:
-        return {"min": 0, "max": 500, "palette": ["ffffe5", "f7fcb9", "addd8e", "31a354", "006837", "ff0000"]}, False
+    # 5. Population (ImageCollections: WorldPop, GHSL GHS-POP, GPWv4, LandScan)
+    if "worldpop" in d or "landscan" in d or "gpw" in d or "ghs_pop" in d or "ghsl" in d:
+        return {"min": 0, "max": 500, "palette": ["ffffe5", "f7fcb9", "addd8e", "31a354", "006837", "ff0000"]}, True
 
     # 6. MODIS collections (generic fallback for any MODIS asset ID)
     if "modis" in d or any(token in d for token in [
@@ -862,17 +862,17 @@ class GEEServer:
             ToolDeclaration(
                 name="get_population_layer",
                 description=(
-                    "Add a high-resolution population density raster layer to the map from WorldPop (100m grid, 2000-2020) "
-                    "or CIESIN GPWv4 / LandScan. ALWAYS use this for 'population raster', 'population density map', 'WorldPop', "
-                    "or urban density visualization requests."
+                    "Add a high-resolution population density raster layer to the map from WorldPop (100m grid, 2000-2020), "
+                    "JRC GHSL (GHS-POP 100m grid, 1975-2030 epochs including 2025), or CIESIN GPWv4 / LandScan. ALWAYS use this for 'population raster', 'population density map', 'WorldPop', "
+                    "'ghsl population', or urban density visualization requests across historical, current, and future years."
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
                         "place_name": place_param,
                         "geojson": geojson_param,
-                        "source": {"type": "string", "enum": ["worldpop", "landscan", "gpw"], "description": "Dataset source (default 'worldpop')."},
-                        "year": {"type": "integer", "description": "Year between 2000 and 2020 (default 2020)."},
+                        "source": {"type": "string", "enum": ["worldpop", "ghsl", "landscan", "gpw"], "description": "Dataset source: 'worldpop' (2000-2020 annual), 'ghsl' (JRC GHS-POP 1975-2030, recommended for post-2020/2025), or 'gpw' (default 'worldpop'; auto-routes to 'ghsl' if year > 2020)."},
+                        "year": {"type": "integer", "description": "Year of population data (e.g. 2000-2030, default 2020)."},
                         "country_iso": {"type": "string", "description": "ISO-3 country code for WorldPop (e.g. 'IND', 'USA', 'GBR')."},
                         "lat": {"type": "number", "description": "Latitude for study area location."},
                         "lng": {"type": "number", "description": "Longitude for study area location."},
@@ -2946,10 +2946,14 @@ class GEEServer:
                     elif lat is not None and lng is not None:
                         stats_geom = ee.Geometry.Point([float(lng), float(lat)]).buffer(radius_km * 1000.0)
                     else:
-                        stats_geom = ee.Geometry.Point([76.7794, 30.7333]).buffer(5000)
+                        raise ValueError("A target location (place_name, geojson, or lat/lng) is required to calculate zonal statistics.")
 
                 if is_collection:
-                    coll = ee.ImageCollection(dataset).filterDate(f"{year}-01-01", f"{year}-12-31")
+                    d_lower = dataset.lower()
+                    if "worldpop" in d_lower:
+                        coll = ee.ImageCollection(dataset).filter(ee.Filter.eq("year", min(max(year, 2000), 2020)))
+                    else:
+                        coll = ee.ImageCollection(dataset).filterDate(f"{year}-01-01", f"{year}-12-31")
                     if stats_geom is not None:
                         try:
                             coll = coll.filterBounds(stats_geom)
@@ -2961,12 +2965,19 @@ class GEEServer:
 
                 target_img = img.select(band) if band else img
 
+                reducer = ee.Reducer.mean().combine(
+                    ee.Reducer.minMax(), sharedInputs=True
+                ).combine(
+                    ee.Reducer.stdDev(), sharedInputs=True
+                )
+                if hasattr(ee.Reducer, "sum"):
+                    try:
+                        reducer = reducer.combine(ee.Reducer.sum(), sharedInputs=True)
+                    except Exception:
+                        pass
+
                 stats = target_img.reduceRegion(
-                    reducer=ee.Reducer.mean().combine(
-                        ee.Reducer.minMax(), sharedInputs=True
-                    ).combine(
-                        ee.Reducer.stdDev(), sharedInputs=True
-                    ),
+                    reducer=reducer,
                     geometry=stats_geom,
                     scale=100,
                     maxPixels=1_000_000_000,
@@ -3074,23 +3085,57 @@ class GEEServer:
 
             vis = {
                 "min": 1,
-                "max": 100,
+                "max": 150,
                 "palette": ["fef0d9", "fdcc8a", "fc8d59", "e34a33", "b30000", "7a0177"],
-                "palette_labels": ["1 (Rural)", "20", "40", "60", "80", "100+ (High Density)"],
+                "palette_labels": ["<25 pph (Rural)", "25-75 (Suburban)", "75-150 (Urban)", "150+ pph (High-Density Core)"],
+                "density_unit": "persons_per_hectare",
             }
+            if args.get("vis_params"):
+                vis.update(args["vis_params"])
+
+            resolved_yr = year
+            active_dataset_id = "WorldPop/GP/100m/pop"
 
             def build_pop():
+                nonlocal resolved_yr, active_dataset_id
                 palette = ["fef0d9", "fdcc8a", "fc8d59", "e34a33", "b30000", "7a0177"]
-                if source == "worldpop":
-                    yr = min(max(year, 2000), 2020)
-                    coll = ee.ImageCollection("WorldPop/GP/100m/pop").filter(ee.Filter.eq("year", yr))
-                    if country_iso:
-                        coll = coll.filter(ee.Filter.eq("country", country_iso))
+
+                if source in ("ghsl", "ghs") or (source == "worldpop" and year > 2020):
+                    # JRC GHSL GHS-POP multitemporal 100m grid (1975-2030 epochs)
+                    valid_years = [1975, 1980, 1985, 1990, 1995, 2000, 2005, 2010, 2015, 2020, 2025, 2030]
+                    resolved_yr = min(valid_years, key=lambda y: abs(y - year))
+                    active_dataset_id = "JRC/GHSL/P2023A/GHS_POP"
+                    coll = ee.ImageCollection(active_dataset_id).filterDate(f"{resolved_yr}-01-01", f"{resolved_yr}-12-31")
                     if ee_geom is not None:
                         try:
                             coll = coll.filterBounds(ee_geom)
                         except Exception:
                             pass
+                    raw_img = coll.first()
+                    if ee_geom is not None:
+                        try:
+                            raw_img = raw_img.clip(ee_geom)
+                        except Exception:
+                            pass
+                    colored = raw_img.visualize(min=1, max=100, palette=palette)
+                    res = colored.updateMask(raw_img.gt(0.5))
+                    if ee_geom is not None:
+                        try:
+                            res = res.clip(ee_geom)
+                        except Exception:
+                            pass
+                    return res
+                elif source == "worldpop":
+                    resolved_yr = min(max(year, 2000), 2020)
+                    active_dataset_id = "WorldPop/GP/100m/pop"
+                    coll = ee.ImageCollection(active_dataset_id).filter(ee.Filter.eq("year", resolved_yr))
+                    if ee_geom is not None:
+                        try:
+                            coll = coll.filterBounds(ee_geom)
+                        except Exception:
+                            pass
+                    elif country_iso:
+                        coll = coll.filter(ee.Filter.eq("country", country_iso))
                     raw_img = coll.mosaic()
                     if ee_geom is not None:
                         try:
@@ -3108,8 +3153,9 @@ class GEEServer:
                     return res
                 else:
                     valid_years = [2000, 2005, 2010, 2015, 2020]
-                    yr = min(valid_years, key=lambda y: abs(y - year))
-                    coll = ee.ImageCollection("CIESIN/GPWv411/GPW_Population_Density").filterDate(f"{yr}-01-01", f"{yr}-12-31")
+                    resolved_yr = min(valid_years, key=lambda y: abs(y - year))
+                    active_dataset_id = "CIESIN/GPWv411/GPW_Population_Density"
+                    coll = ee.ImageCollection(active_dataset_id).filterDate(f"{resolved_yr}-01-01", f"{resolved_yr}-12-31")
                     if ee_geom is not None:
                         try:
                             coll = coll.filterBounds(ee_geom)
@@ -3133,8 +3179,8 @@ class GEEServer:
             layer_title = title or (f"Population Density – {place_nm} ({year})" if place_nm else f"Population Density ({source.title()} {year})")
             if place_nm and place_nm.lower() not in layer_title.lower():
                 layer_title = f"{layer_title} - {place_nm}"
-            dataset_id = "WorldPop/GP/100m/pop" if source == "worldpop" else "CIESIN/GPWv411/GPW_Population_Density"
             map_id, tile_url = await self._tile_proxy(build_pop, {}, ee_geom)
+            dataset_id = active_dataset_id
 
             centroid = None
             if bbox:
@@ -3147,6 +3193,7 @@ class GEEServer:
                 "status": "success",
                 "source": source,
                 "year": year,
+                "resolved_year": resolved_yr,
                 "country_iso": country_iso or "global",
                 "place_name": place_nm,
                 "clipped_to_boundary": bool(ee_geom),

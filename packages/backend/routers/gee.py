@@ -65,7 +65,7 @@ def parse_gee_credentials_data(creds_input: str | Path | dict | None) -> dict | 
 
 def _find_creds_file(workspace: str | None = None) -> str | None:
     """Locate service account credentials in priority order."""
-    env = os.environ.get("GOOGLE_EARTH_ENGINE_CREDS")
+    env = os.environ.get("GOOGLE_EARTH_ENGINE_CREDS") or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     if env and parse_gee_credentials_data(env):
         return env
 
@@ -224,6 +224,13 @@ async def gee_tile(map_id: str, z: int, x: int, y: int, workspace: str | None = 
     client = _get_shared_client()
     try:
         resp = await client.get(tile_url, headers={"Authorization": f"Bearer {token}"})
+        if resp.status_code == 401:
+            # Token expired or invalidated; refresh credentials and retry once
+            global _creds
+            async with _creds_lock:
+                _creds = None
+            token = await _get_token(workspace)
+            resp = await client.get(tile_url, headers={"Authorization": f"Bearer {token}"})
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="GEE tile gateway timeout")
     except Exception as exc:
