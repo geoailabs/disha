@@ -26,6 +26,7 @@ import AppSidebar, { type WorkspaceCategory } from './components/AppSidebar'
 import { FloatingLayerCard, type FloatingTab } from './components/FloatingLayerCard'
 import { FloatingPromptBar } from './components/FloatingPromptBar'
 import { TimelineBar } from './components/TimelineBar'
+import { GtfsSchedulePanel } from './components/GtfsSchedulePanel'
 import { FirstLaunchModal } from './components/FirstLaunchModal'
 import appIcon from './assets/icon.png'
 import {
@@ -44,6 +45,8 @@ import {
   SelectedFeatureEntry,
   ScenarioDraft,
   TimelineSpec,
+  GtfsRouteSchedule,
+  GtfsStopSchedule,
 } from './types'
 import {
   computeBreaks,
@@ -285,6 +288,14 @@ function App() {
       if (!shiftKey) {
         setSelectedFeatures([entry])
         setSelectedLayerIds(new Set([entry.layerId]))
+
+        // If clicked feature is a GTFS route, focus it in the interactive timetable schedules panel
+        const props = (entry.feature?.properties || {}) as Record<string, any>
+        if (props.route_id) {
+          const rid = String(props.route_id)
+          setActiveGtfsRouteId(rid)
+          setIsGtfsScheduleOpen(true)
+        }
         return
       }
       // Shift+click: toggle by layerId
@@ -360,6 +371,11 @@ function App() {
   const [scenarioDraft, setScenarioDraft] = useState<ScenarioDraft | null>(null)
   const [timelineSpec, setTimelineSpec] = useState<TimelineSpec | null>(null)
   const [isTimelineLoading, setIsTimelineLoading] = useState<boolean>(false)
+
+  // GTFS Interactive Timetable Schedules panel
+  const [gtfsSchedules, setGtfsSchedules] = useState<GtfsRouteSchedule[]>([])
+  const [activeGtfsRouteId, setActiveGtfsRouteId] = useState<string | null>(null)
+  const [isGtfsScheduleOpen, setIsGtfsScheduleOpen] = useState(false)
 
   // Undo/Redo stack states
   const [pastHistory, setPastHistory] = useState<{ layers: GeoJSONLayer[]; bookmarks: MapBookmark[] }[]>([])
@@ -688,6 +704,9 @@ function App() {
     setActiveScenarioId(null)
     setOpenDocs([])
     setActiveDocId(null)
+    setGtfsSchedules([])
+    setActiveGtfsRouteId(null)
+    setIsGtfsScheduleOpen(false)
     setDocumentImage(null)
     setTimelineSpec(null)
     setIsTimelineLoading(false)
@@ -934,26 +953,6 @@ function App() {
 
   const addLayer = useCallback(
     async (name: string, filePath: string, customColor?: string, customStyleSpec?: any) => {
-      const existing = layers.find((l) => l.filePath === filePath || (name && l.name.toLowerCase() === name.toLowerCase()))
-      if (existing) {
-        setLayers((prev) => prev.map((l) => l.id === existing.id ? { ...l, visible: true } : l))
-        setActiveLeftTab('layers')
-        setAppMode('map')
-        if (existing.data && existing.data.features && existing.data.features.length > 0) {
-          try {
-            const bbox = turf.bbox(existing.data)
-            if (bbox && bbox.length === 4 && bbox.every(isFinite)) {
-              const [west, south, east, north] = bbox
-              if (Math.abs(east - west) < 1e-5 && Math.abs(north - south) < 1e-5) {
-                setMapActions((prev) => [...prev, { type: 'fly_to', payload: { lng: west, lat: south, zoom: 14 } }])
-              } else {
-                setMapActions((prev) => [...prev, { type: 'fit_bounds', payload: { west, south, east, north } }])
-              }
-            }
-          } catch {}
-        }
-        return
-      }
       const content = await window.electronAPI.readFile(filePath)
       if (!content) return
       try {
@@ -977,9 +976,6 @@ function App() {
                 features: [{ type: 'Feature', geometry: raw, properties: {} }],
               }
 
-        const color = customColor || LAYER_COLORS[colorIndexRef.current % LAYER_COLORS.length]
-        if (!customColor) colorIndexRef.current++
-
         const isAiMarkers = name.toLowerCase() === AI_MARKERS_LAYER.toLowerCase()
         const isStops = name.toLowerCase().includes('stops') || name.toLowerCase().includes('waypoints') || name.toLowerCase().includes('markers')
         const finalStyleSpec = customStyleSpec || ((isAiMarkers || isStops) ? {
@@ -994,12 +990,46 @@ function App() {
           }
         } : undefined)
 
+        const existing = layers.find((l) => l.filePath === filePath || (name && l.name.toLowerCase() === name.toLowerCase()))
+        if (existing) {
+          const updatedColor = customColor || existing.color
+          setLayers((prev) => prev.map((l) => l.id === existing.id ? {
+            ...l,
+            visible: true,
+            data,
+            name: name || l.name,
+            filePath,
+            color: updatedColor,
+            styleSpec: finalStyleSpec || l.styleSpec,
+          } : l))
+          setActiveLeftTab('layers')
+          setAppMode('map')
+          try {
+            const bbox = turf.bbox(data)
+            if (bbox && bbox.length === 4 && bbox.every(isFinite)) {
+              const [west, south, east, north] = bbox
+              if (Math.abs(east - west) < 1e-5 && Math.abs(north - south) < 1e-5) {
+                setMapActions((prev) => [...prev, { type: 'fly_to', payload: { lng: west, lat: south, zoom: 14 } }])
+              } else {
+                setMapActions((prev) => [...prev, { type: 'fit_bounds', payload: { west, south, east, north } }])
+              }
+            }
+          } catch {}
+          return
+        }
+
+        const color = customColor || LAYER_COLORS[colorIndexRef.current % LAYER_COLORS.length]
+        if (!customColor) colorIndexRef.current++
+
+        const isPointLayer = data.features && data.features.length > 0 && data.features.every((f) => f.geometry?.type === 'Point' || f.geometry?.type === 'MultiPoint')
+        const layerOpacity = (isPointLayer || isAiMarkers || isStops) ? 1.0 : (customStyleSpec?.opacity ?? 0.5)
+
         const layer: GeoJSONLayer = {
           id: `layer-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
           name,
           filePath,
           visible: true,
-          opacity: 0.5,
+          opacity: layerOpacity,
           data,
           color,
           styleSpec: finalStyleSpec,
@@ -1332,33 +1362,108 @@ function App() {
     })
   }, [])
 
-  const zoomToLayer = useCallback((id: string) => {
-    const layer = layers.find((l) => l.id === id)
-    if (!layer) return
-    // WMS/GEE raster layers have no GeoJSON data to compute a bbox from.
-    // Fall back to the current visible map bounds so the button still does
-    // something useful (e.g., zooms back if user panned away).
-    if (layer.wmsSpec || layer.geeSpec) {
-      const b = mapBoundsRef.current
-      if (b) {
-        setMapActions((prev) => [
-          ...prev,
-          { type: 'fit_bounds', payload: { west: b.west, south: b.south, east: b.east, north: b.north } },
-        ])
+  const zoomToLayer = useCallback(
+    async (id: string) => {
+      const layer = layers.find((l) => l.id === id)
+      if (!layer) return
+
+      // Ensure map is active mode and layer is visible
+      setAppMode('map')
+      if (!layer.visible) {
+        setLayers((prev) => prev.map((l) => (l.id === id ? { ...l, visible: true } : l)))
       }
-      return
-    }
-    if (!layer.data) return
-    try {
-      const bbox = turf.bbox(layer.data) as [number, number, number, number]
-      if (bbox.every((v) => isFinite(v))) {
-        setMapActions((prev) => [
-          ...prev,
-          { type: 'fit_bounds', payload: { west: bbox[0], south: bbox[1], east: bbox[2], north: bbox[3] } },
-        ])
+
+      // WMS/GEE raster layers fallback to specific bbox/center, overlay bounds, or map bounds
+      if (layer.geeSpec) {
+        const b = (layer.geeSpec as any).bbox || (layer.geeSpec as any).bounds
+        const c = (layer.geeSpec as any).center || (layer.geeSpec as any).centroid
+        if (b) {
+          setMapActions((prev) => [...prev, { type: 'fit_bounds', payload: b }])
+          return
+        }
+        if (c) {
+          setMapActions((prev) => [...prev, { type: 'fly_to', payload: c }])
+          return
+        }
       }
-    } catch { /* ignore invalid geometry */ }
-  }, [layers])
+
+      if (layer.wmsSpec || layer.geeSpec) {
+        if (layer.rasterOverlaySpec?.corners && layer.rasterOverlaySpec.corners.length >= 2) {
+          const lons = layer.rasterOverlaySpec.corners.map((c) => c[0])
+          const lats = layer.rasterOverlaySpec.corners.map((c) => c[1])
+          setMapActions((prev) => [
+            ...prev,
+            { type: 'fit_bounds', payload: { west: Math.min(...lons), south: Math.min(...lats), east: Math.max(...lons), north: Math.max(...lats) } },
+          ])
+          return
+        }
+        const b = mapBoundsRef.current
+        if (b) {
+          setMapActions((prev) => [
+            ...prev,
+            { type: 'fit_bounds', payload: { west: b.west, south: b.south, east: b.east, north: b.north } },
+          ])
+        }
+        return
+      }
+
+      let data = layer.data
+      if ((!data || !data.features || data.features.length === 0) && layer.filePath) {
+        try {
+          const content = await window.electronAPI.readFile(layer.filePath)
+          if (content) {
+            const raw = JSON.parse(content)
+            data = raw.type === 'FeatureCollection' ? raw : { type: 'FeatureCollection', features: [raw] }
+            setLayers((prev) => prev.map((l) => (l.id === id ? { ...l, data } : l)))
+          }
+        } catch {}
+      }
+
+      if (!data || !data.features || data.features.length === 0) return
+
+      try {
+        const bbox = turf.bbox(data) as [number, number, number, number]
+        if (bbox && bbox.length === 4 && bbox.every((v) => Number.isFinite(v))) {
+          const [west, south, east, north] = bbox
+          if (Math.abs(east - west) < 1e-5 && Math.abs(north - south) < 1e-5) {
+            setMapActions((prev) => [...prev, { type: 'fly_to', payload: { lng: west, lat: south, zoom: 15 } }])
+          } else {
+            setMapActions((prev) => [
+              ...prev,
+              { type: 'fit_bounds', payload: { west, south, east, north } },
+            ])
+          }
+          return
+        }
+      } catch {
+        // turf bbox fallback
+      }
+
+      // Fallback coordinate scan
+      try {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+        const walk = (coords: any) => {
+          if (typeof coords[0] === 'number') {
+            minX = Math.min(minX, coords[0])
+            maxX = Math.max(maxX, coords[0])
+            minY = Math.min(minY, coords[1])
+            maxY = Math.max(maxY, coords[1])
+          } else if (Array.isArray(coords)) {
+            coords.forEach(walk)
+          }
+        }
+        data.features.forEach((f) => f.geometry && walk(f.geometry.coordinates))
+        if (Number.isFinite(minX) && Number.isFinite(minY) && Number.isFinite(maxX) && Number.isFinite(maxY)) {
+          if (Math.abs(maxX - minX) < 1e-5 && Math.abs(maxY - minY) < 1e-5) {
+            setMapActions((prev) => [...prev, { type: 'fly_to', payload: { lng: minX, lat: minY, zoom: 15 } }])
+          } else {
+            setMapActions((prev) => [...prev, { type: 'fit_bounds', payload: { west: minX, south: minY, east: maxX, north: maxY } }])
+          }
+        }
+      } catch {}
+    },
+    [layers],
+  )
 
   // Convert a non-GeoJSON vector file (shapefile/GPKG/KML/KMZ/GPX/CSV) to a
   // workspace-local .geojson via the backend, then load it as a layer.
@@ -2098,7 +2203,7 @@ function App() {
           name: label || `Marker ${aiMarkerCounterRef.current}`,
           filePath: '',
           visible: true,
-          opacity: 0.5,
+          opacity: 1.0,
           groupId,
           groupName: AI_MARKERS_LAYER,
           data: { type: 'FeatureCollection', features: [feature] },
@@ -2131,7 +2236,7 @@ function App() {
         name: pointFeatureName(feature, `${groupName} ${idx + 1}`),
         filePath: '',
         visible: true,
-        opacity: 0.5,
+        opacity: 1.0,
         groupId,
         groupName,
         data: { type: 'FeatureCollection', features: [feature] },
@@ -2594,6 +2699,15 @@ function App() {
       }
       return
     }
+    if (action.type === 'show_gtfs_schedules') {
+      const { schedules } = action.payload
+      if (Array.isArray(schedules) && schedules.length > 0) {
+        setGtfsSchedules(schedules)
+        setActiveGtfsRouteId(schedules[0].route_id)
+        setIsGtfsScheduleOpen(true)
+      }
+      return
+    }
     if (action.type === 'add_wms_layer') {
       const { url, layer_name, title } = action.payload
       // Deduplicate: if this exact WMS url+layer is already loaded, just make
@@ -2643,6 +2757,9 @@ function App() {
     }
     if (action.type === 'add_gee_layer') {
       const { url, dataset, vis_params, title } = action.payload
+      const p = action.payload as any
+      const b = p?.bbox || p?.bounds
+      const c = p?.center || p?.centroid
       setLayers((prev) => {
         const id = `gee-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
         const newLayer: GeoJSONLayer = {
@@ -2653,15 +2770,12 @@ function App() {
           opacity: 0.85,
           data: { type: 'FeatureCollection', features: [] },
           color: '#89b4fa',
-          geeSpec: { url, dataset, vis_params },
+          geeSpec: { url, dataset, vis_params, bbox: b, bounds: b, center: c, centroid: c },
         }
         return [...prev, newLayer]
       })
       setActiveLeftTab('layers')
       setAppMode('map')
-      const p = action.payload as any
-      const b = p?.bbox || p?.bounds
-      const c = p?.center || p?.centroid
       if (b) {
         setMapActions((prev) => [...prev, { type: 'fit_bounds', payload: b }])
       } else if (c) {
@@ -2729,6 +2843,7 @@ function App() {
               ? { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: geojson as Geometry, properties: {} }] }
               : { type: 'FeatureCollection', features: [] }
       const layerName = name || 'AI Layer'
+      const isPointCollection = data.features && data.features.length > 0 && data.features.every((f) => f.geometry?.type === 'Point' || f.geometry?.type === 'MultiPoint')
       const customStyleSpec = styleSpec || (fillColor !== undefined || fillOpacity !== undefined || lineColor !== undefined || lineWidth !== undefined ? {
         mode: 'simple' as const,
         color: color || lineColor || '#3b82f6',
@@ -2736,8 +2851,12 @@ function App() {
         fillOpacity,
         strokeColor: lineColor || color,
         lineWidth: lineWidth ?? 2,
-        opacity: fillOpacity ?? 0.5,
-      } : undefined)
+        opacity: isPointCollection ? 1.0 : (fillOpacity ?? 0.5),
+      } : (isPointCollection ? {
+        mode: 'simple' as const,
+        color: color || '#3b82f6',
+        opacity: 1.0,
+      } : undefined))
       if (isPointOnlyCollection(data)) {
         addGroupedPointFeaturesToLayers(layerName, data, color)
       } else {
@@ -3685,6 +3804,17 @@ function App() {
         setSelectedLayerIds(new Set())
         setSelectedFeatures([])
       }
+      // Check for previously imported GTFS route schedules in workspace
+      try {
+        const schedContent = await window.electronAPI.readFile(`${workspacePath}/gtfs_route_schedules.json`)
+        if (schedContent) {
+          const parsed = JSON.parse(schedContent)
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setGtfsSchedules(parsed)
+            setActiveGtfsRouteId(parsed[0].route_id)
+          }
+        }
+      } catch {}
     } catch (e) {
       console.error('Failed to load project:', e)
     }
@@ -4049,6 +4179,24 @@ function App() {
               />
             )}
 
+            {/* Interactive Glassmorphic GTFS Route Schedules Panel */}
+            {isGtfsScheduleOpen && gtfsSchedules.length > 0 && (
+              <GtfsSchedulePanel
+                schedules={gtfsSchedules}
+                activeRouteId={activeGtfsRouteId}
+                onSelectRoute={(rid) => setActiveGtfsRouteId(rid)}
+                onStopClick={(stop) => {
+                  if (stop.coordinates && Number.isFinite(stop.coordinates[0]) && Number.isFinite(stop.coordinates[1])) {
+                    setMapActions((prev) => [
+                      ...prev,
+                      { type: 'fly_to', payload: { lng: stop.coordinates[0], lat: stop.coordinates[1], zoom: 16 } },
+                    ])
+                  }
+                }}
+                onClose={() => setIsGtfsScheduleOpen(false)}
+              />
+            )}
+
             {/* Floating Bottom-Center Prompt Bar */}
             {(() => {
               const lastAssistantMsg = [...(activeConversation?.messages || [])]
@@ -4086,10 +4234,14 @@ function App() {
                 }}
               >
                 <span className="flc-cursor-tooltip-name">
-                  {hoveredFeatureEntry.feature?.properties?.name ||
-                    hoveredFeatureEntry.feature?.properties?.title ||
-                    hoveredFeatureEntry.layerName ||
-                    'Feature'}
+                  {hoveredFeatureEntry.feature?.properties?.route_short_name
+                    ? `Route ${hoveredFeatureEntry.feature.properties.route_short_name}${hoveredFeatureEntry.feature.properties.route_long_name ? `: ${hoveredFeatureEntry.feature.properties.route_long_name}` : ''}`
+                    : hoveredFeatureEntry.feature?.properties?.stop_name
+                      ? `Stop: ${hoveredFeatureEntry.feature.properties.stop_name}`
+                      : hoveredFeatureEntry.feature?.properties?.name ||
+                        hoveredFeatureEntry.feature?.properties?.title ||
+                        hoveredFeatureEntry.layerName ||
+                        'Feature'}
                 </span>
                 {hoveredFeatureEntry.calculatedArea && (
                   <span className="flc-cursor-tooltip-area">

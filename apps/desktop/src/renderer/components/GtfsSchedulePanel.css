@@ -1,0 +1,613 @@
+/* ── Apple-Grade Minimalist GTFS Schedules Panel (No Pill Containers) ── */
+
+.gtfs-schedule-panel {
+  position: absolute;
+  top: 16px;
+  right: calc(var(--chat-drawer-offset, 0px) + 76px);
+  width: clamp(420px, 34vw, 540px);
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(36px) saturate(190%);
+  -webkit-backdrop-filter: blur(36px) saturate(190%);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  box-shadow:
+    0 18px 48px -10px rgba(0, 0, 0, 0.16),
+    0 2px 10px -2px rgba(0, 0, 0, 0.06),
+    0 0 0 1px rgba(0, 0, 0, 0.04);
+  border-radius: 18px;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "SF Pro", -system-ui, "Helvetica Neue", sans-serif;
+  color: #111827;
+  user-select: none;
+  transition: box-shadow 0.2s ease, opacity 0.2s ease;
+}
+
+:root[data-theme='dark'] .gtfs-schedule-panel {
+  background: rgba(24, 26, 34, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 20px 52px -10px rgba(0, 0, 0, 0.6),
+    0 2px 12px -2px rgba(0, 0, 0, 0.4),
+    0 0 0 1px rgba(255, 255, 255, 0.07);
+  color: #f3f4f6;
+}
+
+/* ── Drag Handle ── */
+
+.gtfs-drag-area {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 0 2px 0;
+  cursor: grab;
+}
+
+.gtfs-drag-area:active {
+  cursor: grabbing;
+}
+
+.gtfs-drag-handle {
+  width: 36px;
+  height: 4.5px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.16);
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.gtfs-drag-area:hover .gtfs-drag-handle {
+  background: rgba(0, 0, 0, 0.28);
+  transform: scaleX(1.1);
+}
+
+:root[data-theme='dark'] .gtfs-drag-handle {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+:root[data-theme='dark'] .gtfs-drag-area:hover .gtfs-drag-handle {
+  background: rgba(255, 255, 255, 0.35);
+}
+
+/* ── Top Header ── */
+
+.gtfs-panel-header {
+  padding: 6px 14px 8px 14px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: grab;
+}
+
+.gtfs-panel-header:active {
+  cursor: grabbing;
+}
+
+.gtfs-header-left {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.gtfs-route-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 25px;
+  padding: 0 8px;
+  border-radius: 7px;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  flex-shrink: 0;
+  margin-top: 1px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+}
+
+.gtfs-header-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.gtfs-route-title {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: #111827;
+  letter-spacing: -0.2px;
+  word-break: break-word;
+}
+
+:root[data-theme='dark'] .gtfs-route-title {
+  color: #f9fafb;
+}
+
+.gtfs-route-headsign {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.35;
+  color: #4b5563;
+  word-break: break-word;
+}
+
+:root[data-theme='dark'] .gtfs-route-headsign {
+  color: #9ca3af;
+}
+
+/* ── Header Action Buttons ── */
+
+.gtfs-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.gtfs-header-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.045);
+  color: #4b5563;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+:root[data-theme='dark'] .gtfs-header-btn {
+  background: rgba(255, 255, 255, 0.08);
+  color: #d1d5db;
+}
+
+.gtfs-header-btn:hover {
+  background: rgba(0, 0, 0, 0.09);
+  color: #111827;
+}
+
+:root[data-theme='dark'] .gtfs-header-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+}
+
+.gtfs-close-btn:hover {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+:root[data-theme='dark'] .gtfs-close-btn:hover {
+  background: rgba(220, 38, 38, 0.35);
+  color: #fca5a5;
+}
+
+/* ── Route Selection Dropdown & Mode Section (Replaces next-stop pill) ── */
+
+.gtfs-controls-section {
+  padding: 4px 14px 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+:root[data-theme='dark'] .gtfs-controls-section {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+.gtfs-dropdown-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gtfs-dropdown-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+:root[data-theme='dark'] .gtfs-dropdown-label {
+  color: #9ca3af;
+}
+
+.gtfs-select-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.gtfs-route-dropdown {
+  width: 100%;
+  padding: 7px 30px 7px 10px;
+  background: rgba(0, 0, 0, 0.035);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #111827;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  outline: none;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+
+:root[data-theme='dark'] .gtfs-route-dropdown {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #f3f4f6;
+}
+
+.gtfs-route-dropdown:hover {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.18);
+}
+
+:root[data-theme='dark'] .gtfs-route-dropdown:hover {
+  background: rgba(255, 255, 255, 0.11);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.gtfs-route-dropdown:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+}
+
+.gtfs-select-chevron {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  color: #6b7280;
+  pointer-events: none;
+}
+
+:root[data-theme='dark'] .gtfs-select-chevron {
+  color: #9ca3af;
+}
+
+/* ── Mode & Schedule Details (Clean Text, No Pills) ── */
+
+.gtfs-mode-schedule-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11.5px;
+  color: #4b5563;
+  line-height: 1.4;
+}
+
+:root[data-theme='dark'] .gtfs-mode-schedule-bar {
+  color: #9ca3af;
+}
+
+.gtfs-mode-callout {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #111827;
+}
+
+:root[data-theme='dark'] .gtfs-mode-callout {
+  color: #f3f4f6;
+}
+
+.gtfs-mode-callout strong {
+  font-weight: 600;
+  color: #6b7280;
+}
+
+:root[data-theme='dark'] .gtfs-mode-callout strong {
+  color: #9ca3af;
+}
+
+.gtfs-mode-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.gtfs-meta-sep {
+  color: rgba(0, 0, 0, 0.2);
+  user-select: none;
+}
+
+:root[data-theme='dark'] .gtfs-meta-sep {
+  color: rgba(255, 255, 255, 0.2);
+}
+
+.gtfs-stops-total {
+  margin-left: auto;
+  font-weight: 500;
+}
+
+/* ── Translucent Stops & Departure Times List (Opaque on Hover) ── */
+
+.gtfs-schedule-list-wrap {
+  padding: 6px 10px 10px 10px;
+}
+
+.gtfs-schedule-stops {
+  max-height: 290px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  opacity: 0.55;
+  transition: opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  padding: 4px 6px;
+  scrollbar-width: thin;
+}
+
+.gtfs-schedule-stops:hover {
+  opacity: 1;
+}
+
+.gtfs-schedule-stops::-webkit-scrollbar {
+  width: 4px;
+}
+
+.gtfs-schedule-stops::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 4px;
+}
+
+:root[data-theme='dark'] .gtfs-schedule-stops::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* ── Stop Item Row ── */
+
+.gtfs-stop-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+  gap: 10px;
+}
+
+.gtfs-stop-row:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+:root[data-theme='dark'] .gtfs-stop-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.gtfs-stop-row.is-selected {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+:root[data-theme='dark'] .gtfs-stop-row.is-selected {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.gtfs-stop-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.gtfs-stop-spine {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.gtfs-stop-bullet {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 2px solid;
+  z-index: 2;
+  transition: all 0.15s ease;
+}
+
+.gtfs-stop-row.is-selected .gtfs-stop-bullet {
+  width: 10px;
+  height: 10px;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.25);
+}
+
+.gtfs-spine-line {
+  position: absolute;
+  top: 13px;
+  bottom: -9px;
+  width: 1.5px;
+  background: rgba(0, 0, 0, 0.12);
+  z-index: 1;
+}
+
+:root[data-theme='dark'] .gtfs-spine-line {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.gtfs-stop-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #1f2937;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:root[data-theme='dark'] .gtfs-stop-label {
+  color: #e5e7eb;
+}
+
+.gtfs-stop-row.is-selected .gtfs-stop-label {
+  font-weight: 600;
+  color: #0284c7;
+}
+
+:root[data-theme='dark'] .gtfs-stop-row.is-selected .gtfs-stop-label {
+  color: #38bdf8;
+}
+
+.gtfs-transfer-indicator {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: #94a3b8;
+  margin-left: 4px;
+  flex-shrink: 0;
+}
+
+.gtfs-stop-right {
+  flex-shrink: 0;
+}
+
+.gtfs-stop-departure {
+  font-size: 11px;
+  font-weight: 500;
+  color: #6b7280;
+  font-variant-numeric: tabular-nums;
+}
+
+:root[data-theme='dark'] .gtfs-stop-departure {
+  color: #9ca3af;
+}
+
+.gtfs-stop-row.is-selected .gtfs-stop-departure {
+  font-weight: 600;
+  color: #0284c7;
+}
+
+:root[data-theme='dark'] .gtfs-stop-row.is-selected .gtfs-stop-departure {
+  color: #38bdf8;
+}
+
+/* ── Collapsed State ── */
+
+.gtfs-panel-collapsed {
+  position: absolute;
+  top: 16px;
+  right: calc(var(--chat-drawer-offset, 0px) + 76px);
+  height: 38px;
+  padding: 0 10px 0 8px;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(28px) saturate(190%);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  box-shadow: 0 10px 28px -4px rgba(0, 0, 0, 0.14), 0 0 0 1px rgba(0, 0, 0, 0.04);
+  border-radius: 19px;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: grab;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+  user-select: none;
+}
+
+.gtfs-panel-collapsed:active {
+  cursor: grabbing;
+}
+
+:root[data-theme='dark'] .gtfs-panel-collapsed {
+  background: rgba(24, 26, 34, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #f3f4f6;
+}
+
+.gtfs-panel-collapsed:hover {
+  transform: translateY(-1.5px);
+  box-shadow: 0 14px 32px -4px rgba(0, 0, 0, 0.2);
+}
+
+.gtfs-collapsed-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: 6px;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.gtfs-collapsed-info {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.gtfs-collapsed-title {
+  font-size: 12px;
+  font-weight: 600;
+  max-width: 170px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gtfs-collapsed-mode {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+:root[data-theme='dark'] .gtfs-collapsed-mode {
+  color: #9ca3af;
+}
+
+.gtfs-collapsed-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.04);
+  color: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+:root[data-theme='dark'] .gtfs-collapsed-btn {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.gtfs-collapsed-btn:hover {
+  background: rgba(0, 0, 0, 0.09);
+}
+
+.gtfs-collapsed-close:hover {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+:root[data-theme='dark'] .gtfs-collapsed-close:hover {
+  background: rgba(220, 38, 38, 0.3);
+  color: #fca5a5;
+}

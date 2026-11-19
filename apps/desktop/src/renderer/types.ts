@@ -27,7 +27,15 @@ export interface GeoJSONLayer {
   opacity?: number
   styleSpec?: LayerStyleSpec
   wmsSpec?: { url: string; layer_name: string }
-  geeSpec?: { url: string; dataset?: string; vis_params?: any }
+  geeSpec?: {
+    url: string
+    dataset?: string
+    vis_params?: any
+    bbox?: { west: number; south: number; east: number; north: number } | [number, number, number, number] | any
+    bounds?: any
+    center?: [number, number] | { lat: number; lng: number } | any
+    centroid?: any
+  }
   rasterOverlaySpec?: { url: string; corners: [number, number][] }
 }
 
@@ -349,6 +357,40 @@ export type MapAction =
       }
     }
   | { type: 'close_timeline'; payload?: Record<string, never> }
+  | {
+      type: 'show_gtfs_schedules'
+      payload: {
+        schedules: GtfsRouteSchedule[]
+        feed_title?: string
+        agency_name?: string
+      }
+    }
+
+export interface GtfsStopSchedule {
+  sequence: number
+  stop_id: string
+  stop_name: string
+  departure_time: string
+  formatted_time: string
+  coordinates: [number, number]
+  is_transfer?: boolean
+  transfer_count?: number
+}
+
+export interface GtfsRouteSchedule {
+  route_id: string
+  route_short_name: string
+  route_long_name: string
+  title: string
+  badge: string
+  color: string
+  route_type: string
+  daily_trips: number
+  headsign: string
+  agency_name: string
+  total_stops: number
+  stops: GtfsStopSchedule[]
+}
 
 export interface TimelineSpec {
   visible: boolean
@@ -417,7 +459,15 @@ export interface ProjectData {
     opacity?: number
     styleSpec?: LayerStyleSpec
     wmsSpec?: { url: string; layer_name: string }
-    geeSpec?: { url: string; dataset?: string; vis_params?: any }
+    geeSpec?: {
+      url: string
+      dataset?: string
+      vis_params?: any
+      bbox?: any
+      bounds?: any
+      center?: any
+      centroid?: any
+    }
   }>
   conversations: Conversation[]
   activeConversationId: string | null

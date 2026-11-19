@@ -179,6 +179,27 @@ async def test_gtfs_server_functional(tmp_path):
     assert res_import["summary"]["stops"] == 2
     assert res_import["summary"]["routes"] == 1
 
+    # Verify routes GeoJSON contains distinct color styling and popup properties
+    with open(res_import["routes_file"]) as f:
+        routes_data = json.load(f)
+    assert len(routes_data["features"]) >= 1
+    rf = routes_data["features"][0]
+    assert "color" in rf["properties"]
+    assert "strokeColor" in rf["properties"]
+    assert rf["properties"]["route_short_name"] == "101"
+    assert "daily_trips" in rf["properties"]
+    assert "title" in rf["properties"]
+
+    # Verify stops GeoJSON contains styled stops with connectivity & routes served
+    with open(res_import["stops_file"]) as f:
+        stops_data = json.load(f)
+    assert len(stops_data["features"]) == 2
+    sf = stops_data["features"][0]
+    assert "color" in sf["properties"]
+    assert "fillColor" in sf["properties"]
+    assert "routes_served" in sf["properties"]
+    assert "101" in sf["properties"]["routes_served"]
+
     # 2. Test service analysis
     res_service = await server.execute("analyze_gtfs_service", {
         "workspace": str(tmp_path)

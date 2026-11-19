@@ -309,6 +309,7 @@ SYSTEM_PROMPT = (
     "analyze_parking_requirements (compute zoning parking ECS demand and compare against OSM-mapped parking supply — use for parking gap analysis).\n"
     "- GTFS Transit: "
     "import_gtfs_feed (download and ingest a GTFS ZIP from URL or local workspace — loads stops and route polylines on the map; "
+    "when the user attaches or uploads a GTFS ZIP file, or specifies a local GTFS feed path, immediately call import_gtfs_feed(path=file_path) to parse and plot the transit network on the map; "
     "use this for official transit agency feed data; DO NOT use osm_fetch_bus_routes for agency GTFS data), "
     "analyze_gtfs_service (compute per-route trip counts and peak/off-peak frequencies — use for transit service coverage analysis), "
     "analyze_gtfs_schedules (hourly headway histograms and stop arrival timetables — use for detailed schedule analysis), "
@@ -2734,6 +2735,17 @@ async def chat_websocket(websocket: WebSocket):
                             selected_block += f"  Properties: {json.dumps(clean_props)}\n"
                     user_content += selected_block
 
+            # Surface uploaded/attached local files (such as GTFS ZIP feeds) to the model
+            if chat_attachments:
+                file_blocks = []
+                for att in chat_attachments:
+                    fn = att.get("file_name", "")
+                    fp = att.get("file_path", "")
+                    if fp:
+                        file_blocks.append(f"- Attached File: {fn}\n  Local File Path: {fp}")
+                if file_blocks:
+                    user_content += "\n\n[USER ATTACHED LOCAL FILES]\n" + "\n".join(file_blocks)
+
             tools = _TOOLS
 
             # Build unified message content parts for vision model
@@ -2746,7 +2758,8 @@ async def chat_websocket(websocket: WebSocket):
                     }
                 })
             for att in chat_attachments:
-                if att.get("base64"):
+                mtype = att.get("mime_type", "")
+                if att.get("base64") and (mtype.startswith("image/") or "pdf" in mtype):
                     content_list.append({
                         "type": "image_url",
                         "image_url": {

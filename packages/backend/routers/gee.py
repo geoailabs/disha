@@ -69,6 +69,11 @@ def _find_creds_file(workspace: str | None = None) -> str | None:
     if env and parse_gee_credentials_data(env):
         return env
 
+    # 0. User home directory
+    home_file = Path.home() / ".disha" / "ee-service-account.json"
+    if home_file.exists() and parse_gee_credentials_data(home_file):
+        return str(home_file)
+
     # 1. Workspace-specific hidden file
     if workspace:
         ws_file = Path(workspace) / ".disha" / "ee-service-account.json"

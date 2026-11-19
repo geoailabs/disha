@@ -1625,6 +1625,9 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
     try {
       const chosen = await window.electronAPI.openFile({
         filters: [
+          { name: 'All Supported Files', extensions: [...IMAGE_EXTS, 'pdf', 'zip', 'geojson', 'json', 'csv'] },
+          { name: 'GTFS Feeds & Archives (.zip)', extensions: ['zip'] },
+          { name: 'GeoJSON / Spatial Data', extensions: ['geojson', 'json', 'csv'] },
           { name: 'Images & PDFs', extensions: [...IMAGE_EXTS, 'pdf'] },
           { name: 'Images', extensions: IMAGE_EXTS },
           { name: 'PDF', extensions: ['pdf'] },
@@ -1661,6 +1664,13 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
           }
         } else {
           setAttachmentError('Could not render the PDF page.')
+        }
+      } else if (ext === 'zip' || ext === 'geojson' || ext === 'json' || ext === 'csv') {
+        newAttachment = {
+          base64: '',
+          mimeType: ext === 'zip' ? 'application/zip' : (ext === 'csv' ? 'text/csv' : 'application/geo+json'),
+          fileName: name,
+          filePath: chosen,
         }
       } else {
         setAttachmentError('Unsupported file type.')
@@ -1725,6 +1735,13 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
           } else {
             setAttachmentError('Could not render the PDF page.')
           }
+        } else if (ext === 'zip' || ext === 'geojson' || ext === 'json' || ext === 'csv') {
+          newAttachment = {
+            base64: '',
+            mimeType: ext === 'zip' ? 'application/zip' : (ext === 'csv' ? 'text/csv' : 'application/geo+json'),
+            fileName: name,
+            filePath: path,
+          }
         }
 
         if (newAttachment) {
@@ -1771,7 +1788,13 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
 
     const userMessage: ChatMessage = {
       role: 'user',
-      content: text.trim() || (attachments.length > 0 ? `[Attached ${attachments[0].fileName}]` : ''),
+      content:
+        text.trim() ||
+        (attachments.length > 0
+          ? attachments.some((a) => a.fileName.toLowerCase().endsWith('.zip'))
+            ? `Import and plot the transit GTFS feed from ${attachments.find((a) => a.fileName.toLowerCase().endsWith('.zip'))?.fileName}`
+            : `[Attached ${attachments[0].fileName}]`
+          : ''),
       timestamp: Date.now(),
       attachments: attachments.map((att) => ({
         fileName: att.fileName,
@@ -1860,7 +1883,13 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(({
     }
 
     if (!activeConversation) {
-      pendingInputRef.current = input.trim() || (attachments.length > 0 ? `[Attached ${attachments[0].fileName}]` : '')
+      pendingInputRef.current =
+        input.trim() ||
+        (attachments.length > 0
+          ? attachments.some((a) => a.fileName.toLowerCase().endsWith('.zip'))
+            ? `Import and plot the transit GTFS feed from ${attachments.find((a) => a.fileName.toLowerCase().endsWith('.zip'))?.fileName}`
+            : `[Attached ${attachments[0].fileName}]`
+          : '')
       setInput('')
       onCreateConversation()
       return

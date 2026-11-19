@@ -92,6 +92,11 @@ def _find_gee_creds(workspace: str | None = None) -> str | None:
         return env
 
     search_roots: list[Path] = []
+    # 0. User home directory
+    home_file = Path.home() / ".disha" / "ee-service-account.json"
+    if home_file.exists() and parse_gee_credentials_data(home_file):
+        return str(home_file)
+
     if workspace:
         ws_file = Path(workspace) / ".disha" / "ee-service-account.json"
         if ws_file.exists() and parse_gee_credentials_data(ws_file):
@@ -1386,6 +1391,12 @@ class GEEServer:
                 return ee.Image(dataset)
 
             map_id, tile_url = await self._tile_proxy(build_image, final_vis, ee_geom)
+            centroid = None
+            if bbox:
+                centroid = {
+                    "lat": round((bbox["south"] + bbox["north"]) / 2, 6),
+                    "lng": round((bbox["west"] + bbox["east"]) / 2, 6),
+                }
             return {
                 "status": "success",
                 "message": f"GEE layer '{title}' added to map" + (f" for {place_nm}." if place_nm else "."),
@@ -1397,6 +1408,10 @@ class GEEServer:
                 "place_name": place_nm,
                 "clipped_to_boundary": bool(ee_geom),
                 "boundary_geojson": b_geojson if place_nm else None,
+                "bbox": bbox,
+                "bounds": bbox,
+                "centroid": centroid,
+                "center": centroid,
             }
 
         except Exception as exc:
@@ -1486,6 +1501,13 @@ class GEEServer:
             map_id, tile_url = await self._tile_proxy(build_lst, vis, ee_geom)
             dataset_id = "LANDSAT/LC09/C02/T1_L2" if source == "landsat" else ("MODIS/061/MOD11A1" if source == "modis" else "ECMWF/ERA5_LAND/HOURLY")
 
+            centroid = None
+            if bbox:
+                centroid = {
+                    "lat": round((bbox["south"] + bbox["north"]) / 2, 6),
+                    "lng": round((bbox["west"] + bbox["east"]) / 2, 6),
+                }
+
             return {
                 "status": "success",
                 "source": source,
@@ -1500,6 +1522,10 @@ class GEEServer:
                 "place_name": place_nm,
                 "clipped_to_boundary": bool(ee_geom),
                 "boundary_geojson": b_geojson if place_nm else None,
+                "bbox": bbox,
+                "bounds": bbox,
+                "centroid": centroid,
+                "center": centroid,
                 "message": (
                     f"Surface temperature layer '{layer_title}' added to map" + (f" for {place_nm}." if place_nm else ".") +
                     f" Thermal scale: {min_temp}°C (blue) to {max_temp}°C (dark red). Useful for Urban Heat Island mapping."
@@ -1597,6 +1623,13 @@ class GEEServer:
 
             map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
 
+            centroid = None
+            if bbox:
+                centroid = {
+                    "lat": round((bbox["south"] + bbox["north"]) / 2, 6),
+                    "lng": round((bbox["west"] + bbox["east"]) / 2, 6),
+                }
+
             return {
                 "status": "success",
                 "source": source,
@@ -1611,6 +1644,10 @@ class GEEServer:
                 "place_name": place_nm,
                 "clipped_to_boundary": bool(ee_geom),
                 "boundary_geojson": b_geojson if place_nm else None,
+                "bbox": bbox,
+                "bounds": bbox,
+                "centroid": centroid,
+                "center": centroid,
                 "message": f"Climate layer '{layer_title}' added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 
@@ -1694,6 +1731,13 @@ class GEEServer:
 
             map_id, tile_url = await self._tile_proxy(build_atmos, vis, ee_geom)
 
+            centroid = None
+            if bbox:
+                centroid = {
+                    "lat": round((bbox["south"] + bbox["north"]) / 2, 6),
+                    "lng": round((bbox["west"] + bbox["east"]) / 2, 6),
+                }
+
             return {
                 "status": "success",
                 "pollutant": pollutant,
@@ -1707,6 +1751,10 @@ class GEEServer:
                 "place_name": place_nm,
                 "clipped_to_boundary": bool(ee_geom),
                 "boundary_geojson": b_geojson if place_nm else None,
+                "bbox": bbox,
+                "bounds": bbox,
+                "centroid": centroid,
+                "center": centroid,
                 "message": f"Atmospheric pollution layer '{layer_title}' added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 
@@ -1766,6 +1814,13 @@ class GEEServer:
 
             map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
 
+            centroid = None
+            if bbox:
+                centroid = {
+                    "lat": round((bbox["south"] + bbox["north"]) / 2, 6),
+                    "lng": round((bbox["west"] + bbox["east"]) / 2, 6),
+                }
+
             return {
                 "status": "success",
                 "variable": variable,
@@ -1779,6 +1834,10 @@ class GEEServer:
                 "place_name": place_nm,
                 "clipped_to_boundary": bool(ee_geom),
                 "boundary_geojson": b_geojson if place_nm else None,
+                "bbox": bbox,
+                "bounds": bbox,
+                "centroid": centroid,
+                "center": centroid,
                 "message": f"Weather layer '{layer_title}' added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 
@@ -1855,6 +1914,13 @@ class GEEServer:
 
             map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
 
+            centroid = None
+            if bbox:
+                centroid = {
+                    "lat": round((bbox["south"] + bbox["north"]) / 2, 6),
+                    "lng": round((bbox["west"] + bbox["east"]) / 2, 6),
+                }
+
             return {
                 "status": "success",
                 "satellite": sat,
@@ -1868,6 +1934,10 @@ class GEEServer:
                 "place_name": place_nm,
                 "clipped_to_boundary": bool(ee_geom),
                 "boundary_geojson": b_geojson if place_nm else None,
+                "bbox": bbox,
+                "bounds": bbox,
+                "centroid": centroid,
+                "center": centroid,
                 "message": f"Landsat imagery layer '{layer_title}' added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 
@@ -1952,6 +2022,13 @@ class GEEServer:
 
             map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
 
+            centroid = None
+            if bbox:
+                centroid = {
+                    "lat": round((bbox["south"] + bbox["north"]) / 2, 6),
+                    "lng": round((bbox["west"] + bbox["east"]) / 2, 6),
+                }
+
             return {
                 "status": "success",
                 "mission": mission,
@@ -1965,6 +2042,10 @@ class GEEServer:
                 "place_name": place_nm,
                 "clipped_to_boundary": bool(ee_geom),
                 "boundary_geojson": b_geojson if place_nm else None,
+                "bbox": bbox,
+                "bounds": bbox,
+                "centroid": centroid,
+                "center": centroid,
                 "message": f"Sentinel layer '{layer_title}' added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 
@@ -2021,6 +2102,13 @@ class GEEServer:
 
             map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
 
+            centroid = None
+            if bbox:
+                centroid = {
+                    "lat": round((bbox["south"] + bbox["north"]) / 2, 6),
+                    "lng": round((bbox["west"] + bbox["east"]) / 2, 6),
+                }
+
             return {
                 "status": "success",
                 "source": source,
@@ -2034,6 +2122,10 @@ class GEEServer:
                 "place_name": place_nm,
                 "clipped_to_boundary": bool(ee_geom),
                 "boundary_geojson": b_geojson if place_nm else None,
+                "bbox": bbox,
+                "bounds": bbox,
+                "centroid": centroid,
+                "center": centroid,
                 "message": f"High resolution imagery '{layer_title}' ({desc}) added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 
@@ -2146,6 +2238,13 @@ class GEEServer:
 
             map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
 
+            centroid = None
+            if bbox:
+                centroid = {
+                    "lat": round((bbox["south"] + bbox["north"]) / 2, 6),
+                    "lng": round((bbox["west"] + bbox["east"]) / 2, 6),
+                }
+
             return {
                 "status": "success",
                 "product": product,
@@ -2158,6 +2257,10 @@ class GEEServer:
                 "place_name": place_nm,
                 "clipped_to_boundary": bool(ee_geom),
                 "boundary_geojson": b_geojson if place_nm else None,
+                "bbox": bbox,
+                "bounds": bbox,
+                "centroid": centroid,
+                "center": centroid,
                 "message": f"MODIS layer '{layer_title}' added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 
@@ -2379,6 +2482,13 @@ class GEEServer:
 
             map_id, tile_url = await self._tile_proxy(build_terrain, vis, ee_geom)
 
+            centroid = None
+            if bbox:
+                centroid = {
+                    "lat": round((bbox["south"] + bbox["north"]) / 2, 6),
+                    "lng": round((bbox["west"] + bbox["east"]) / 2, 6),
+                }
+
             return {
                 "status": "success",
                 "source": source,
@@ -2391,6 +2501,10 @@ class GEEServer:
                 "place_name": place_nm,
                 "clipped_to_boundary": bool(ee_geom),
                 "boundary_geojson": b_geojson if place_nm else None,
+                "bbox": bbox,
+                "bounds": bbox,
+                "centroid": centroid,
+                "center": centroid,
                 "message": f"Terrain layer '{layer_title}' ({mode}) added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 
@@ -2471,6 +2585,13 @@ class GEEServer:
 
             map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
 
+            centroid = None
+            if bbox:
+                centroid = {
+                    "lat": round((bbox["south"] + bbox["north"]) / 2, 6),
+                    "lng": round((bbox["west"] + bbox["east"]) / 2, 6),
+                }
+
             return {
                 "status": "success",
                 "source": source,
@@ -2483,6 +2604,10 @@ class GEEServer:
                 "place_name": place_nm,
                 "clipped_to_boundary": bool(ee_geom),
                 "boundary_geojson": b_geojson if place_nm else None,
+                "bbox": bbox,
+                "bounds": bbox,
+                "centroid": centroid,
+                "center": centroid,
                 "message": f"Land cover layer '{layer_title}' added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 
@@ -2590,6 +2715,13 @@ class GEEServer:
 
             map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
 
+            centroid = None
+            if bbox:
+                centroid = {
+                    "lat": round((bbox["south"] + bbox["north"]) / 2, 6),
+                    "lng": round((bbox["west"] + bbox["east"]) / 2, 6),
+                }
+
             return {
                 "status": "success",
                 "indicator": indicator,
@@ -2603,6 +2735,10 @@ class GEEServer:
                 "place_name": place_nm,
                 "clipped_to_boundary": bool(ee_geom),
                 "boundary_geojson": b_geojson if place_nm else None,
+                "bbox": bbox,
+                "bounds": bbox,
+                "centroid": centroid,
+                "center": centroid,
                 "message": f"Agricultural layer '{layer_title}' ({desc}) added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 
@@ -2680,6 +2816,13 @@ class GEEServer:
 
             map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
 
+            centroid = None
+            if bbox:
+                centroid = {
+                    "lat": round((bbox["south"] + bbox["north"]) / 2, 6),
+                    "lng": round((bbox["west"] + bbox["east"]) / 2, 6),
+                }
+
             return {
                 "status": "success",
                 "dataset_type": dataset_type,
@@ -2693,6 +2836,10 @@ class GEEServer:
                 "place_name": place_nm,
                 "clipped_to_boundary": bool(ee_geom),
                 "boundary_geojson": b_geojson if place_nm else None,
+                "bbox": bbox,
+                "bounds": bbox,
+                "centroid": centroid,
+                "center": centroid,
                 "message": f"Geophysical layer '{layer_title}' ({desc}) added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 
@@ -2886,11 +3033,17 @@ class GEEServer:
                 pass
 
         p_lower = place_name.lower()
-        if any(k in p_lower for k in ("india", "chandigarh", "delhi", "mumbai", "bengaluru", "bangalore", "punjab", "haryana", "kolkata", "chennai")):
+        if any(k in p_lower for k in (
+            "india", "chandigarh", "delhi", "mumbai", "bengaluru", "bangalore", "punjab", "haryana",
+            "kolkata", "chennai", "karnataka", "maharashtra", "tamil nadu", "gujarat", "rajasthan",
+            "kerala", "hyderabad", "pune", "ahmedabad", "jaipur", "lucknow", "kanpur", "nagpur",
+            "indore", "bhopal", "patna", "vadodara", "ghaziabad", "ludhiana", "agra", "nashik",
+            "faridabad", "meerut", "rajkot", "varanasi", "srinagar", "amritsar", "mohali", "panchkula"
+        )):
             return "IND"
-        if any(k in p_lower for k in ("usa", "united states", "new york", "california", "texas", "chicago", "los angeles")):
+        if any(k in p_lower for k in ("usa", "united states", "new york", "california", "texas", "chicago", "los angeles", "florida", "washington")):
             return "USA"
-        if any(k in p_lower for k in ("uk", "united kingdom", "london", "england", "scotland")):
+        if any(k in p_lower for k in ("uk", "united kingdom", "london", "england", "scotland", "wales")):
             return "GBR"
         return ""
 
@@ -2907,6 +3060,9 @@ class GEEServer:
         b_geojson, ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
 
         if not country_iso:
+            if (lat is None or lng is None) and bbox:
+                lat = (bbox["south"] + bbox["north"]) / 2
+                lng = (bbox["west"] + bbox["east"]) / 2
             country_iso = self._infer_country_iso(args, place_nm or "", lat, lng)
 
         ok, err = await _ensure_gee(workspace)
@@ -2980,6 +3136,13 @@ class GEEServer:
             dataset_id = "WorldPop/GP/100m/pop" if source == "worldpop" else "CIESIN/GPWv411/GPW_Population_Density"
             map_id, tile_url = await self._tile_proxy(build_pop, {}, ee_geom)
 
+            centroid = None
+            if bbox:
+                centroid = {
+                    "lat": round((bbox["south"] + bbox["north"]) / 2, 6),
+                    "lng": round((bbox["west"] + bbox["east"]) / 2, 6),
+                }
+
             return {
                 "status": "success",
                 "source": source,
@@ -2993,6 +3156,10 @@ class GEEServer:
                 "dataset_id": dataset_id,
                 "vis": vis,
                 "layer_title": layer_title,
+                "bbox": bbox,
+                "bounds": bbox,
+                "centroid": centroid,
+                "center": centroid,
                 "message": f"Population density layer '{layer_title}' added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 
@@ -3061,8 +3228,14 @@ class GEEServer:
             _, transition_url = await loop.run_in_executor(None, _sync_get_map_id, build_transition, transition_vis, ee_geom)
 
             changed_title = f"Changed Areas {year_start}→{year_end}" + (f" - {place_nm}" if place_nm else "")
-            await self._send_layer(ws, changed_url, "GOOGLE/DYNAMICWORLD/V1", changed_vis, changed_title)
-            await self._send_layer(ws, transition_url, "GOOGLE/DYNAMICWORLD/V1", transition_vis, title)
+            centroid = None
+            if bbox:
+                centroid = {
+                    "lat": round((bbox["south"] + bbox["north"]) / 2, 6),
+                    "lng": round((bbox["west"] + bbox["east"]) / 2, 6),
+                }
+            await self._send_layer(ws, changed_url, "GOOGLE/DYNAMICWORLD/V1", changed_vis, changed_title, bbox=bbox, centroid=centroid)
+            await self._send_layer(ws, transition_url, "GOOGLE/DYNAMICWORLD/V1", transition_vis, title, bbox=bbox, centroid=centroid)
 
             return {
                 "status": "success",
@@ -3073,6 +3246,10 @@ class GEEServer:
                 "boundary_geojson": b_geojson if place_nm else None,
                 "layers_added": 2,
                 "tile_url": transition_url,
+                "bbox": bbox,
+                "bounds": bbox,
+                "centroid": centroid,
+                "center": centroid,
                 "message": f"LULC change layers added" + (f" for {place_nm}:" if place_nm else ":") + f" (1) changed mask, (2) class transition map {year_start}→{year_end}.",
             }
 
@@ -3117,6 +3294,13 @@ class GEEServer:
 
             map_id, tile_url = await self._tile_proxy(build_ndvi, vis, ee_geom)
 
+            centroid = None
+            if bbox:
+                centroid = {
+                    "lat": round((bbox["south"] + bbox["north"]) / 2, 6),
+                    "lng": round((bbox["west"] + bbox["east"]) / 2, 6),
+                }
+
             return {
                 "status": "success",
                 "year": year,
@@ -3129,6 +3313,10 @@ class GEEServer:
                 "dataset_id": "COPERNICUS/S2_SR_HARMONIZED",
                 "vis": vis,
                 "layer_title": title,
+                "bbox": bbox,
+                "bounds": bbox,
+                "centroid": centroid,
+                "center": centroid,
                 "interpretation": {
                     "< 0.1": "Built-up / bare land / water",
                     "0.1 – 0.3": "Sparse vegetation / degraded land",
@@ -3194,6 +3382,13 @@ class GEEServer:
 
             title = f"{dataset.split('/')[-1]}" + (f" - {place_nm}" if place_nm else " — pixel sample")
 
+            centroid = None
+            if bbox:
+                centroid = {
+                    "lat": round((bbox["south"] + bbox["north"]) / 2, 6),
+                    "lng": round((bbox["west"] + bbox["east"]) / 2, 6),
+                }
+
             return {
                 "status": "success",
                 "dataset": dataset,
@@ -3205,6 +3400,10 @@ class GEEServer:
                 "map_id": map_id,
                 "vis": default_vis,
                 "layer_title": title,
+                "bbox": bbox,
+                "bounds": bbox,
+                "centroid": centroid,
+                "center": centroid,
                 "message": f"Layer '{title}' added to map" + (f" for {place_nm}." if place_nm else "."),
             }
 

@@ -130,16 +130,29 @@ class EnvironmentHub(BaseDomainHub):
                     },
                 }
             elif res.get("tile_url") and not layers_sent_directly:
+                gee_url = res["tile_url"]
+                ws_val = context.get("workspace") or context.get("_workspace") or args.get("_workspace") or workspace
+                if ws_val and "workspace=" not in gee_url:
+                    from urllib.parse import quote
+                    sep = "&" if "?" in gee_url else "?"
+                    gee_url = f"{gee_url}{sep}workspace={quote(str(ws_val))}"
+                    res["tile_url"] = gee_url
+
+                b = res.get("bbox") or res.get("bounds")
+                c = res.get("centroid") or res.get("center")
+
                 gee_payload = {
-                    "url": res["tile_url"],
+                    "url": gee_url,
                     "dataset": res.get("dataset_id") or res.get("dataset", ""),
                     "vis_params": res.get("vis") or res.get("vis_params", {}),
                     "title": display_title,
                 }
-                if res.get("bbox"):
-                    gee_payload["bbox"] = res["bbox"]
-                if res.get("centroid"):
-                    gee_payload["centroid"] = res["centroid"]
+                if b:
+                    gee_payload["bbox"] = b
+                    gee_payload["bounds"] = b
+                if c:
+                    gee_payload["centroid"] = c
+                    gee_payload["center"] = c
                 map_action = {
                     "action": "add_gee_layer",
                     "payload": gee_payload,

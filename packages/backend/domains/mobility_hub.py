@@ -151,12 +151,20 @@ class MobilityHub(BaseDomainHub):
                         "path": res["stops_file"],
                         "name": res.get("stops_layer_name", "Transit Stops"),
                         "color": "#2563eb",
+                        "opacity": 1.0,
                     })
                 # 3. Fit bounds to transit network extent
                 if res.get("bbox"):
                     b = res["bbox"]
                     await _dispatch_act("fit_bounds", {
                         "west": b[0], "south": b[1], "east": b[2], "north": b[3],
+                    })
+                # 4. Display glassmorphic route schedules panel
+                if res.get("schedules"):
+                    await _dispatch_act("show_gtfs_schedules", {
+                        "schedules": res["schedules"],
+                        "feed_title": res.get("feed_title", "Transit"),
+                        "agency_name": res.get("agency_name", ""),
                     })
 
                 primary_path = res.get("routes_file") or res.get("stops_file")

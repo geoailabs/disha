@@ -190,15 +190,18 @@ function dataDrivenColor(
   scalar: string,
 ): ColorExpr {
   if (spec && spec.mode === 'categorized' && spec.property && spec.categories?.length) {
-    return ['coalesce', ['get', overrideProp], categorizedExpr(spec, scalar)] as ColorExpr
+    return ['coalesce', ['get', overrideProp], ['get', 'color'], categorizedExpr(spec, scalar)] as ColorExpr
   }
   if (
     spec && spec.mode === 'graduated' && spec.property &&
     spec.breaks?.length && spec.rampColors?.length
   ) {
-    return ['coalesce', ['get', overrideProp], graduatedExpr(spec, scalar)] as ColorExpr
+    return ['coalesce', ['get', overrideProp], ['get', 'color'], graduatedExpr(spec, scalar)] as ColorExpr
   }
-  return ['coalesce', ['get', overrideProp], scalar] as ColorExpr
+  if (overrideProp === 'strokeColor') {
+    return ['coalesce', ['get', 'strokeColor'], ['get', 'color'], ['get', 'route_color'], scalar] as ColorExpr
+  }
+  return ['coalesce', ['get', 'fillColor'], ['get', 'color'], ['get', 'stop_color'], scalar] as ColorExpr
 }
 
 function fillColorExpression(layer: GeoJSONLayer): ColorExpr {
@@ -232,13 +235,24 @@ function labelField(layer: GeoJSONLayer): ExpressionSpecification | string {
 }
 
 // Property keys that look like a human-readable title, in preference order.
-const POPUP_TITLE_KEYS = ['label', 'name', 'title', 'display_name']
+const POPUP_TITLE_KEYS = [
+  'title', 'label', 'name', 'display_name',
+  'route_short_name', 'route_long_name', 'stop_name'
+]
 // Internal bookkeeping props that should never surface in a hover popup.
 const POPUP_HIDDEN_KEYS = new Set([
   'label', 'name', 'title', 'display_name', 'description',
-  'source', 'source_layer', 'fillColor', 'strokeColor',
-  'type', 'types',
+  'source', 'source_tool', 'source_layer', 'fillColor', 'strokeColor', 'color',
+  'route_color', 'stop_color', 'circleStrokeColor', 'circleRadius', 'circleOpacity',
+  'type', 'types', 'layer_name', 'lineWidth', 'lineOpacity', 'total_feature_count',
+  'shape_id',
 ])
+
+function formatPropKey(key: string): string {
+  return key
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+}
 
 function escapeHtml(value: unknown): string {
   return String(value)
@@ -250,8 +264,8 @@ function escapeHtml(value: unknown): string {
 
 /**
  * Build popup HTML for any feature's properties. Returns '' when there's
- * nothing worth showing. Shared by every layer so AI markers, AI-drawn
- * shapes, and user-drawn shapes all get a hover popup for free.
+ * nothing worth showing. Shared by every layer so transit routes, stops,
+ * AI markers, AI-drawn shapes, and loaded GeoJSON get rich popups.
  */
 function popupHtmlForProps(props: Record<string, unknown> | null): string {
   if (!props) return ''
@@ -261,16 +275,22 @@ function popupHtmlForProps(props: Record<string, unknown> | null): string {
     props.description != null && String(props.description).trim() !== ''
       ? String(props.description).trim()
       : ''
-  // Remaining attributes (e.g. zone_code, population) shown as key: value rows.
+  // Remaining attributes (e.g. route_type, trips_count, routes_served) shown as key: value rows.
   const rows = Object.entries(props)
-    .filter(([k, v]) => !POPUP_HIDDEN_KEYS.has(k) && v != null && String(v).trim() !== '')
+    .filter(([k, v]) => !POPUP_HIDDEN_KEYS.has(k) && k !== titleKey && v != null && String(v).trim() !== '')
     .slice(0, 8)
-    .map(([k, v]) => `<div class="mv-popup-row"><span>${escapeHtml(k)}</span>: ${escapeHtml(v)}</div>`)
+    .map(([k, v]) => `<div class="mv-popup-row"><span>${escapeHtml(formatPropKey(k))}</span>: ${escapeHtml(v)}</div>`)
     .join('')
 
   if (!title && !description && !rows) return ''
+
+  const badgeColor = (props.color || props.strokeColor || props.fillColor) as string | undefined
+  const colorBadge = badgeColor
+    ? `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background-color:${escapeHtml(badgeColor)};box-shadow:0 0 5px ${escapeHtml(badgeColor)};margin-right:7px;flex-shrink:0;"></span>`
+    : ''
+
   return (
-    (title ? `<div class="mv-popup-title">${escapeHtml(title)}</div>` : '') +
+    (title ? `<div class="mv-popup-title" style="display:flex;align-items:center;">${colorBadge}${escapeHtml(title)}</div>` : '') +
     (description ? `<div class="mv-popup-desc">${escapeHtml(description)}</div>` : '') +
     rows
   )
@@ -400,6 +420,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
     return ids
   }, [])
   const hoverPopupRef = useRef<maplibregl.Popup | null>(null)
+  const clickPopupRef = useRef<maplibregl.Popup | null>(null)
   // Per-source revision token: setData() is only called when layer.data changes.
   const layerRevisionRef = useRef(new Map<string, FeatureCollection>())
   const initBasemapRef = useRef(basemap)
@@ -576,7 +597,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
           'circle-color': '#f59e0b',
           'circle-stroke-color': '#ffffff',
           'circle-stroke-width': 2,
-          'circle-opacity': 0.9,
+          'circle-opacity': 1.0,
         },
       })
       // ── Edge-glow source: selected polygons that intersect the viewport ──
@@ -994,7 +1015,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
           paint: {
             'line-color': lineColorExpression(layer),
             'line-width': ['coalesce', ['get', 'lineWidth'], layer.styleSpec?.lineWidth ?? layer.lineWidth ?? 2] as DataDrivenPropertyValueSpecification<number>,
-            'line-opacity': (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5) * opacityMultiplier,
+            'line-opacity': (['coalesce', ['get', 'lineOpacity'], layer.styleSpec?.opacity ?? layer.opacity ?? 0.5]) as DataDrivenPropertyValueSpecification<number>,
             ...(layer.lineDasharray ? { 'line-dasharray': layer.lineDasharray } : {}),
           },
           layout: { visibility: layer.visible ? 'visible' : 'none' },
@@ -1015,11 +1036,11 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
           ],
           paint: {
             'circle-color': fillColorExpression(layer),
-            'circle-radius': isAiMarkerLayer(layer) ? 8 : 6,
-            'circle-opacity': (isAiMarkerLayer(layer) ? 1 : (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5)) * opacityMultiplier,
-            'circle-stroke-color': lineColorExpression(layer),
-            'circle-stroke-width': isAiMarkerLayer(layer) ? 2.5 : (layer.styleSpec?.lineWidth ?? layer.lineWidth ?? 1.5),
-            'circle-stroke-opacity': (isAiMarkerLayer(layer) ? 1 : (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5)) * opacityMultiplier,
+            'circle-radius': ['coalesce', ['get', 'circleRadius'], isAiMarkerLayer(layer) ? 8 : 6] as DataDrivenPropertyValueSpecification<number>,
+            'circle-opacity': 1.0,
+            'circle-stroke-color': ['coalesce', ['get', 'strokeColor'], lineColorExpression(layer)] as ColorExpr,
+            'circle-stroke-width': ['coalesce', ['get', 'strokeWidth'], isAiMarkerLayer(layer) ? 2.5 : (layer.styleSpec?.lineWidth ?? layer.lineWidth ?? 1.5)] as DataDrivenPropertyValueSpecification<number>,
+            'circle-stroke-opacity': 1.0,
           },
           layout: { visibility: layer.visible ? 'visible' : 'none' },
         })
@@ -1160,10 +1181,10 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
           if (map.getLayer(`${layer.id}-circle`)) {
             map.setPaintProperty(`${layer.id}-circle`, 'circle-color', fillColorExpression(layer))
             map.setPaintProperty(`${layer.id}-circle`, 'circle-radius', isAiMarkerLayer(layer) ? 8 : 6)
-            map.setPaintProperty(`${layer.id}-circle`, 'circle-opacity', (isAiMarkerLayer(layer) ? 1 : (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5)) * opacityMultiplier)
+            map.setPaintProperty(`${layer.id}-circle`, 'circle-opacity', 1.0)
             map.setPaintProperty(`${layer.id}-circle`, 'circle-stroke-color', lineColorExpression(layer))
             map.setPaintProperty(`${layer.id}-circle`, 'circle-stroke-width', isAiMarkerLayer(layer) ? 2.5 : (layer.styleSpec?.lineWidth ?? layer.lineWidth ?? 1.5))
-            map.setPaintProperty(`${layer.id}-circle`, 'circle-stroke-opacity', (isAiMarkerLayer(layer) ? 1 : (layer.styleSpec?.opacity ?? layer.opacity ?? 0.5)) * opacityMultiplier)
+            map.setPaintProperty(`${layer.id}-circle`, 'circle-stroke-opacity', 1.0)
           }
           // Labels: re-apply field/size/color and visibility (gated by enabled +
           // feature cap, AND the layer's own visibility).
@@ -1223,13 +1244,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
 
     source.setData({
       type: 'FeatureCollection',
-      features: selectedFeatures.flatMap((e) => {
-        const matching = layersRef.current.find((l) => l.id === e.layerId)
-        if (matching?.data?.features?.length) {
-          return matching.data.features
-        }
-        return [e.feature]
-      }),
+      features: selectedFeatures.map((e) => e.feature).filter(Boolean),
     })
   }, [selectedFeatures, mapReady])
 
@@ -1796,6 +1811,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
               'circle-radius': 9,
               'circle-stroke-color': '#000000',
               'circle-stroke-width': 2,
+              'circle-opacity': 1.0,
             },
           })
 
@@ -1998,6 +2014,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
         paint: {
           'circle-radius': 5, 'circle-color': '#ffffff',
           'circle-stroke-color': '#2563eb', 'circle-stroke-width': 2,
+          'circle-opacity': 1.0,
         },
       })
     }
@@ -2147,6 +2164,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
                 'circle-color': '#06b6d4',
                 'circle-stroke-color': '#ffffff',
                 'circle-stroke-width': 2,
+                'circle-opacity': 1.0,
               },
             })
           }
@@ -2172,6 +2190,25 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
             const feats = map.queryRenderedFeatures(queryTarget, { layers: ids })
             if (feats.length > 0) {
               const feat = feats[0]
+
+              // Show persistent click popup on the map for the clicked feature (route, stop, polygon, etc.)
+              const popupHtml = popupHtmlForProps(feat.properties)
+              if (popupHtml) {
+                hoverPopupRef.current?.remove()
+                hoverPopupRef.current = null
+                clickPopupRef.current?.remove()
+                clickPopupRef.current = new maplibregl.Popup({
+                  closeButton: true,
+                  closeOnClick: true,
+                  offset: 12,
+                  className: 'mv-hover-popup mv-wms-popup',
+                  maxWidth: '340px',
+                })
+                  .setLngLat(e.lngLat)
+                  .setHTML(popupHtml)
+                  .addTo(map)
+              }
+
               // Find which layer this feature belongs to
               const matchingLayer = layersRef.current.find((l) => {
                 for (const suffix of ['-fill', '-outline', '-line', '-circle']) {
@@ -2181,83 +2218,26 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
               })
               if (matchingLayer) {
                 const layerFeatures: Feature[] = matchingLayer.data?.features || []
-                let fullFeature: Feature
-
-                const geoms = layerFeatures.map((f) => f.geometry).filter(Boolean)
-                let combinedGeometry: Geometry = JSON.parse(JSON.stringify(feat.geometry))
-
-                if (layerFeatures.length > 0) {
-                  const polyCoords: any[] = []
-                  const lineCoords: any[] = []
-                  const pointCoords: any[] = []
-
-                  for (const g of geoms) {
-                    if (g.type === 'Polygon') {
-                      polyCoords.push((g as any).coordinates)
-                    } else if (g.type === 'MultiPolygon') {
-                      polyCoords.push(...(g as any).coordinates)
-                    } else if (g.type === 'LineString') {
-                      lineCoords.push((g as any).coordinates)
-                    } else if (g.type === 'MultiLineString') {
-                      lineCoords.push(...(g as any).coordinates)
-                    } else if (g.type === 'Point') {
-                      pointCoords.push((g as any).coordinates)
-                    } else if (g.type === 'MultiPoint') {
-                      pointCoords.push(...(g as any).coordinates)
-                    }
+                const matchedInLayer = layerFeatures.find((f) => {
+                  if (feat.id != null && f.id === feat.id) return true
+                  const p1 = (f.properties || {}) as Record<string, any>
+                  const p2 = (feat.properties || {}) as Record<string, any>
+                  if (p1.route_id && p2.route_id && p1.route_id === p2.route_id) {
+                    if (p1.shape_id && p2.shape_id && p1.shape_id !== p2.shape_id) return false
+                    return true
                   }
+                  if (p1.stop_id && p2.stop_id && p1.stop_id === p2.stop_id) return true
+                  if (p1.name && p2.name && p1.name === p2.name) return true
+                  return false
+                })
 
-                  if (polyCoords.length > 1) {
-                    combinedGeometry = {
-                      type: 'MultiPolygon',
-                      coordinates: polyCoords,
-                    }
-                  } else if (polyCoords.length === 1) {
-                    combinedGeometry = {
-                      type: 'Polygon',
-                      coordinates: polyCoords[0],
-                    }
-                  } else if (lineCoords.length > 1) {
-                    combinedGeometry = {
-                      type: 'MultiLineString',
-                      coordinates: lineCoords,
-                    }
-                  } else if (lineCoords.length === 1) {
-                    combinedGeometry = {
-                      type: 'LineString',
-                      coordinates: lineCoords[0],
-                    }
-                  } else if (pointCoords.length > 1) {
-                    combinedGeometry = {
-                      type: 'MultiPoint',
-                      coordinates: pointCoords,
-                    }
-                  } else if (pointCoords.length === 1) {
-                    combinedGeometry = {
-                      type: 'Point',
-                      coordinates: pointCoords[0],
-                    }
-                  } else if (geoms.length > 0) {
-                    combinedGeometry = {
-                      type: 'GeometryCollection',
-                      geometries: geoms,
-                    }
-                  }
-                }
-
-                const firstProps = layerFeatures[0]?.properties || {}
-                const clickedProps = feat.properties || {}
-                const mergedProps = {
-                  ...firstProps,
-                  ...clickedProps,
-                  layer_name: matchingLayer.name,
-                  total_feature_count: layerFeatures.length,
-                }
-
-                fullFeature = {
+                const fullFeature: Feature = matchedInLayer || {
                   type: 'Feature',
-                  geometry: combinedGeometry,
-                  properties: mergedProps,
+                  geometry: JSON.parse(JSON.stringify(feat.geometry)),
+                  properties: {
+                    ...(feat.properties || {}),
+                    layer_name: matchingLayer.name,
+                  },
                 }
 
                 onSelectFeature?.(
@@ -2297,6 +2277,8 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
     map.on('click', onClick)
     map.on('dblclick', onDblClick)
     return () => {
+      clickPopupRef.current?.remove()
+      clickPopupRef.current = null
       map.off('click', onClick)
       map.off('dblclick', onDblClick)
     }
@@ -2342,6 +2324,28 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
 
       map.getCanvas().style.cursor = 'pointer'
       const feat = feats[0]
+
+      // Show interactive map hover popup
+      const popupHtml = popupHtmlForProps(feat.properties)
+      if (popupHtml) {
+        if (!hoverPopupRef.current) {
+          hoverPopupRef.current = new maplibregl.Popup({
+            closeButton: false,
+            closeOnClick: false,
+            offset: 12,
+            className: 'mv-hover-popup',
+            maxWidth: '320px',
+          })
+        }
+        hoverPopupRef.current
+          .setLngLat(e.lngLat)
+          .setHTML(popupHtml)
+          .addTo(map)
+      } else {
+        hoverPopupRef.current?.remove()
+        hoverPopupRef.current = null
+      }
+
       const matchingLayer = layersRef.current.find((l) => {
         for (const suffix of ['-fill', '-outline', '-line', '-circle']) {
           if (feat.layer?.id === `${l.id}${suffix}`) return true
