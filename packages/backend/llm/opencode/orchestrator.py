@@ -36,6 +36,13 @@ async def run_opencode_agent(
     Execute a conversational reasoning turn through the OpenCode runtime.
     Streams text deltas, tool badges, and map actions over the active WebSocket.
     """
+    # New user turn → the next MODIS fire comparison starts a fresh single report.
+    try:
+        from tools.fire_report import begin_turn
+        begin_turn(workspace or (map_context or {}).get("workspace"))
+    except Exception:
+        pass
+
     # 1. Ensure OpenCode Server is running
     server_ready = await opencode_server_manager.ensure_server_running(workspace)
     if not server_ready:

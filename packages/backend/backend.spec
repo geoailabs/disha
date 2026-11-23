@@ -9,6 +9,8 @@ block_cipher = None
 
 datas = collect_data_files('pyexiv2')
 binaries = collect_dynamic_libs('pyexiv2')
+# Plotly chart engine: templates/validators JSON and plotly.min.js (interactive HTML)
+datas += collect_data_files('plotly') + collect_data_files('kaleido') + collect_data_files('choreographer')
 
 hiddenimports = (
     collect_submodules('uvicorn') +
@@ -25,6 +27,9 @@ hiddenimports = (
         'PIL.Image',
         'PIL.ImageFile',
     ]
+    + collect_submodules('plotly.validators')
+    + collect_submodules('kaleido')
+    + collect_submodules('choreographer')
 )
 
 a = Analysis(

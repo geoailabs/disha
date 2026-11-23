@@ -99,7 +99,7 @@ class MobilityHub(BaseDomainHub):
             map_action = None
             if res.get("status") == "success" or "output_layer" in res or "output_file" in res or "geojson" in res:
                 out_path = res.get("output_layer") or res.get("output_file")
-                title = args.get("title") or tool_name.replace("_", " ").title()
+                title = res.get("title") or args.get("title") or tool_name.replace("_", " ").title()
                 if out_path:
                     map_action = {
                         "action": "add_geojson_file",

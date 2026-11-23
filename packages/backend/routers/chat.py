@@ -110,9 +110,45 @@ def _is_cancelled() -> bool:
     return event is not None and event.is_set()
 
 
+_turn_layers_var: contextvars.ContextVar[list | None] = contextvars.ContextVar("turn_layers", default=None)
+_LAYER_ACTIONS = {"add_geojson", "add_geojson_file", "add_gee_layer", "add_raster_overlay", "add_wms_layer"}
+
+
+def _record_turn_layer(action: str | None, payload: dict | None) -> None:
+    """Remember map layers added during the current user turn (in order)."""
+    layers = _turn_layers_var.get()
+    if layers is None or action not in _LAYER_ACTIONS:
+        return
+    name = (payload or {}).get("name") or (payload or {}).get("title")
+    if name and str(name) not in layers:
+        layers.append(str(name))
+
+
+class _RecordingSocket:
+    """WebSocket proxy given to tools: forwards everything, records layer actions."""
+
+    def __init__(self, ws):
+        # `_real_ws` lets code keyed on the connection identity (e.g. pending
+        # ask_question futures) resolve the underlying WebSocket.
+        self._real_ws = ws
+
+    async def send_text(self, text: str) -> None:
+        try:
+            msg = json.loads(text)
+            if msg.get("type") == "action":
+                _record_turn_layer(msg.get("action"), msg.get("payload"))
+        except Exception:
+            pass
+        await self._real_ws.send_text(text)
+
+    def __getattr__(self, item):
+        return getattr(self._real_ws, item)
+
+
 async def _send_action_if_allowed(ws: WebSocket, action: str, payload: dict) -> bool:
     if _is_cancelled():
         return False
+    _record_turn_layer(action, payload)
     await _send_action(ws, action, payload)
     return True
 
@@ -217,8 +253,10 @@ SYSTEM_PROMPT = (
     "use when autogeoreference fails or the user provides explicit control points), "
     "digitize_image_features (convert normalized x,y image coordinates to real-world GeoJSON features using the solved affine matrix — "
     "ONLY call AFTER a successful georeference step; DO NOT call without a georeference matrix).\n"
-    "- OSM: osm_search (query OSM-tagged infrastructure: roads, utilities, public amenities, hand-mapped features — "
-    "PREFER for non-commercial features; DO NOT use for brand-named POIs like restaurants/hotels/retail, use nearby_places for those), "
+    "- OSM: osm_search (PLACE-BOUNDED facility/feature extraction — for 'all <hospitals/schools/offices/malls/…> in <place>' call "
+    "osm_search(category='<category>', place_name='<place>') or categories=[…] for several; it outlines the official boundary, returns EVERY "
+    "matching facility inside it (counted once, nothing outside), and gives counts and densities for that area. Also the radius search for "
+    "'near this point' requests), "
     "osm_fetch_bus_routes (fetch actual transit/bus route polylines near a terminal or city center — "
     "ALWAYS prefer this over osm_search when the user asks for bus routes or transit lines), "
     "osm_boundary (fetch official administrative boundary polygon for a city/district/state — "
@@ -231,8 +269,9 @@ SYSTEM_PROMPT = (
     "- Google Places (PREFER for commercial POIs — fresher, brand-named, opens/closes status): "
     "places_autocomplete (get candidate place_ids for an ambiguous partial name — call first when place is ambiguous, then place_details), "
     "place_details (get full address, coordinates, opening hours, contact for a specific place_id), "
-    "nearby_places (find POIs within a radius of a coordinate — use for restaurants, hotels, schools, hospitals, retail; DO NOT use osm_search for these), "
-    "nearby_places_in_polygon (find POIs INSIDE a user-drawn polygon or non-circular boundary — use instead of nearby_places when the search area is polygon-shaped), "
+    "nearby_places (top-ranked POIs within a RADIUS of a coordinate, max ~20 results — use for 'best/nearest/open now' style questions, "
+    "NOT for complete inventories of a place), "
+    "nearby_places_in_polygon (ranked sample of commercial POIs inside a small drawn polygon — capped, so NOT for complete counts), "
     "places_density (compute POI density per km² across a study area — use for spatial coverage analysis, not for listing individual places).\n"
     "- Overture Maps (FALLBACK for places when Google tools return empty; building footprints — always available without API key): "
     "overture_places_search (search POIs from Overture dataset — use ONLY when nearby_places returns empty or upstream_unavailable), "
@@ -294,7 +333,9 @@ SYSTEM_PROMPT = (
     "NEVER call create_plot for a single scalar value — use formatted markdown text instead; "
     "NEVER insert a chart where a map image was requested).\n"
     "- Street Network (NetworkX): "
-    "fetch_street_network (pull connected road network within map bounds or coordinates into the workspace — "
+    "fetch_street_network (road network of a place: pass place_name / place_names — the official boundary is outlined, ONLY streets inside it "
+    "are drawn (clipped at the edge) and it returns length by road class, intersections, road & intersection density for that area; "
+    "network_type drive (default, incl. national/state highways) | major | arterial | walk | cycle | all; "
     "call first before any routing or topology analysis that needs the road graph), "
     "analyze_street_network (compute topology metrics and bottleneck centrality on a road layer — "
     "use for intersection density and connectivity analysis; requires a road layer/file), "
@@ -344,17 +385,36 @@ SYSTEM_PROMPT = (
     "compare_modis_fire_history (village-by-village MODIS burned-area hectares and FIRMS active-fire pixel-day differences across a year range; accepts any village_names list and resolves each official boundary automatically, or accepts GeoJSON), "
     "get_land_cover (full 9-class or 11-class LULC raster tile overlay from Dynamic World or ESA WorldCover — ONLY use when the user asks for the complete multi-class land cover map; DO NOT use for a single class), "
     "analyze_lulc_change (compare two years of Dynamic World to detect built-up expansion, deforestation, or wetland loss — adds a changed-areas mask + class-transition layer), "
-    "analyze_land_use_zonal_stats (calculate exact area in km² and percentage composition breakdown of land cover classes inside a study polygon/boundary), "
+    "analyze_land_use_zonal_stats (exact area in km² and percentage breakdown of land cover classes inside a study boundary for ONE year; source auto = Dynamic World 2016+ / MODIS 2001–2015), "
+    "analyze_land_cover_timeseries (land use / land cover CHANGE across a RANGE of years for a place, with an automatic multi-line chart artifact — one line per class; ALWAYS use this in ONE call for 'land use/land cover from <year> to <year>', trends, or graphs over years), "
+    "analyze_population_timeseries (population growth inside a place's boundary over a year range — WorldPop annual 2000–2020 + GHSL 5-yearly incl. 2025 projection; totals, CAGR, density, automatic chart), "
+    "analyze_building_growth (building-level growth inside a boundary — HORIZONTAL footprint area & building count and VERTICAL mean/median height & built volume; Open Buildings Temporal 2016–2023 + GHSL 5-yearly; automatic multi-panel chart), "
     "extract_land_use_polygons (extract exactly ONE land cover class as clipped vector GeoJSON polygon features on the map; ALWAYS use this — NOT get_land_cover — when the user asks for built-up area, urban footprint, water bodies, trees, cropland, or any other single land class; pass place_name='<city name>' to auto-clip to administrative boundary), "
     "get_ndvi_layer (compute NDVI from Sentinel-2 to map vegetation density, green space, and urban canopy), "
     "get_agriculture_layer (crop types from USDA CDL, SMAP soil moisture, MODIS evapotranspiration, Sentinel-2 NDRE chlorophyll vigor, NDWI water stress), "
     "get_geophysical_layer (JRC Global Surface Water occurrence/seasonality, VIIRS nighttime luminosity, Hansen Global Forest Change canopy & loss), "
-    "search_gee_datasets (search the Earth Engine catalog by keyword and category across all 12 categories), "
+    "extract_water_streams (plot the river / stream / drainage network of a place as clipped vector LINE features from WWF HydroSHEDS plus a fine MERIT Hydro drainage-channel raster; returns reach count and total stream length in km), "
+    "search_gee_datasets (search the FULL Earth Engine public catalog of 900+ datasets by free text — returns dataset IDs, type image/image_collection/table, date range and the tool to use), "
     "get_gee_zonal_stats (calculate quantitative mean, min, max, stdDev summary statistics for ANY GEE dataset over a polygon or radius), "
-    "add_gee_layer (render any GEE dataset as a raster tile overlay on the map). "
+    "add_gee_layer (render ANY Earth Engine catalog dataset by ID clipped to place_name: Images/ImageCollections become auto-styled raster tiles, FeatureCollection tables become vector GeoJSON features on the map). "
     "CRITICAL GEE TOOL SELECTION RULE: 'built-up area' / 'built area' / 'impervious surface' / 'urban area' / "
     "'water bodies' / 'forest' / 'cropland' requests → ALWAYS call extract_land_use_polygons(target_class='Built Area' / 'Water' / 'Trees' / 'Crops'). "
+    "'water streams' / 'streams' / 'rivers' / 'drainage network' / 'channels' / 'nallahs' / 'waterways' requests → ALWAYS call extract_water_streams(place_name='<place>'). "
+    "Any other Earth Engine data request not covered by a specialised tool (e.g. soils, watersheds, flood hazard, protected areas, building footprints, any named catalog dataset) → "
+    "call search_gee_datasets(query='<what the user asked for>') and then add_gee_layer(dataset='<best matching id>', place_name='<place>'). Do NOT tell the user the data is unavailable before searching the catalog. "
     "NEVER call get_land_cover for single-class requests. "
+    "MULTI-CITY REGIONS: when the study area is several places treated as one region (a metropolitan or tri-city region), pass "
+    "place_names=['<place 1>', '<place 2>', …] and region_name='<label>' to the place-bounded tools — they union the official polygons into one boundary. "
+    "PLACE-BOUNDED CALCULATIONS: when the user names a place, pass place_name='<place>' — the backend resolves the official boundary POLYGON, "
+    "outlines it on the map as '<place> boundary', and computes strictly inside that polygon (never a bounding box, square, viewport or radius). "
+    "If it reports boundary_unresolved, tell the user; do not retry with a bbox, circle or nearby area. For statistics, comparisons and trends "
+    "(analyze_land_use_zonal_stats, analyze_land_cover_timeseries, analyze_population_timeseries, analyze_building_growth, compare_modis_fire_history, "
+    "get_gee_zonal_stats) the work is done in the backend and "
+    "only the boundary plus the results/chart are shown — do NOT also add raster layers to the map unless the user asks to see a layer. "
+    "LAND COVER YEARS: Dynamic World exists from mid-2015 (full years 2016+), MODIS land cover 2001–last year, ESA WorldCover ONLY 2020 and 2021. "
+    "Always pass the exact year(s) the user named; never substitute another year's data. For multi-year land cover trends or graphs call "
+    "analyze_land_cover_timeseries(place_name='<place>', start_year=<first>, end_year=<last>) ONCE — do NOT loop per year, do NOT call create_plot "
+    "with your own numbers, and NEVER plot total area (it is constant). If a tool reports years without data, state that plainly. "
     "All GEE tools require the ee-*.json service account credentials file in the workspace root.\n"
     "- Public GIS Datasets: browse_datameet_catalog (list all available public GIS datasets "
     "with dataset_ids, titles, and categories — call this first before importing), "
@@ -378,14 +438,17 @@ SYSTEM_PROMPT = (
     "2. Do NOT repeat a tool call you already made. Call each tool ONCE per distinct item.\n"
     "3. osm_search, osm_boundary, overture_places_search, overture_buildings_search, "
     "nearby_places, and nearby_places_in_polygon results are AUTO-DISPLAYED on the map. "
-    "Do NOT call add_geojson for data that was already returned by these tools. For "
-    "COMMERCIAL POIs (restaurants, hotels, retail, services, schools, hospitals) PREFER "
-    "nearby_places (Google) — it has the freshest brand names and category data. When the "
-    "user asks for POIs INSIDE a drawn polygon / region / sector boundary (any non-circular "
-    "area), use nearby_places_in_polygon — it returns only places that fall within the "
-    "polygon. Use overture_places_search only when the Google tools return empty or "
-    "upstream_unavailable. Use osm_search for non-commercial OSM-tagged features (water, "
-    "infrastructure, hand-mapped local data).\n"
+    "Do NOT call add_geojson for data that was already returned by these tools. "
+    "FACILITIES IN A PLACE: for 'hospitals/schools/offices/malls/banks/… in <place>' (complete inventories, maps, counts, "
+    "drivers of mobility) ALWAYS call osm_search(category=…, place_name='<place>') — or categories=[…] in ONE call for several — "
+    "never a radius/lat-lng search, never the viewport, never Google nearby_places (it is capped at ~20 ranked results). "
+    "Plot ONLY the categories the user asked for (hospitals ≠ clinics/pharmacies, malls ≠ all shops, schools ≠ colleges unless asked). "
+    "For a multi-city region pass place_names=[…] (and region_name). "
+    "ROADS / STREETS OF A PLACE: any request mentioning roads, streets, road network, highways or a 'road boundary' of a place "
+    "means the ROAD LINES inside that place — call fetch_street_network(place_name='<place>'); it outlines the boundary AND draws "
+    "the roads clipped to it. osm_boundary alone does NOT satisfy such a request. "
+    "Use Google nearby_places only for 'nearest / best rated / open now' questions around a point, and overture_places_search only "
+    "when OSM returns nothing.\n"
     "4. When using osm_boundary, pass country_code (e.g. 'IN', 'US', 'GB', 'FR', 'DE') when known to disambiguate places with identical names across multiple countries. If osm_boundary returns an error (no boundary polygon is mapped in OSM), do NOT try to draw a wrong fallback polygon or building footprint. Instead, call the geocode tool to resolve the place's coordinates, fly_to that centroid, and add a pin marker using add_marker with the place name as the label.\n"
     "5. Only call the tools the user's request requires. Do not add extra actions.\n"
     "6. When the user asks to navigate somewhere, use fly_to. Do not add markers unless asked.\n"
@@ -457,7 +520,12 @@ SYSTEM_PROMPT = (
     "21. JUNCTIONS AND POI PINNING: When pinning a specific point of interest, landmark, chowk, junction, intersection, or address, ALWAYS first call the `geocode` tool with the full descriptive name and containing context (e.g. '<Landmark / Junction Name>, <Sub-district / Sector>, <City / Region>') to resolve its exact point coordinate. DO NOT call `osm_boundary` or `osm_search` for a specific junction/chowk unless you want to search for adjacent amenities or the city boundary. To display the pinned point on the map, call `add_marker` at the resolved coordinate. When the user asks to route/cross through waypoints, ensure each waypoint is geocoded and explicitly passed in the routing tool's `waypoints` argument, and pass the corresponding color or label if customized.\n"
     "22. AUTOMATIC ARTIFACT & MULTI-FORMAT EXPORT PERSISTENCE: Whenever you generate ANY planning report, summary card, demographic profile, plot/histogram, or structured analysis, call `create_artifact` with a descriptive title and format ('pdf', 'docx', 'html', 'png', 'jpg', 'xlsx', 'txt', 'json', 'markdown', 'table', 'geojson'). You CAN create PNG, JPEG, PDF, Word (.docx), HTML, and Excel (.xlsx) artifacts directly using `create_artifact`. For charts and histograms, call `create_plot` to generate clean plot image artifacts.\n"
     "22a. GIF CREATION: GIFs support any ordered number of image frames (PNG, JPEG, WebP, or data URIs). For a requested animated map GIF without supplied frames, create the frames yourself with separate `export_map_png` calls, collect each returned `file_path`, and pass them in order via `frames` or `meta.frames` to `create_artifact(format='gif')`. If the request names a place, resolve that place boundary first, fit the map to it, and use that resolved geography for every frame; never reuse an unrelated current-map extent. `prepare_scenario_plan` or a scenario/storyboard artifact is only an intermediate step: for a GIF request, continue autonomously to export the frames and compile the final GIF. A GIF request is not complete until the GIF artifact is saved and the automatic completion check passes.\n"
-    "22b. MODIS FIRE COMPARISONS: For requests comparing fire/stubble-burning history, call `compare_modis_fire_history` with every requested village/place, use the last 3 completed calendar years unless another range is specified, resolve each named boundary independently, return burned-area hectares plus FIRMS active-fire pixel-days and year-over-year differences, preserve unresolved names explicitly, and keep the saved comparison artifact. Never substitute a broad viewport or invent village metrics.\n"
+    "22b. MODIS FIRE LAYERS & COMPARISONS:\n"
+    "  - Fetch ONLY the place(s) and year the user named. Pass `place_name` and `year` exactly; never widen to a viewport or other years. If no year is mentioned, OMIT `year` — the current year (year-to-date) is used.\n"
+    "  - `get_modis_layer(product='active_fires' or 'burned_area', place_name=..., year=...)` automatically saves ONE comparison report of the asked year vs the present year for that place.\n"
+    "  - For comparisons across villages/places, call `compare_modis_fire_history` ONCE with ALL places in `village_names` and the asked `year` (or `years`); use `start_year`/`end_year` only when the user gives an explicit range. Do not call it once per village or once per year.\n"
+    "  - Exactly ONE fire comparison report is produced per request; it is saved automatically. NEVER call `create_artifact` to write another fire/MODIS report — reference the saved report instead (use `edit_artifact` on it only if the user asks for additions).\n"
+    "  - Report burned-area hectares, FIRMS active-fire pixel-days and the differences; mark the current year as year-to-date; list unresolved names explicitly; never invent metrics.\n"
     "23. ATTRIBUTE FILTERING & VECTOR SUBSETS: When the user asks to filter/extract/isolate specific features from a loaded layer or dataset (e.g. 'filter coastal districts in study state', 'show only commercial parcels', 'extract expressways'), ALWAYS call `gis_filter` with the layer_name or path, target values array, and output_layer_name. Do NOT try to highlight features one by one, do NOT paste raw geometries in chat, and do NOT claim you cannot filter without asking the user for a file.\n"
     "24. MULTI-SELECTED LAYERS IN CHAT CONTEXT: When the user Shift-clicks or selects multiple layers on the map or in the layers sidebar panel, all selected layers appear under [USER SELECTED MAP ELEMENTS / HIGHLIGHTED LAYERS] with their layer names, centroids, and attributes. When the user asks to analyze, compare, overlay, buffer, intersect, or compute stats/charts for 'these layers', 'selected regions', or 'both areas', directly reference and process ALL selected layers by their exact names/attributes in your spatial GIS tools (e.g. gis_intersection, gis_difference, gis_area, gis_union) and demographic/plotting tools (create_plot).\n"
     "25. ZERO PLACEHOLDER POLICY IN ARTIFACTS / DOCUMENTS:\n"
@@ -498,7 +566,7 @@ SYSTEM_PROMPT = (
     "30. GEOGRAPHIC INTERPRETATION & BOUNDARY CONTAINMENT FILTERING:\n"
     "  - When a user asks for features 'in' a named geographic place (e.g. 'amenities in City A', 'schools in District B', 'commercial parcels in Study Area'), resolve the place boundary and spatially filter the requested features to that boundary.\n"
     "  - The geographic constraint implied by the user's wording must be preserved during tool selection, data retrieval, spatial processing, and visualization. Do NOT substitute a broad search extent, bounding box, viewport, or proximity search for an actual geographic boundary when the user's intent is containment.\n"
-    "  - Internally infer and perform any necessary boundary resolution, clipping, intersection, containment, or filtering operations (e.g. `osm_boundary` followed by `nearby_places_in_polygon` or `gis_clip`/`gis_spatial_join`/`gis_point_in_polygon`) required to satisfy the user's geographic intent.\n"
+    "  - Internally infer and perform any necessary boundary resolution, clipping, intersection, containment, or filtering operations required to satisfy the user's geographic intent — prefer the place-bounded tools that do this exactly (`osm_search(category, place_name)`, `fetch_street_network(place_name)`, GEE tools with place_name) over manual `gis_clip`/`gis_point_in_polygon` chains.\n"
     "  - Do NOT require the user to explicitly specify these intermediate GIS operations, and do NOT hardcode behavior for particular places.\n"
     "31. DOCUMENT VISUALIZATION & SECTION HEADING INDEPENDENCE:\n"
     "  - When the user requests separate visuals under separate headings, generate a separate distinct visual for each heading; do NOT combine or merge them unless explicitly requested.\n"
@@ -545,13 +613,29 @@ SYSTEM_PROMPT = (
     "  When the user asks to 'plot', 'show', 'map', 'load', or 'display' any geographic feature, land use, or boundary on the map "
     "  (e.g. 'plot the built up area of <City> on map', 'plot boundary of <City>', 'plot water bodies of <City>', 'plot transit routes'), "
     "  this is a MAP CANVAS layer request, NOT a chart or graph. You MUST execute the corresponding spatial feature tool "
-    "  (`extract_land_use_polygons` for built-up/land cover classes, `osm_boundary` for boundaries, `osm_route_overview` for routes). "
+    "  (`extract_land_use_polygons` for built-up/land cover classes, `extract_water_streams` for streams/rivers/drainage, "
+    "  `add_gee_layer` for any other Earth Engine catalog dataset, `osm_boundary` for boundaries, `osm_route_overview` for routes). "
     "  NEVER call `create_plot` for map features, and NEVER claim in conversational text that you plotted or loaded a layer on the map "
     "  without executing the tool call in that turn.\n"
+    "  CHARTS: `create_plot` renders Plotly charts (line, area, stacked_area, bar, grouped_bar, stacked_bar, horizontal_bar, pie, donut, histogram, "
+    "  scatter, bubble, box, violin, heatmap, treemap, funnel, waterfall, radar) as a downloadable PNG artifact plus interactive HTML. "
+    "  Use ONLY the exact numbers returned by tools in this conversation (null for missing points; one value per x item; multiple lines via `series`); "
+    "  choose the chart type that fits the data (trends → line, composition → pie/donut/stacked_bar, comparison → grouped_bar). "
+    "  Tools that already save a chart (analyze_land_cover_timeseries, analyze_population_timeseries, analyze_building_growth) must not be re-plotted with create_plot.\n"
+    "  REGIONAL CHANGE / MOBILITY REPORTS: build each section from the matching place-bounded tool on the SAME study area — land use change → "
+    "analyze_land_cover_timeseries; building growth (horizontal & vertical) → analyze_building_growth; population growth → analyze_population_timeseries; "
+    "drivers of mobility (offices, schools, hospitals, malls…) → ONE osm_search(categories=[…], place_name/place_names) call; road network → "
+    "fetch_street_network(place_name/place_names); public transport → osm_search(categories=['bus_stops','bus_stations','railway_stations','metro_stations']) and "
+    "osm_fetch_bus_routes. Quote the numbers those tools return; for items with no geospatial source (GSDP, per-capita income, car registrations, "
+    "travel-survey trip lengths/OD) use web/document sources and cite them, or state that the data is not available — never invent figures.\n"
     "36. MAP IMAGE EXPORT MANDATE:\n"
     "  When the user asks to 'export', 'extract', 'save', or 'capture' an image or snapshot of the map or a layer "
     "  (e.g. 'extract the image of built up area of <City>', 'export map image', 'save map as image', 'export this layer as an image'), "
     "  you MUST execute `export_map_jpeg(title='<Descriptive Title>', save_to_artifacts=True)` (or `export_map_png`). "
+    "  The export works like 'Zoom to layer' + screenshot: pass layers_to_show with the EXACT layer names the tools returned "
+    "  (e.g. the feature layer such as '<Category> - <place>' or 'Street Network - <place>' plus '<place> boundary'); the map is framed "
+    "  to those layers, other layers are hidden for the capture, and it waits for the map to finish rendering. If you omit "
+    "  layers_to_show, the layers plotted in this turn (else the most recently added layer) are used. "
     "  NEVER claim in chat text that you exported an image, and NEVER fabricate an artifact ID (e.g. 'Artifact ID: 103') or file path "
     "  without actually calling the export tool in that turn.\n"
     "37. MANDATORY DATA SOURCES & METHODOLOGY PROVENANCE IN ARTIFACTS:\n"
@@ -561,7 +645,8 @@ SYSTEM_PROMPT = (
     "  - Never state unverified or uncited metrics; always specify the factual provenance.\n"
     "38. RASTER & EARTH ENGINE (GEE) EXECUTION MANDATE:\n"
     "  When the user asks to 'show', 'load', 'display', 'map', 'plot', or 'add' any raster layer, satellite imagery, population raster, surface temperature, elevation/DEM, atmospheric pollution, climate, or land cover (e.g. 'show population raster for <City>', 'show surface temperature of <City>', 'display DEM for <City>', 'show NO2 pollution for <City>', 'load Landsat imagery of <City>'):\n"
-    "  - You MUST execute the corresponding GEE tool (`get_population_layer`, `get_surface_temperature_layer`, `get_dem_layer`, `get_atmospheric_layer`, `get_sentinel_layer`, `get_landsat_layer`, `get_climate_layer`, `get_weather_layer`, `get_agriculture_layer`, `get_geophysical_layer`, `get_modis_layer`, `get_land_cover`, `add_gee_layer`).\n"
+    "  - You MUST execute the corresponding GEE tool (`get_population_layer`, `get_surface_temperature_layer`, `get_dem_layer`, `get_atmospheric_layer`, `get_sentinel_layer`, `get_landsat_layer`, `get_climate_layer`, `get_weather_layer`, `get_agriculture_layer`, `get_geophysical_layer`, `get_modis_layer`, `get_land_cover`, `extract_water_streams`, `add_gee_layer`).\n"
+    "  - For any dataset in the Earth Engine catalog without a specialised tool, call `search_gee_datasets` and then `add_gee_layer(dataset='<id>', place_name='<place>')` — it handles rasters and vector tables automatically.\n"
     "  - ALWAYS pass `place_name='<City>'` (and coordinates if known from Map Context). When a specific place is specified, the backend will automatically resolve and display the boundary, adjust the map camera, and clip the Earth Engine raster strictly to the boundary so it is restricted to that place rather than covering the global map.\n"
     "  - NEVER claim in chat text that you loaded or added a raster, population map, or Earth Engine layer without actually executing the tool call in that turn.\n"
     "39. TEMPORAL PLAYBACK TIMELINE MANDATE:\n"
@@ -1351,16 +1436,10 @@ def _build_tools() -> list[dict]:
             },
             "required": ["basemap"],
         }),
-        ("add_gee_layer", "Render a Google Earth Engine dataset or raster URL directly on the map as an XYZ tile layer", {
-            "type": "object",
-            "properties": {
-                "url": {"type": "string", "description": "Tile URL template for the GEE layer ({z}/{x}/{y})"},
-                "dataset": {"type": "string", "description": "GEE dataset ID or name"},
-                "vis_params": {"type": "object", "description": "Optional visualization parameters (palette, min, max, bands)"},
-                "title": {"type": "string", "description": "Display title for the layer in the Layers panel"},
-            },
-            "required": ["url", "dataset"],
-        }),
+        # NOTE: add_gee_layer is declared by GEEServer (EnvironmentHub) — it accepts any catalog
+        # dataset ID plus an optional pre-built `url`. Declaring it here as well produced a
+        # duplicate tool name whose `url`-required schema stopped the model from loading
+        # arbitrary Earth Engine datasets.
         ("set_timeline", "Display an interactive temporal playback timeline bar on the map for scrubbing through multi-year or time-series data (e.g. 2018-2023, hourly weather, satellite historical series).", {
             "type": "object",
             "properties": {
@@ -1543,6 +1622,24 @@ async def _execute_tool(
     # no real artifacts_store path), BLOCK and return an instruction to export first.
     # This covers the case where the model calls exports in a prior round but then
     # creates the doc without the real paths — or skips exports entirely.
+    # One MODIS fire comparison report per turn: if the fire tools already saved
+    # the comparison report, a second model-written markdown fire report is a
+    # duplicate. (A docx/pdf export of it is an explicit file request — allowed.)
+    if name == "create_artifact" and str(args.get("format", "markdown")).lower() in ("markdown", "md", "txt"):
+        from tools.fire_report import turn_report_id as _fire_turn_report_id, looks_like_fire_report
+        _ws_path = map_context.get("workspace") if map_context else None
+        _existing_fire_id = _fire_turn_report_id(_ws_path)
+        if _existing_fire_id and looks_like_fire_report(str(args.get("title", ""))):
+            return json.dumps({
+                "status": "success",
+                "artifact_id": _existing_fire_id,
+                "deduplicated": True,
+                "message": (
+                    f"The fire comparison report already exists as artifact {_existing_fire_id}; "
+                    "no duplicate report was created. Use edit_artifact on that ID to add commentary."
+                ),
+            })
+
     if name == "create_artifact":
         fmt = args.get("format", "markdown")
         content = args.get("content", "")
@@ -1699,7 +1796,12 @@ async def _execute_tool(
         # (e.g. built-up area, land use, water bodies, routes) but no such layer is currently
         # loaded on the map canvas, autonomously extract and render it so the export succeeds
         # without halting or stalling the user.
-        current_layers = map_context.get("layers", []) if map_context else []
+        current_layers = list(map_context.get("layers", []) if map_context else [])
+        # map_context is the canvas at the START of the turn; include layers added since.
+        _known = {str(l.get("name", "")).lower().strip() for l in current_layers}
+        for _n in _turn_layers_var.get() or []:
+            if _n.lower().strip() not in _known:
+                current_layers.append({"name": _n})
         current_layer_names = [l.get("name", "").lower().strip() for l in current_layers]
         title_lower = title.lower()
 
@@ -1762,16 +1864,45 @@ async def _execute_tool(
                     ),
                 })
 
-        # Smart layer isolation: if layers_to_show was not provided, isolate layers matching the target place in title
+        # Export target = the layers plotted in THIS turn ("plot all hospitals in X and
+        # export it"): every feature layer added plus the boundary they were clipped to.
+        if not args.get("layers_to_show") and not args.get("layer_name"):
+            turn_layers = _turn_layers_var.get() or []
+            if turn_layers:
+                features_added = [n for n in turn_layers if not n.lower().endswith("boundary")]
+                boundaries_added = [n for n in turn_layers if n.lower().endswith("boundary")]
+                if features_added:
+                    args["layers_to_show"] = features_added + boundaries_added[-1:]
+
+        # Smart layer isolation (later turns): match canvas layers to the export title by
+        # WORDS, so "Hospitals in Chandigarh" selects "Hospitals - Chandigarh" and its
+        # boundary. If nothing matches, the frontend frames the most recently added layer.
         if not args.get("layers_to_show") and not args.get("layer_name") and current_layers:
+            synonyms = {"roads": "street", "road": "street", "streets": "street", "network": "street"}
+
+            def _words(text: str) -> set[str]:
+                ws_ = set()
+                for w in re.findall(r"[a-z0-9]+", text.lower()):
+                    if len(w) < 3 or w in {"the", "and", "for", "map", "image", "layer", "all", "with", "from", "boundary", "export", "snapshot", "figure", "picture", "plot"}:
+                        continue
+                    w = synonyms.get(w, w)
+                    ws_.add(w[:-1] if w.endswith("s") and len(w) > 4 else w)
+                return ws_
+
+            title_words = _words(title_lower)
             matched_layers = []
             for l in current_layers:
                 lname = l.get("name", "")
-                # Strip generic words and parentheticals like (12.5 km)
-                clean_lname = re.sub(r"(?i)\s*(boundary|layer|shape|polygon|area|admin|distance)\b", "", lname)
-                clean_lname = re.sub(r"\([^)]*\)", "", clean_lname).strip()
-                if clean_lname and clean_lname.lower() in title_lower:
+                lw = _words(re.sub(r"\([^)]*\)", "", lname))
+                if lw and lw <= title_words:
                     matched_layers.append(lname)
+            # Keep only the boundary(ies) when a feature layer matched too, plus the features.
+            if (
+                matched_layers
+                and all(m.lower().endswith("boundary") for m in matched_layers)
+                and "boundary" not in title_lower
+            ):
+                matched_layers = []  # boundary-only match: let the frontend frame the latest layer instead
 
             # Fallback for semantic matching if exact substring fails
             if not matched_layers:
@@ -1835,12 +1966,27 @@ async def _execute_tool(
 
             # Await disk readiness: wait for the frontend to render, encode, and upload the image file to disk.
             # This prevents race conditions where create_artifact runs before the file is physically written.
+            # The capture frames the layers and waits for every tile to finish rendering,
+            # which can take several seconds for a city-scale extent.
             art_disk_dir = get_artifacts_dir(workspace)
             expected_disk_file = art_disk_dir / f"{art_id}.{fmt}"
-            for _ in range(35):  # up to 3.5 seconds
+            written = False
+            for _ in range(450):  # up to 45 seconds
+                if _is_cancelled():
+                    return json.dumps({"status": "cancelled"})
                 if expected_disk_file.is_file() and expected_disk_file.stat().st_size > 200:
+                    written = True
                     break
                 await asyncio.sleep(0.1)
+            if not written:
+                return json.dumps({
+                    "status": "error",
+                    "artifact_id": art_id,
+                    "error": (
+                        f"The map image for '{title}' was not captured within 45 s (the map view may be closed or still "
+                        "loading). Do NOT claim it was exported; tell the user and retry once the map is visible."
+                    ),
+                })
 
             return json.dumps({
                 "status": "success",
@@ -1904,7 +2050,7 @@ async def _execute_tool(
                 {
                     "_map_context": map_context,
                     "_workspace": map_context.get("workspace") if map_context else None,
-                    "_ws": ws,
+                    "_ws": _RecordingSocket(ws),
                     "_active_image": active_image,
                     "_client": client,
                 },
@@ -1918,18 +2064,15 @@ async def _execute_tool(
             if not await _send_action_if_allowed(ws, result.map_action["action"], result.map_action.get("payload", {})):
                 return json.dumps({"status": "cancelled"})
 
-        # Auto-save artifact if declared
+        # Auto-save artifact if declared (fire comparisons merge into one report per turn)
         if result.artifact:
             try:
-                from tools.artifact_store import save_artifact as _save_artifact
-                _save_artifact(
-                    title=result.artifact.get("title", "Report"),
-                    artifact_type=result.artifact.get("artifact_type", "report"),
-                    format=result.artifact.get("format", "markdown"),
-                    content=result.artifact.get("content", ""),
-                    workspace=map_context.get("workspace") if map_context else None,
+                from tools.fire_report import save_tool_artifact as _save_tool_artifact
+                saved = _save_tool_artifact(
+                    result.artifact,
+                    map_context.get("workspace") if map_context else None,
                 )
-                await _send_action_if_allowed(ws, "refresh_artifacts", {})
+                await _send_action_if_allowed(ws, "refresh_artifacts", {"id": saved.get("id")} if saved else {})
             except Exception as _ae:
                 logger.warning(f"Failed to auto-save artifact for tool '{name}': {_ae}")
 
@@ -1999,6 +2142,12 @@ async def _run_agent(
     # it in the validation window so task-specific postconditions (for example
     # “GIF” requiring a saved .gif file) can be inferred automatically.
     task_check_start = max(0, len(messages) - 1) if messages and messages[-1].get("role") == "user" else len(messages)
+    try:
+        from tools.fire_report import begin_turn as _begin_fire_turn
+        _begin_fire_turn(map_context.get("workspace") if map_context else None)
+    except Exception:
+        pass
+    _turn_layers_var.set([])
     completion_repair_attempts = 0
 
     for _ in range(max_rounds):
@@ -2207,6 +2356,8 @@ async def _run_agent(
                                 f"('{_map_claim.group(0)}'), but you did NOT call any map tool. Nothing appeared on the map! "
                                 "You MUST execute the appropriate tool call NOW:\n"
                                 "- For built-up area, urban footprint, water bodies, or land use: call `extract_land_use_polygons(target_class='Built Area' / 'Water' / 'Trees' / 'Crops', place_name='...')`\n"
+                                "- For water streams, rivers, or drainage networks: call `extract_water_streams(place_name='...')`\n"
+                                "- For any other Earth Engine dataset: call `search_gee_datasets(query='...')` then `add_gee_layer(dataset='<id>', place_name='...')`\n"
                                 "- For full multi-class land cover: call `get_land_cover(...)`\n"
                                 "- For boundaries: call `osm_boundary(name='...')` or `osm_boundary_union(names=[...])`\n"
                                 "- For routes: call `osm_route_overview(origin='...', destination='...')`\n"

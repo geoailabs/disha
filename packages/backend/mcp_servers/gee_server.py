@@ -47,6 +47,10 @@ _MODIS_IGBP_LABELS = [
     "Barren", "Water Bodies",
 ]
 
+class BoundaryUnresolved(ValueError):
+    """A named place could not be resolved to an areal (polygon) boundary."""
+
+
 # ── Process-level GEE init cache ─────────────────────────────────────────────
 _EE_READY: bool | None = None
 _EE_ERROR: str | None = None
@@ -201,7 +205,7 @@ def _clean_geojson_coords(c: Any) -> Any:
     return c
 
 
-def _simplify_geom_if_needed(geom: dict, max_coords: int = 1500) -> dict:
+def _simplify_geom_if_needed(geom: dict, max_coords: int = 20000) -> dict:
     """Ensure geometry has manageable coordinate count for GEE clipping without losing shape accuracy."""
     try:
         from shapely.geometry import shape, mapping
@@ -213,7 +217,7 @@ def _simplify_geom_if_needed(geom: dict, max_coords: int = 1500) -> dict:
         elif hasattr(s, "exterior"):
             coord_count += len(s.exterior.coords)
         if coord_count > max_coords:
-            simplified = s.simplify(0.0005, preserve_topology=True)
+            simplified = s.simplify(0.0001, preserve_topology=True)
             return mapping(simplified)
     except Exception:
         pass
@@ -434,6 +438,597 @@ def _get_dataset_defaults(dataset: str) -> tuple[dict, bool]:
     return {}, False
 
 
+# ── Full Earth Engine Data Catalog (search + asset introspection) ────────────
+#
+# The public Earth Engine catalog has ~900+ datasets. Instead of hard-coding a
+# handful, we load a machine-readable index of the whole catalog (cached on disk
+# for a week) and fall back to the curated list below when offline. Any dataset
+# ID found this way can be rendered by `add_gee_layer`, which introspects the
+# asset type (Image / ImageCollection / FeatureCollection table) at runtime.
+
+_GEE_CATALOG_URL = (
+    "https://raw.githubusercontent.com/samapriya/Earth-Engine-Datasets-List/master/gee_catalog.json"
+)
+_GEE_CATALOG_TTL_S = 7 * 24 * 3600
+_HYDRO_RIVERS_ID = "WWF/HydroSHEDS/v1/FreeFlowingRivers"
+_MERIT_HYDRO_ID = "MERIT/Hydro/v1_0_1"
+_GEE_CATALOG_CACHE: list[dict] | None = None
+_ASSET_INFO_CACHE: dict[str, dict] = {}
+
+# Curated, always-available entries (also used as an offline fallback).
+_CURATED_CATALOG: list[dict] = [
+    {"id": "LANDSAT/LC09/C02/T1_L2", "title": "Landsat 9 Collection 2 Level 2", "category": "surface_temperature", "type": "image_collection", "tags": "landsat, thermal, surface temperature, reflectance", "bands": ["SR_B4", "SR_B3", "SR_B2", "ST_B10"], "res": "30m", "desc": "High-res optical surface reflectance and thermal surface temperature (ST_B10)."},
+    {"id": "MODIS/061/MOD11A1", "title": "MODIS Terra Land Surface Temperature Daily", "category": "surface_temperature", "type": "image_collection", "tags": "modis, lst, temperature", "bands": ["LST_Day_1km", "LST_Night_1km"], "res": "1km", "desc": "Daily global land surface temperature in Kelvin (scale 0.02)."},
+    {"id": "IDAHO_EPSCOR/TERRACLIMATE", "title": "TerraClimate Monthly Water Balance", "category": "climate", "type": "image_collection", "tags": "climate, drought, precipitation, runoff", "bands": ["pr", "tmmx", "tmmn", "pdsi", "sm", "vpd", "ro"], "res": "4km", "desc": "Monthly climate water balance, Palmer Drought Severity Index, and runoff."},
+    {"id": "ECMWF/ERA5_LAND/HOURLY", "title": "ERA5-Land Hourly Climate Reanalysis", "category": "weather", "type": "image_collection", "tags": "weather, temperature, wind, precipitation", "bands": ["temperature_2m", "total_precipitation", "u_component_of_wind_10m", "v_component_of_wind_10m"], "res": "9km", "desc": "Hourly gridded atmospheric weather and land surface temperature."},
+    {"id": "UCSB-CHG/CHIRPS/PENTAD", "title": "CHIRPS Precipitation Pentad", "category": "climate", "type": "image_collection", "tags": "rainfall, precipitation", "bands": ["precipitation"], "res": "5.5km", "desc": "Quasi-global high-resolution precipitation estimates."},
+    {"id": "COPERNICUS/S5P/NRTI/L3_NO2", "title": "Sentinel-5P TROPOMI NO2", "category": "atmospheric", "type": "image_collection", "tags": "air quality, pollution, no2", "bands": ["tropospheric_NO2_column_number_density"], "res": "3.5km", "desc": "Tropospheric nitrogen dioxide air pollution monitoring."},
+    {"id": "COPERNICUS/S5P/NRTI/L3_CO", "title": "Sentinel-5P TROPOMI Carbon Monoxide", "category": "atmospheric", "type": "image_collection", "tags": "air quality, pollution, co", "bands": ["CO_column_number_density"], "res": "5.5km", "desc": "Total carbon monoxide atmospheric column."},
+    {"id": "COPERNICUS/S5P/NRTI/L3_SO2", "title": "Sentinel-5P TROPOMI Sulfur Dioxide", "category": "atmospheric", "type": "image_collection", "tags": "air quality, pollution, so2", "bands": ["SO2_column_number_density"], "res": "3.5km", "desc": "Sulfur dioxide emissions from industry and volcanism."},
+    {"id": "COPERNICUS/S5P/NRTI/L3_AER_AI", "title": "Sentinel-5P Absorbing Aerosol Index", "category": "atmospheric", "type": "image_collection", "tags": "aerosol, dust, smoke", "bands": ["absorbing_aerosol_index"], "res": "3.5km", "desc": "Atmospheric dust, smoke, smog, and particulate loading."},
+    {"id": "COPERNICUS/S2_SR_HARMONIZED", "title": "Sentinel-2 Surface Reflectance Harmonized", "category": "sentinel", "type": "image_collection", "tags": "sentinel, optical, multispectral", "bands": ["B2", "B3", "B4", "B8", "B11", "B12"], "res": "10m-20m", "desc": "Harmonized 10m multispectral optical imagery for land and vegetation."},
+    {"id": "COPERNICUS/S1_GRD", "title": "Sentinel-1 SAR C-Band Synthetic Aperture Radar", "category": "sentinel", "type": "image_collection", "tags": "radar, sar, flood", "bands": ["VV", "VH"], "res": "10m", "desc": "All-weather day/night radar backscatter for flood mapping and terrain structure."},
+    {"id": "USDA/NAIP/DOQQ", "title": "USDA National Agriculture Imagery Program (NAIP)", "category": "high_resolution", "type": "image_collection", "tags": "aerial, orthophoto", "bands": ["R", "G", "B", "N"], "res": "0.6m - 1m", "desc": "Sub-meter aerial digital ortho photography covering the US."},
+    {"id": "MODIS/061/MOD09A1", "title": "MODIS Surface Reflectance 8-Day", "category": "modis", "type": "image_collection", "tags": "modis, reflectance", "bands": ["sur_refl_b01", "sur_refl_b04", "sur_refl_b03"], "res": "500m", "desc": "Surface reflectance imagery suitable for vegetation, burn scars, and land surface monitoring."},
+    {"id": "MODIS/061/MOD10A1", "title": "MODIS Snow Cover Daily", "category": "modis", "type": "image_collection", "tags": "modis, snow", "bands": ["NDSI_Snow_Cover"], "res": "500m", "desc": "Daily snow extent and snow cover fraction."},
+    {"id": "MODIS/061/MCD12Q1", "title": "MODIS Land Cover Type Yearly", "category": "modis", "type": "image_collection", "tags": "modis, landcover", "bands": ["LC_Type1"], "res": "500m", "desc": "Annual IGBP land cover classes globally."},
+    {"id": "MODIS/061/MOD13Q1", "title": "MODIS Terra Vegetation Indices 16-Day", "category": "modis", "type": "image_collection", "tags": "modis, ndvi, evi, vegetation", "bands": ["NDVI", "EVI"], "res": "250m", "desc": "Global Normalized Difference Vegetation Index and Enhanced Vegetation Index."},
+    {"id": "MODIS/061/MOD14A1", "title": "MODIS Thermal Anomalies & Fire Daily", "category": "modis", "type": "image_collection", "tags": "modis, fire", "bands": ["FireMask"], "res": "1km", "desc": "Daily active fire hotspots and thermal anomalies."},
+    {"id": "MODIS/061/MCD64A1", "title": "MODIS Burned Area Monthly", "category": "modis", "type": "image_collection", "tags": "modis, fire, burn", "bands": ["BurnDate"], "res": "500m", "desc": "Monthly burned-area detection and burn date."},
+    {"id": "MODIS/061/MOD16A2", "title": "MODIS Evapotranspiration 8-Day", "category": "modis", "type": "image_collection", "tags": "modis, evapotranspiration", "bands": ["ET_500m"], "res": "500m", "desc": "Evapotranspiration and water use estimates."},
+    {"id": "USGS/SRTMGL1_003", "title": "NASA Shuttle Radar Topography Mission (SRTM)", "category": "terrain", "type": "image", "tags": "dem, elevation, topography", "bands": ["elevation"], "res": "30m", "desc": "Global digital elevation model between 60°N and 56°S."},
+    {"id": "COPERNICUS/DEM/GLO30", "title": "Copernicus DEM Global 30m", "category": "terrain", "type": "image_collection", "tags": "dem, elevation", "bands": ["DEM"], "res": "30m", "desc": "High-accuracy global 30m digital elevation model from WorldDEM."},
+    {"id": "GOOGLE/DYNAMICWORLD/V1", "title": "Google Dynamic World Land Cover V1", "category": "landcover", "type": "image_collection", "tags": "landcover, lulc, built, water, trees", "bands": ["label", "water", "trees", "built", "crops"], "res": "10m", "desc": "Near real-time 9-class global land cover from Sentinel-2."},
+    {"id": "ESA/WorldCover/v200", "title": "ESA WorldCover 10m v200", "category": "landcover", "type": "image_collection", "tags": "landcover, lulc", "bands": ["Map"], "res": "10m", "desc": "Global 11-class land cover map produced by ESA."},
+    {"id": "USDA/NASS/CDL", "title": "USDA NASS Cropland Data Layer", "category": "agriculture", "type": "image_collection", "tags": "crop, agriculture", "bands": ["cropland"], "res": "30m", "desc": "Crop-specific land cover classification across the US."},
+    {"id": "NASA_USDA/HSL/SMAP10KM_soil_moisture", "title": "NASA-USDA SMAP Global Soil Moisture", "category": "agriculture", "type": "image_collection", "tags": "soil moisture", "bands": ["ssm", "susm"], "res": "10km", "desc": "Surface and subsurface soil moisture estimates."},
+    {"id": "JRC/GSW1_4/GlobalSurfaceWater", "title": "JRC Global Surface Water Occurrence", "category": "geophysical", "type": "image", "tags": "water, surface water, lakes, rivers", "bands": ["occurrence", "seasonality", "change_abs"], "res": "30m", "desc": "Decadal changes in global surface water occurrence and recurrence."},
+    {"id": "NOAA/VIIRS/DNB/MONTHLY_V1/VCMSLCFG", "title": "VIIRS Nighttime Day/Night Band", "category": "geophysical", "type": "image_collection", "tags": "nighttime lights", "bands": ["avg_rad"], "res": "500m", "desc": "Monthly nighttime visible light luminosity from settlements."},
+    {"id": "UMD/hansen/global_forest_change_2024_v1_12", "title": "Hansen Global Forest Change", "category": "geophysical", "type": "image", "tags": "forest, deforestation", "bands": ["treecover2000", "loss", "gain"], "res": "30m", "desc": "Global forest extent, loss, and gain from 2000 to 2024."},
+    # Hydrography / drainage
+    {"id": "WWF/HydroSHEDS/v1/FreeFlowingRivers", "title": "WWF HydroSHEDS Free Flowing Rivers Network", "category": "hydrology", "type": "table", "tags": "hydrology, river, stream, drainage, waterway, network, vector", "bands": [], "res": "15 arc-sec (~500m)", "desc": "Global vector river/stream network (line reaches) with river order, upstream area and discharge. Use extract_water_streams."},
+    {"id": "MERIT/Hydro/v1_0_1", "title": "MERIT Hydro Global Hydrography", "category": "hydrology", "type": "image", "tags": "hydrology, river, stream, drainage, flow accumulation, river width, hand", "bands": ["elv", "dir", "wth", "wat", "upa", "upg", "hnd", "viswth"], "res": "90m", "desc": "Flow direction, upstream drainage area (upa), river width and HAND. Fine drainage channels via upa thresholds."},
+    {"id": "WWF/HydroSHEDS/15ACC", "title": "WWF HydroSHEDS Flow Accumulation 15 arc-sec", "category": "hydrology", "type": "image", "tags": "hydrology, flow accumulation, drainage", "bands": ["b1"], "res": "500m", "desc": "Flow accumulation (number of upstream cells)."},
+    {"id": "WWF/HydroSHEDS/v1/Basins/hybas_8", "title": "WWF HydroBASINS Level 8", "category": "hydrology", "type": "table", "tags": "hydrology, watershed, catchment, basin, vector", "bands": [], "res": "vector", "desc": "Nested watershed / sub-basin polygons."},
+]
+
+# Query synonyms so natural phrasing ("water streams") finds catalog entries.
+_SEARCH_SYNONYMS: dict[str, list[str]] = {
+    "stream": ["river", "drainage", "hydro", "waterway"],
+    "streams": ["river", "drainage", "hydro", "waterway"],
+    "river": ["stream", "hydro", "drainage"],
+    "rivers": ["river", "stream", "hydro"],
+    "drainage": ["river", "flow accumulation", "hydro"],
+    "watershed": ["basin", "catchment", "hydro"],
+    "catchment": ["basin", "watershed"],
+    "rain": ["precipitation", "rainfall"],
+    "rainfall": ["precipitation"],
+    "elevation": ["dem", "topography", "terrain"],
+    "terrain": ["dem", "elevation"],
+    "lulc": ["landcover", "land cover"],
+    "pollution": ["air quality", "no2", "aerosol"],
+    "built": ["urban", "settlement", "building"],
+    "urban": ["built", "settlement"],
+    "buildings": ["building", "footprint"],
+    "forest": ["tree", "canopy"],
+    "lights": ["nighttime", "viirs"],
+    "heat": ["temperature", "lst"],
+    "flood": ["water", "inundation", "sar"],
+    "soil": ["soil moisture", "soilgrids"],
+    "population": ["worldpop", "gpw", "demography"],
+}
+
+_CATEGORY_KEYWORDS: dict[str, list[str]] = {
+    "surface_temperature": ["temperature", "lst", "thermal"],
+    "climate": ["climate", "precipitation", "drought"],
+    "atmospheric": ["air quality", "s5p", "pollution", "aerosol", "atmosphere"],
+    "weather": ["weather", "era5", "wind"],
+    "landsat": ["landsat"],
+    "sentinel": ["sentinel", "copernicus"],
+    "high_resolution": ["naip", "aerial", "high resolution"],
+    "modis": ["modis"],
+    "terrain": ["dem", "elevation", "topography", "terrain"],
+    "landcover": ["landcover", "land cover", "lulc"],
+    "agriculture": ["agriculture", "crop", "soil"],
+    "geophysical": ["water", "nighttime", "forest", "fire"],
+    "hydrology": ["hydrology", "river", "stream", "drainage", "watershed", "basin", "flow"],
+}
+
+
+def _catalog_cache_path() -> Path:
+    return Path.home() / ".disha" / "gee_catalog_cache.json"
+
+
+def _normalise_catalog_entry(raw: dict) -> dict | None:
+    ds_id = (raw.get("id") or "").strip()
+    if not ds_id:
+        return None
+    ds_type = (raw.get("type") or "").lower()
+    if ds_type in ("folder", "bigquery_table"):
+        return None
+    return {
+        "id": ds_id,
+        "title": raw.get("title") or raw.get("name") or ds_id,
+        "type": ds_type or "unknown",
+        "tags": raw.get("tags") or "",
+        "provider": raw.get("provider") or "",
+        "start_date": raw.get("start_date") or "",
+        "end_date": raw.get("end_date") or "",
+        "catalog_url": raw.get("asset_url") or "",
+        "category": raw.get("category") or "",
+        "bands": raw.get("bands") or [],
+        "res": raw.get("res") or "",
+        "desc": raw.get("desc") or "",
+    }
+
+
+def _load_full_catalog() -> list[dict]:
+    """Return the full Earth Engine catalog index (network → disk cache → curated)."""
+    global _GEE_CATALOG_CACHE
+    if _GEE_CATALOG_CACHE is not None:
+        return _GEE_CATALOG_CACHE
+
+    import time
+
+    cache_file = _catalog_cache_path()
+    raw_entries: list[dict] | None = None
+    stale_entries: list[dict] | None = None
+
+    try:
+        if cache_file.exists():
+            cached = json.loads(cache_file.read_text(encoding="utf-8"))
+            if isinstance(cached, list) and cached:
+                if time.time() - cache_file.stat().st_mtime < _GEE_CATALOG_TTL_S:
+                    raw_entries = cached
+                else:
+                    stale_entries = cached
+    except Exception as exc:
+        logger.debug(f"GEE catalog cache unreadable: {exc}")
+
+    if raw_entries is None and os.environ.get("DISHA_GEE_CATALOG_OFFLINE") != "1":
+        try:
+            import httpx
+            resp = httpx.get(_GEE_CATALOG_URL, timeout=8.0, follow_redirects=True)
+            resp.raise_for_status()
+            fetched = resp.json()
+            if isinstance(fetched, list) and fetched:
+                raw_entries = fetched
+                try:
+                    cache_file.parent.mkdir(parents=True, exist_ok=True)
+                    cache_file.write_text(json.dumps(fetched), encoding="utf-8")
+                except Exception as exc:
+                    logger.debug(f"Could not write GEE catalog cache: {exc}")
+        except Exception as exc:
+            logger.info(f"Full GEE catalog fetch failed, using cached/curated catalog: {exc}")
+
+    if raw_entries is None:
+        raw_entries = stale_entries or []
+
+    merged: dict[str, dict] = {}
+    for raw in raw_entries:
+        entry = _normalise_catalog_entry(raw) if isinstance(raw, dict) else None
+        if entry:
+            merged[entry["id"]] = entry
+    # Curated entries win: they carry band hints and planner-friendly descriptions.
+    for raw in _CURATED_CATALOG:
+        entry = _normalise_catalog_entry(raw)
+        if entry:
+            merged[entry["id"]] = {**merged.get(entry["id"], {}), **{k: v for k, v in entry.items() if v}}
+
+    _GEE_CATALOG_CACHE = list(merged.values())
+    return _GEE_CATALOG_CACHE
+
+
+def _expand_query_terms(query: str) -> list[str]:
+    import re
+    terms = [t for t in re.split(r"[^a-z0-9_]+", query.lower()) if len(t) > 1]
+    stop = {"the", "of", "in", "for", "and", "all", "map", "show", "plot", "data", "dataset", "layer", "on", "a", "an"}
+    expanded: list[str] = []
+    for t in terms:
+        if t in stop:
+            continue
+        expanded.append(t)
+        if t.endswith("s") and len(t) > 3:
+            expanded.append(t[:-1])
+        expanded.extend(_SEARCH_SYNONYMS.get(t, []))
+    seen: set[str] = set()
+    return [t for t in expanded if not (t in seen or seen.add(t))]
+
+
+def _score_catalog_entry(entry: dict, query: str, terms: list[str]) -> float:
+    title = entry.get("title", "").lower()
+    tags = entry.get("tags", "").lower()
+    ds_id = entry.get("id", "").lower()
+    rest = f"{entry.get('desc', '')} {entry.get('provider', '')} {entry.get('category', '')}".lower()
+    score = 0.0
+    if query and (query in title or query in tags or query in ds_id):
+        score += 10
+    for t in terms:
+        if t in tags:
+            score += 3
+        if t in title:
+            score += 3
+        if t in ds_id:
+            score += 2
+        if t in rest:
+            score += 1
+    # Prefer curated / non-deprecated entries
+    if entry.get("desc"):
+        score += 0.5
+    if "deprecated" in title:
+        score -= 5
+    return score
+
+
+def _layer_kind(ds_type: str) -> str:
+    return "vector" if ds_type == "table" else "raster"
+
+
+def _sync_get_asset_info(dataset: str) -> dict:
+    """Return {'type': IMAGE|IMAGE_COLLECTION|TABLE, 'properties': {...}} for any EE asset."""
+    if dataset in _ASSET_INFO_CACHE:
+        return _ASSET_INFO_CACHE[dataset]
+    import ee
+    info: dict = {"type": None, "properties": {}}
+    try:
+        asset = ee.data.getAsset(dataset)
+        info["type"] = (asset.get("type") or "").upper() or None
+        info["properties"] = asset.get("properties") or {}
+    except Exception as exc:
+        logger.debug(f"ee.data.getAsset failed for {dataset}: {exc}")
+        # Fall back to probing the object types directly
+        for kind, probe in (
+            ("IMAGE_COLLECTION", lambda: ee.ImageCollection(dataset).limit(1).size().getInfo()),
+            ("IMAGE", lambda: ee.Image(dataset).bandNames().getInfo()),
+            ("TABLE", lambda: ee.FeatureCollection(dataset).limit(1).size().getInfo()),
+        ):
+            try:
+                probe()
+                info["type"] = kind
+                break
+            except Exception:
+                continue
+    if info["type"] == "FEATURE_COLLECTION":
+        info["type"] = "TABLE"
+    if info["type"]:
+        _ASSET_INFO_CACHE[dataset] = info
+    return info
+
+
+def _catalog_vis_from_properties(props: dict) -> dict:
+    """Use the official catalog visualization embedded in asset properties (visualization_0_*)."""
+    if not props or "visualization_0_bands" not in props:
+        return {}
+    vis: dict = {}
+    bands = [b.strip() for b in str(props.get("visualization_0_bands", "")).split(",") if b.strip()]
+    if bands:
+        vis["bands"] = bands
+    for key in ("min", "max", "gamma"):
+        raw = props.get(f"visualization_0_{key}")
+        if raw is None:
+            continue
+        vals = [float(v) for v in str(raw).split(",") if v.strip()]
+        if vals:
+            vis[key] = vals[0] if len(vals) == 1 else vals
+    palette = props.get("visualization_0_palette")
+    if palette:
+        vis["palette"] = [p.strip().lstrip("#") for p in str(palette).split(",") if p.strip()]
+    return vis
+
+
+def _vis_is_complete(vis: dict) -> bool:
+    if not vis:
+        return False
+    if vis.get("palette"):
+        return True
+    if "min" in vis and "max" in vis:
+        return True
+    return len(vis.get("bands") or []) == 3 and "min" in vis
+
+
+_SEQUENTIAL_PALETTE = ["440154", "3b528b", "21918c", "5ec962", "fde725"]
+
+
+def _sync_auto_visualize(img: Any, sample_img: Any, region: Any) -> tuple[Any, dict, list[dict] | None]:
+    """Derive visualization for an arbitrary image.
+
+    Returns (image_to_render, vis_params, legend_classes_or_None). Categorical
+    bands with catalog class metadata (<band>_class_values / _class_palette /
+    _class_names) are remapped to contiguous indices so the palette is exact.
+    """
+    import ee
+
+    band_names = sample_img.bandNames().getInfo() or []
+    if not band_names:
+        raise ValueError("The dataset has no image bands to visualize in this area/date range.")
+    lower = [b.lower() for b in band_names]
+
+    # 1) Categorical band with embedded class palette (e.g. ESA WorldCover 'Map').
+    try:
+        prop_names = set(sample_img.propertyNames().getInfo() or [])
+    except Exception:
+        prop_names = set()
+    for band in band_names:
+        if f"{band}_class_values" in prop_names and f"{band}_class_palette" in prop_names:
+            meta = ee.Dictionary({
+                "values": sample_img.get(f"{band}_class_values"),
+                "palette": sample_img.get(f"{band}_class_palette"),
+                "names": sample_img.get(f"{band}_class_names") if f"{band}_class_names" in prop_names else [],
+            }).getInfo()
+            values = [int(v) for v in meta.get("values") or []]
+            palette = [str(p).lstrip("#") for p in meta.get("palette") or []]
+            names = meta.get("names") or []
+            if values and len(palette) >= len(values):
+                remapped = img.select(band).remap(values, list(range(len(values)))).rename(band)
+                legend = [
+                    {"value": v, "name": names[i] if i < len(names) else str(v), "color": f"#{palette[i]}"}
+                    for i, v in enumerate(values)
+                ]
+                return remapped, {"min": 0, "max": len(values) - 1, "palette": palette[: len(values)]}, legend
+
+    # 2) RGB composite when the dataset exposes red/green/blue bands.
+    rgb = None
+    for trio in (("b4", "b3", "b2"), ("sr_b4", "sr_b3", "sr_b2"), ("red", "green", "blue"), ("r", "g", "b")):
+        if all(t in lower for t in trio):
+            rgb = [band_names[lower.index(t)] for t in trio]
+            break
+    bands = rgb or [band_names[0]]
+
+    # 3) Stretch to 2nd–98th percentile over the area of interest.
+    vis: dict = {"bands": bands}
+    stats = None
+    if region is not None:
+        try:
+            area_m2 = region.bounds(100).area(100).getInfo() or 1e8
+            scale = max(10.0, min(5000.0, (area_m2 ** 0.5) / 400.0))
+            stats = img.select(bands).reduceRegion(
+                reducer=ee.Reducer.percentile([2, 98]),
+                geometry=region,
+                scale=scale,
+                bestEffort=True,
+                maxPixels=int(1e8),
+                tileScale=4,
+            ).getInfo()
+        except Exception as exc:
+            logger.debug(f"Auto-stretch statistics failed: {exc}")
+    lows, highs = [], []
+    for b in bands:
+        lo = (stats or {}).get(f"{b}_p2")
+        hi = (stats or {}).get(f"{b}_p98")
+        if lo is not None and hi is not None and hi > lo:
+            lows.append(float(lo))
+            highs.append(float(hi))
+    if len(lows) == len(bands):
+        vis["min"] = min(lows)
+        vis["max"] = max(highs)
+    else:
+        vis["min"], vis["max"] = 0, 1 if not rgb else 3000
+    if len(bands) == 1:
+        vis["palette"] = _SEQUENTIAL_PALETTE
+    return img, vis, None
+
+
+def _boundary_shape(boundary_geojson: Any):
+    """Return a shapely geometry for a GeoJSON Feature/FeatureCollection/geometry, or None."""
+    if not boundary_geojson:
+        return None
+    from shapely.geometry import shape
+    from shapely.ops import unary_union
+    if isinstance(boundary_geojson, str):
+        boundary_geojson = json.loads(boundary_geojson)
+    btype = boundary_geojson.get("type")
+    if btype == "FeatureCollection":
+        shapes = [shape(f["geometry"]) for f in boundary_geojson.get("features", []) if f.get("geometry")]
+        geom = unary_union(shapes) if shapes else None
+    elif btype == "Feature":
+        geom = shape(boundary_geojson["geometry"]) if boundary_geojson.get("geometry") else None
+    else:
+        geom = shape(boundary_geojson)
+    if geom is None or geom.is_empty:
+        return None
+    if not geom.is_valid:
+        geom = geom.buffer(0)
+    # Points/lines can't contain features; only clip to areal boundaries.
+    if geom.geom_type not in ("Polygon", "MultiPolygon"):
+        return None
+    return geom
+
+
+def _clip_features_to_boundary(features: list[dict], boundary_geojson: Any) -> list[dict]:
+    """Clip any-geometry-type features to an areal boundary, preserving geometry dimension."""
+    b_shape = _boundary_shape(boundary_geojson)
+    if b_shape is None:
+        return features
+    from shapely.geometry import shape, mapping
+    from shapely.ops import unary_union, linemerge
+
+    dim_of = {"Point": 0, "MultiPoint": 0, "LineString": 1, "MultiLineString": 1, "LinearRing": 1, "Polygon": 2, "MultiPolygon": 2}
+    out: list[dict] = []
+    for feat in features:
+        g = feat.get("geometry")
+        if not g:
+            continue
+        try:
+            s = shape(g)
+            if not s.is_valid and s.geom_type in ("Polygon", "MultiPolygon"):
+                s = s.buffer(0)
+            if not b_shape.intersects(s):
+                continue
+            if b_shape.contains(s):
+                out.append(feat)
+                continue
+            target_dim = dim_of.get(s.geom_type, 2)
+            inter = b_shape.intersection(s)
+            parts, pending = [], [inter]
+            while pending:
+                part = pending.pop()
+                if hasattr(part, "geoms"):
+                    pending.extend(part.geoms)
+                elif not part.is_empty and dim_of.get(part.geom_type) == target_dim:
+                    parts.append(part)
+            if not parts:
+                continue
+            merged = unary_union(parts)
+            if target_dim == 1 and merged.geom_type == "MultiLineString":
+                merged = linemerge(merged)
+            new_feat = dict(feat)
+            new_feat["geometry"] = mapping(merged)
+            out.append(new_feat)
+        except Exception as exc:
+            logger.debug(f"Feature clip failed: {exc}")
+    return out
+
+
+def _geodesic_length_km(geom: dict) -> float:
+    """WGS84 ellipsoidal length of a (Multi)LineString GeoJSON geometry in km."""
+    try:
+        from pyproj import Geod
+        from shapely.geometry import shape
+        return abs(Geod(ellps="WGS84").geometry_length(shape(geom))) / 1000.0
+    except Exception:
+        return 0.0
+
+
+def _safe_slug(text: str) -> str:
+    import re
+    return re.sub(r"[^a-z0-9]+", "_", (text or "").lower()).strip("_")[:60] or "layer"
+
+
+# ── Land cover: per-year dataset selection, availability & harmonised classes ──
+#
+# No single land-cover product spans every year: MODIS MCD12Q1 (500 m) covers
+# 2001→~last year, Google Dynamic World (10 m) covers mid-2015→today, ESA
+# WorldCover only 2020/2021 and Copernicus 100 m only 2015–2019. Every land-cover
+# tool goes through these helpers so a requested year is never silently
+# replaced by another year's data.
+
+_DW_ID = "GOOGLE/DYNAMICWORLD/V1"
+_MODIS_LC_ID = "MODIS/061/MCD12Q1"
+_DW_FIRST_FULL_YEAR = 2016  # Dynamic World starts 2015-06-27 (2015 is partial)
+_ESA_WORLDCOVER_YEARS = {2020: "ESA/WorldCover/v100/2020", 2021: "ESA/WorldCover/v200/2021"}
+_COPERNICUS_LC_YEARS = range(2015, 2020)
+_MODIS_LC_LATEST: int | None = None
+
+# Harmonised groups so different products can be compared on one chart.
+LC_GROUPS = ["Built-up", "Trees", "Cropland", "Grass/Shrub", "Water", "Wetland", "Bare", "Snow/Ice"]
+LC_GROUP_COLORS = ["#C4281B", "#397D49", "#E49635", "#88B053", "#419BDF", "#7A87C6", "#A59B8F", "#B39FE1"]
+# source → (class values, harmonised group index per value)
+_LC_GROUP_REMAP: dict[str, tuple[list[int], list[int]]] = {
+    "dynamic_world": ([0, 1, 2, 3, 4, 5, 6, 7, 8], [4, 1, 3, 5, 2, 3, 0, 6, 7]),
+    "modis_landcover": (
+        list(range(1, 18)),
+        [1, 1, 1, 1, 1, 3, 3, 1, 3, 3, 5, 2, 0, 2, 7, 6, 4],
+    ),
+    "esa_worldcover": ([10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 100], [1, 3, 3, 2, 0, 6, 7, 4, 5, 1, 3]),
+}
+_LC_SOURCE_LABELS = {
+    "dynamic_world": "Google Dynamic World V1 (10 m, Sentinel-2)",
+    "modis_landcover": "MODIS MCD12Q1 IGBP (500 m)",
+    "esa_worldcover": "ESA WorldCover (10 m)",
+    "copernicus_landcover": "Copernicus Global Land Cover (100 m)",
+}
+_LC_NATIVE_SCALE = {"dynamic_world": 10, "modis_landcover": 500, "esa_worldcover": 10, "copernicus_landcover": 100}
+
+
+def _modis_lc_latest_year() -> int:
+    """Latest MCD12Q1 year published in Earth Engine (cached; needs ee initialised)."""
+    global _MODIS_LC_LATEST
+    if _MODIS_LC_LATEST is None:
+        try:
+            import ee
+            ts = ee.ImageCollection(_MODIS_LC_ID).aggregate_max("system:time_start").getInfo()
+            from datetime import datetime, timezone
+            _MODIS_LC_LATEST = datetime.fromtimestamp(ts / 1000, tz=timezone.utc).year
+        except Exception:
+            from datetime import date
+            return date.today().year - 2
+    return _MODIS_LC_LATEST
+
+
+def _lc_available_years(source: str) -> list[int]:
+    from datetime import date
+    current = date.today().year
+    if source == "dynamic_world":
+        return list(range(2015, current + 1))
+    if source == "modis_landcover":
+        return list(range(2001, _modis_lc_latest_year() + 1))
+    if source == "esa_worldcover":
+        return sorted(_ESA_WORLDCOVER_YEARS)
+    if source == "copernicus_landcover":
+        return list(_COPERNICUS_LC_YEARS)
+    return []
+
+
+def _lc_resolve_source(source: str | None, year: int | None) -> str:
+    """'auto' → Dynamic World for 2016+, MODIS for earlier years."""
+    src = (source or "auto").strip().lower()
+    if src in ("", "auto"):
+        if year is not None and year < _DW_FIRST_FULL_YEAR:
+            return "modis_landcover"
+        return "dynamic_world"
+    return src
+
+
+def _lc_year_error(source: str, year: int) -> str | None:
+    years = _lc_available_years(source)
+    if year in years:
+        return None
+    span = f"{years[0]}–{years[-1]}" if len(years) > 2 else ", ".join(map(str, years))
+    hint = (
+        " Use source='modis_landcover' for years before 2016."
+        if source in ("dynamic_world", "esa_worldcover", "copernicus_landcover") and year < 2016
+        else (" Use source='dynamic_world' for recent years." if year > years[-1] else "")
+    )
+    return f"{_LC_SOURCE_LABELS.get(source, source)} has no data for {year} (available: {span}).{hint}"
+
+
+def _lc_year_notes(source: str, year: int) -> str | None:
+    from datetime import date
+    if source == "dynamic_world" and year == 2015:
+        return "2015 is partial (Dynamic World starts 27 June 2015)."
+    if source == "dynamic_world" and year == date.today().year:
+        return f"{year} is year-to-date."
+    return None
+
+
+def _lc_class_image(source: str, year: int, geom: Any = None) -> Any:
+    """Native single-band land-cover class image ('lc') for exactly the given year."""
+    import ee
+    if source == "dynamic_world":
+        coll = ee.ImageCollection(_DW_ID).filterDate(f"{year}-01-01", f"{year + 1}-01-01")
+        if geom is not None:
+            coll = coll.filterBounds(geom)
+        return coll.select("label").mode().rename("lc")
+    if source == "modis_landcover":
+        return (ee.ImageCollection(_MODIS_LC_ID)
+                .filter(ee.Filter.calendarRange(year, year, "year"))
+                .first().select("LC_Type1").rename("lc"))
+    if source == "esa_worldcover":
+        return ee.Image(_ESA_WORLDCOVER_YEARS[year]).select("Map").rename("lc")
+    if source == "copernicus_landcover":
+        return (ee.ImageCollection("COPERNICUS/Landcover/100m/Proba-V-C3/Global")
+                .filter(ee.Filter.calendarRange(year, year, "year"))
+                .first().select("discrete_classification").rename("lc"))
+    raise ValueError(f"Unknown land cover source '{source}'.")
+
+
+def _lc_group_image(source: str, year: int, geom: Any = None) -> Any:
+    values, groups = _LC_GROUP_REMAP[source]
+    return _lc_class_image(source, year, geom).remap(values, groups).rename("group")
+
+
+def _lc_reduce_scale(source: str, area_km2: float | None) -> int:
+    native = _LC_NATIVE_SCALE.get(source, 30)
+    if native >= 100 or not area_km2:
+        return native
+    # Keep 10 m sampling for city-scale areas; coarsen for very large regions.
+    if area_km2 <= 3000:
+        return native
+    if area_km2 <= 30000:
+        return 30
+    return 100
+
+
 # ── Main Server Class ─────────────────────────────────────────────────────────
 
 class GEEServer:
@@ -465,6 +1060,10 @@ class GEEServer:
         "extract_land_use_polygons",
         "get_ndvi_layer",
         "get_gee_layer",
+        "extract_water_streams",
+        "analyze_land_cover_timeseries",
+        "analyze_population_timeseries",
+        "analyze_building_growth",
     }
 
     def get_declarations(self) -> list[ToolDeclaration]:
@@ -481,20 +1080,28 @@ class GEEServer:
             ToolDeclaration(
                 name="add_gee_layer",
                 description=(
-                    "Add any Google Earth Engine raster dataset to the map as a tiled layer. "
-                    "Supports Sentinel-2, Landsat, SRTM, ESA WorldCover, ERA5, MODIS, and any other "
-                    "EE ImageCollection or Image. Applies cloud-free median compositing when dates are specified. "
+                    "Add ANY dataset from the Google Earth Engine public data catalog to the map. "
+                    "The asset type is detected automatically: Images and ImageCollections are rendered as clipped "
+                    "raster tiles (auto-styled from the catalog's own visualization / class palette, or a percentile "
+                    "stretch); FeatureCollection tables (rivers, basins, roads, protected areas, building footprints, "
+                    "admin units, etc.) are extracted as clipped vector GeoJSON features on the canvas. "
+                    "Use search_gee_datasets first when you don't know the dataset ID. "
                     "When place_name or geojson is provided, the layer is strictly clipped to that boundary."
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
-                        "dataset": {"type": "string", "description": "Earth Engine dataset ID (e.g. 'COPERNICUS/S2_SR_HARMONIZED', 'LANDSAT/LC09/C02/T1_L2', 'USGS/SRTMGL1_003')."},
+                        "dataset": {"type": "string", "description": "Earth Engine dataset/asset ID (e.g. 'COPERNICUS/S2_SR_HARMONIZED', 'USGS/SRTMGL1_003', 'WWF/HydroSHEDS/v1/FreeFlowingRivers', 'WCMC/WDPA/current/polygons')."},
                         "place_name": place_param,
                         "geojson": geojson_param,
-                        "vis_params": {"type": "object", "description": "GEE visualization params (e.g. {\"min\":0,\"max\":3000,\"bands\":[\"B4\",\"B3\",\"B2\"]})."},
-                        "date": {"type": "string", "description": "Year (e.g. '2023') or start date (YYYY-MM-DD) for collection filtering."},
+                        "vis_params": {"type": "object", "description": "Optional GEE visualization params (e.g. {\"min\":0,\"max\":3000,\"bands\":[\"B4\",\"B3\",\"B2\"]}). Omit to auto-style."},
+                        "band": {"type": "string", "description": "Optional single band to display (raster datasets)."},
+                        "date": {"type": "string", "description": "Year (e.g. '2023') or start date (YYYY-MM-DD) for collection filtering. Omit to use the latest year of data."},
+                        "end_date": {"type": "string", "description": "Optional end date (YYYY-MM-DD) for collection filtering."},
+                        "color": {"type": "string", "description": "Colour for vector (table) datasets."},
+                        "max_features": {"type": "integer", "description": "Max vector features to extract for table datasets (default 5000)."},
                         "title": {"type": "string", "description": "Title label for the map layer panel."},
+                        "url": {"type": "string", "description": "Optional pre-built XYZ tile URL; when given the layer is added directly without Earth Engine processing."},
                     },
                     "required": ["dataset"],
                 },
@@ -687,7 +1294,7 @@ class GEEServer:
                             "enum": ["reflectance", "ndvi_evi", "surface_temperature", "active_fires", "snow_cover", "burned_area", "land_cover"],
                             "description": "MODIS product. Default is 'ndvi_evi'.",
                         },
-                        "year": {"type": "integer", "description": "Year (default 2023)."},
+                        "year": {"type": "integer", "description": "The exact year the user asked for. Only that calendar year is fetched (year-to-date for the current year). Omit when no year was mentioned → current year."},
                         "title": {"type": "string", "description": "Layer title."},
                     },
                 },
@@ -695,9 +1302,10 @@ class GEEServer:
             ToolDeclaration(
                 name="compare_modis_fire_history",
                 description=(
-                    "Compare MODIS burned area and active-fire history for multiple villages across a year range. "
-                    "Returns per-village annual burned hectares, active-fire pixel-days, year-over-year differences, "
-                    "and a ranked summary. Pass villages as [{name, geojson}] or a GeoJSON FeatureCollection."
+                    "Compare MODIS burned area and FIRMS active-fire history for one or more places/villages. "
+                    "Years compared = the year the user asked for + the present year (no year mentioned: current year only). "
+                    "Call this ONCE with ALL requested places; a single comparison report artifact is saved automatically. "
+                    "Pass village_names, villages as [{name, geojson}], or a GeoJSON FeatureCollection."
                 ),
                 parameters={
                     "type": "object",
@@ -713,8 +1321,10 @@ class GEEServer:
                             "items": {"type": "string"},
                         },
                         "geojson": {"type": "object", "description": "FeatureCollection whose features are villages; NAME/name is used as the village name."},
-                        "start_year": {"type": "integer", "description": "First year, inclusive. Defaults to current year minus 2."},
-                        "end_year": {"type": "integer", "description": "Last completed year, inclusive. Defaults to previous calendar year."},
+                        "year": {"type": "integer", "description": "The year the user asked about. It is compared against the present (current) year. Omit when no year was mentioned (current year only)."},
+                        "years": {"type": "array", "items": {"type": "integer"}, "description": "Several specific years the user asked about (each compared with the present year)."},
+                        "start_year": {"type": "integer", "description": "Only for an explicit range request ('from 2019 to 2023'): first year, inclusive."},
+                        "end_year": {"type": "integer", "description": "Only for an explicit range request: last year, inclusive (defaults to the current year)."},
                     },
                     "required": [],
                 },
@@ -765,10 +1375,13 @@ class GEEServer:
                         "geojson": geojson_param,
                         "source": {
                             "type": "string",
-                            "enum": ["dynamic_world", "esa_worldcover", "modis_landcover", "copernicus_landcover"],
-                            "description": "Land cover dataset. Default is 'dynamic_world'.",
+                            "enum": ["auto", "dynamic_world", "esa_worldcover", "modis_landcover", "copernicus_landcover"],
+                            "description": (
+                                "Land cover dataset. Default 'auto' = Dynamic World (10 m) for 2016+, MODIS (500 m) for 2001–2015. "
+                                "ESA WorldCover exists ONLY for 2020 and 2021; Copernicus 100 m only 2015–2019."
+                            ),
                         },
-                        "year": {"type": "integer", "description": "Year to visualize (default 2023)."},
+                        "year": {"type": "integer", "description": "The exact year asked for; that year's data is shown or an explicit no-data error is returned. Omit when no year is mentioned (latest available)."},
                         "title": {"type": "string", "description": "Layer title."},
                     },
                 },
@@ -823,18 +1436,46 @@ class GEEServer:
             ToolDeclaration(
                 name="search_gee_datasets",
                 description=(
-                    "Search and discover datasets from the Google Earth Engine catalog. "
-                    "Returns dataset asset IDs, descriptions, spatial resolution, temporal availability, and recommended visualization parameters."
+                    "Search the FULL Google Earth Engine public data catalog (900+ datasets: imagery, climate, "
+                    "hydrology, soils, population, infrastructure, vector tables, etc.). Returns ranked dataset IDs "
+                    "with title, type (image / image_collection / table), date range, provider and the tool to use. "
+                    "Pass the returned ID to add_gee_layer to put it on the map."
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "Keyword search (e.g. 'temperature', 'sentinel', 'rain', 'elevation', 'flood')."},
+                        "query": {"type": "string", "description": "Free-text search (e.g. 'rivers', 'soil organic carbon', 'flood', 'building footprints', 'protected areas')."},
                         "category": {
                             "type": "string",
-                            "enum": ["surface_temperature", "climate", "atmospheric", "weather", "landsat", "sentinel", "high_resolution", "modis", "terrain", "landcover", "agriculture", "geophysical"],
+                            "enum": ["surface_temperature", "climate", "atmospheric", "weather", "landsat", "sentinel", "high_resolution", "modis", "terrain", "landcover", "agriculture", "geophysical", "hydrology"],
                             "description": "Optional category filter.",
                         },
+                        "limit": {"type": "integer", "description": "Max results (default 25)."},
+                    },
+                },
+            ),
+            ToolDeclaration(
+                name="extract_water_streams",
+                description=(
+                    "Plot the river / stream / drainage network of a place on the map as clipped vector LINE features "
+                    "(WWF HydroSHEDS river reaches with river order, upstream area and discharge), plus an optional fine "
+                    "drainage-channel raster from MERIT Hydro flow accumulation for small streams. ALWAYS use this for "
+                    "'water streams', 'streams', 'rivers', 'drainage network', 'nallahs', 'channels' or 'waterways' requests. "
+                    "Returns reach count, total length (km) and length by river order (discharge class)."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "place_name": place_param,
+                        "geojson": geojson_param,
+                        "lat": {"type": "number", "description": "Latitude for a circular study area (when no place/boundary)."},
+                        "lng": {"type": "number", "description": "Longitude for a circular study area."},
+                        "radius_km": {"type": "number", "description": "Radius in km for the circular study area (default 10)."},
+                        "min_upstream_area_km2": {"type": "number", "description": "Only keep reaches draining at least this area (default 0 = all mapped reaches)."},
+                        "include_drainage_raster": {"type": "boolean", "description": "Also add a MERIT Hydro fine drainage-channel raster layer (default true)."},
+                        "drainage_threshold_km2": {"type": "number", "description": "Upstream area threshold (km²) defining a channel in the drainage raster (default 1)."},
+                        "color": {"type": "string", "description": "Line colour (default blue)."},
+                        "title": {"type": "string", "description": "Layer title."},
                     },
                 },
             ),
@@ -912,9 +1553,91 @@ class GEEServer:
                         "lat": {"type": "number", "description": "Latitude for circular study area."},
                         "lng": {"type": "number", "description": "Longitude for circular study area."},
                         "radius_km": {"type": "number", "description": "Radius in km (default 5 km)."},
-                        "year": {"type": "integer", "description": "Year (default 2023)."},
-                        "source": {"type": "string", "enum": ["dynamic_world", "esa_worldcover"]},
+                        "year": {"type": "integer", "description": "The exact year asked for (omit → latest available)."},
+                        "source": {
+                            "type": "string",
+                            "enum": ["auto", "dynamic_world", "modis_landcover", "esa_worldcover"],
+                            "description": "Default 'auto' = Dynamic World for 2016+, MODIS for 2001–2015. ESA WorldCover only 2020/2021.",
+                        },
                     },
+                },
+            ),
+            ToolDeclaration(
+                name="analyze_land_cover_timeseries",
+                description=(
+                    "Land use / land cover CHANGE OVER MULTIPLE YEARS for a place, with an automatic multi-line chart "
+                    "(one line per land cover class) saved as an image artifact. ALWAYS use this — in ONE call — for "
+                    "'land use/land cover from <year> to <year>', 'trend', 'change over time', or any request to graph "
+                    "land cover across years. Uses MODIS (500 m, 2001–latest) for long ranges and Dynamic World (10 m, "
+                    "2016–present) for recent years; years with no data are reported, never filled. Do NOT call "
+                    "create_plot yourself for this — the chart is generated from the computed values."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "place_name": place_param,
+                        "place_names": {"type": "array", "items": {"type": "string"}, "description": "Several places merged into ONE study area (e.g. the cities of a tri-city region)."},
+                        "region_name": {"type": "string", "description": "Label for the merged region."},
+                        "boundary_layer_name": {"type": "string", "description": "Polygon layer already on the map to use as the boundary."},
+                        "geojson": geojson_param,
+                        "lat": {"type": "number"},
+                        "lng": {"type": "number"},
+                        "radius_km": {"type": "number"},
+                        "start_year": {"type": "integer", "description": "First year asked for (inclusive)."},
+                        "end_year": {"type": "integer", "description": "Last year asked for (inclusive; default current year)."},
+                        "source": {
+                            "type": "string",
+                            "enum": ["auto", "dynamic_world", "modis_landcover", "esa_worldcover"],
+                            "description": "Default 'auto' (recommended).",
+                        },
+                        "metric": {"type": "string", "enum": ["percent", "area_km2"], "description": "Y axis: share of area (default) or km²."},
+                        "create_chart": {"type": "boolean", "description": "Save the line chart artifact (default true)."},
+                    },
+                    "required": ["start_year"],
+                },
+            ),
+            ToolDeclaration(
+                name="analyze_population_timeseries",
+                description=(
+                    "Population growth inside a place's exact boundary over a range of years (backend calculation + automatic "
+                    "line chart artifact; nothing is added to the map except the boundary outline). Sums WorldPop (annual "
+                    "2000–2020, 100 m) and GHSL GHS-POP (5-yearly; 2025/2030 are projections) inside the polygon; returns "
+                    "totals per year, change, CAGR and density. Use for 'population growth of <place> from <year> to <year>'."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "place_name": place_param,
+                        "place_names": {"type": "array", "items": {"type": "string"}, "description": "Several places merged into ONE study area (e.g. the cities of a tri-city region)."},
+                        "region_name": {"type": "string", "description": "Label for the merged region."},
+                        "boundary_layer_name": {"type": "string", "description": "Polygon layer already on the map to use as the boundary."},
+                        "start_year": {"type": "integer"},
+                        "end_year": {"type": "integer"},
+                        "create_chart": {"type": "boolean"},
+                    },
+                    "required": ["start_year"],
+                },
+            ),
+            ToolDeclaration(
+                name="analyze_building_growth",
+                description=(
+                    "Building-level growth inside a place's exact boundary — HORIZONTAL (built-up footprint area, building count) "
+                    "and VERTICAL (average/median building height, built volume) — over a range of years, with an automatic "
+                    "multi-panel chart artifact. Google Open Buildings Temporal (2016–2023, ~0.5 m effective) plus GHSL built "
+                    "surface/volume (5-yearly 1975–2030, 100 m; 2025/2030 projected). Backend calculation only."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "place_name": place_param,
+                        "place_names": {"type": "array", "items": {"type": "string"}, "description": "Several places merged into ONE study area (e.g. the cities of a tri-city region)."},
+                        "region_name": {"type": "string", "description": "Label for the merged region."},
+                        "boundary_layer_name": {"type": "string", "description": "Polygon layer already on the map to use as the boundary."},
+                        "start_year": {"type": "integer"},
+                        "end_year": {"type": "integer"},
+                        "create_chart": {"type": "boolean"},
+                    },
+                    "required": ["start_year"],
                 },
             ),
             ToolDeclaration(
@@ -982,6 +1705,12 @@ class GEEServer:
             if isinstance(map_context, dict) and map_context.get("workspace"):
                 args["_workspace"] = map_context.get("workspace")
 
+        try:
+            return await self._route(tool_name, args)
+        except BoundaryUnresolved as exc:
+            return {"error": str(exc), "code": "boundary_unresolved"}
+
+    async def _route(self, tool_name: str, args: dict) -> dict:
         # Routing to tool handlers
         if tool_name == "add_gee_layer":
             return await self._add_gee_layer(args)
@@ -1027,6 +1756,14 @@ class GEEServer:
             return await self._get_ndvi_layer(args)
         if tool_name == "get_gee_layer":
             return await self._get_gee_layer(args)
+        if tool_name == "extract_water_streams":
+            return await self._extract_water_streams(args)
+        if tool_name == "analyze_land_cover_timeseries":
+            return await self._analyze_land_cover_timeseries(args)
+        if tool_name == "analyze_population_timeseries":
+            return await self._analyze_population_timeseries(args)
+        if tool_name == "analyze_building_growth":
+            return await self._analyze_building_growth(args)
 
         return {"error": f"Unknown tool: {tool_name}"}
 
@@ -1100,7 +1837,21 @@ class GEEServer:
         except Exception as _init_err:
             logger.debug(f"Initial _ensure_gee in _resolve_place_boundary: {_init_err}")
 
+        # Multi-place regions (e.g. a tri-city) and named map layers use the shared resolver,
+        # which unions the official polygons and outlines the result on the map.
+        if args.get("place_names") or args.get("boundary_layer_name"):
+            from tools.boundary import BoundaryError, resolve_study_boundary
+            try:
+                sb = await resolve_study_boundary({**args, "_map_context": map_context, "_ws": ws, "_workspace": workspace})
+            except BoundaryError as exc:
+                raise BoundaryUnresolved(str(exc)) from exc
+            ee_geom = _geojson_to_ee_geometry(sb.geojson)
+            if ee_geom is None:
+                raise BoundaryUnresolved(f"The boundary of '{sb.name}' could not be converted for Earth Engine.")
+            return sb.geojson, ee_geom, sb.name, sb.bbox
+
         # If place_name not explicitly set, check title for a place indicator (e.g. 'NDVI - Paris')
+        explicit_place = bool(place_name)
         if not place_name and not geojson_input:
             title = (args.get("title") or "").strip()
             if " - " in title:
@@ -1113,7 +1864,7 @@ class GEEServer:
                     place_name = candidate
             elif " for " in title.lower():
                 candidate = title.lower().split(" for ")[-1].strip()
-                if candidate and len(candidate) > 2:
+                if candidate and len(candidate) > 2 and not candidate.isdigit():
                     place_name = candidate
 
         # If place_name is empty or generic ("that place", "here", "the boundary", "study area"):
@@ -1293,61 +2044,89 @@ class GEEServer:
                 except Exception as b_err:
                     logger.warning(f"Could not auto-fetch boundary for '{place_name}': {b_err}")
 
-        # Compute bbox and centroid from geojson_input if not already set
-        if geojson_input and not bbox:
+        if isinstance(geojson_input, str):
             try:
-                from shapely.geometry import shape
-                s = shape(geojson_input if geojson_input.get("type") != "FeatureCollection" else geojson_input["features"][0]["geometry"])
-                minx, miny, maxx, maxy = s.bounds
-                bbox = {"west": round(minx, 6), "south": round(miny, 6), "east": round(maxx, 6), "north": round(maxy, 6)}
-                if not centroid:
-                    c = s.centroid
-                    centroid = {"lat": round(c.y, 6), "lng": round(c.x, 6)}
+                geojson_input = json.loads(geojson_input)
+            except Exception:
+                geojson_input = None
+
+        # Calculations must use the place's real polygon. A point (unmapped
+        # village centroid) or line would turn into a single pixel / square.
+        boundary_shape = _boundary_shape(geojson_input) if geojson_input else None
+        place_requested = (
+            explicit_place and bool(place_name and place_name.lower().strip() not in generic_terms)
+        ) or bool(args.get("geojson"))
+        if geojson_input and boundary_shape is None:
+            if place_requested:
+                raise BoundaryUnresolved(
+                    f"No polygon boundary is mapped for '{place_name or 'the supplied geometry'}' (only a point or line was found). "
+                    "Nothing was calculated. Draw or upload the area's boundary polygon, or name the enclosing administrative area."
+                )
+            geojson_input = None
+        if place_requested and boundary_shape is None and not geojson_input:
+            raise BoundaryUnresolved(
+                f"Could not resolve an official boundary polygon for '{place_name}'. Nothing was calculated for another area."
+            )
+
+        # Compute bbox and centroid from the full boundary (all parts)
+        if boundary_shape is not None and not bbox:
+            minx, miny, maxx, maxy = boundary_shape.bounds
+            bbox = {"west": round(minx, 6), "south": round(miny, 6), "east": round(maxx, 6), "north": round(maxy, 6)}
+            if not centroid:
+                c = boundary_shape.representative_point() if not boundary_shape.centroid.within(boundary_shape) else boundary_shape.centroid
+                centroid = {"lat": round(c.y, 6), "lng": round(c.x, 6)}
+
+        # Mark the place's boundary on the map (outline only) when it was resolved
+        # from a place name and is not already a layer on the canvas.
+        if ws and boundary_shape is not None and matched_name and not args.get("geojson") and not args.get("_skip_boundary_layer"):
+            layer_names = {str(l.get("name") or "").strip().lower() for l in (map_context.get("layers") or [])}
+            boundary_layer = f"{matched_name} boundary"
+            if boundary_layer.lower() not in layer_names and str(matched_name).lower() not in layer_names:
+                from shapely.geometry import mapping as _mapping
+                await self._send_action(ws, "add_geojson", {
+                    "geojson": {
+                        "type": "FeatureCollection",
+                        "features": [{"type": "Feature", "geometry": _mapping(boundary_shape), "properties": {"name": matched_name}}],
+                    },
+                    "name": boundary_layer,
+                    "color": "#f8fafc",
+                    "lineColor": "#f8fafc",
+                    "fillColor": "#f8fafc",
+                    "fillOpacity": 0,
+                    "lineWidth": 2.5,
+                })
+
+        # Frame camera on the boundary
+        if ws and bbox:
+            try:
+                await self._send_action(ws, "fit_bounds", {
+                    "west": bbox["west"],
+                    "south": bbox["south"],
+                    "east": bbox["east"],
+                    "north": bbox["north"],
+                    "bounds": [bbox["west"], bbox["south"], bbox["east"], bbox["north"]],
+                })
             except Exception:
                 pass
 
-        # Frame camera whenever a boundary bbox or centroid is present and ws is connected
-        if ws:
-            if bbox:
-                try:
-                    await self._send_action(ws, "fit_bounds", {
-                        "west": bbox["west"],
-                        "south": bbox["south"],
-                        "east": bbox["east"],
-                        "north": bbox["north"],
-                        "bounds": [bbox["west"], bbox["south"], bbox["east"], bbox["north"]],
-                    })
-                except Exception:
-                    pass
-            elif centroid:
-                try:
-                    c_lng = centroid.get("lng") if isinstance(centroid, dict) else None
-                    c_lat = centroid.get("lat") if isinstance(centroid, dict) else None
-                    if c_lng is not None and c_lat is not None:
-                        await self._send_action(ws, "fly_to", {
-                            "lng": c_lng,
-                            "lat": c_lat,
-                            "center": [c_lng, c_lat],
-                            "zoom": 12,
-                        })
-                except Exception:
-                    pass
-
-        # Convert to Earth Engine geometry
+        # Convert to Earth Engine geometry (the real polygon, never its bbox)
         ee_geom = None
         if geojson_input:
             ee_geom = _geojson_to_ee_geometry(geojson_input)
+            if ee_geom is None and place_requested:
+                raise BoundaryUnresolved(f"The boundary of '{place_name}' could not be converted for Earth Engine.")
 
         return geojson_input, ee_geom, matched_name, bbox
 
     # ── 1. Universal GEE Layer ────────────────────────────────────────────────
 
     async def _add_gee_layer(self, args: dict) -> dict:
-        dataset = args.get("dataset", "").strip()
-        vis_params = args.get("vis_params") or {}
-        date_str = args.get("date", "").strip()
-        title = args.get("title", "").strip()
-        ws = args.get("_ws")
+        dataset = str(args.get("dataset") or "").strip()
+        vis_params = dict(args.get("vis_params") or {})
+        band = str(args.get("band") or "").strip()
+        date_str = str(args.get("date") or "").strip()
+        end_date = str(args.get("end_date") or "").strip()
+        title = str(args.get("title") or "").strip()
         workspace = args.get("_workspace")
 
         if not dataset:
@@ -1363,46 +2142,107 @@ class GEEServer:
         if not ok:
             return {"error": err, "code": "upstream_unavailable"}
 
+        loop = asyncio.get_event_loop()
         try:
             import ee
 
-            default_vis, is_collection = _get_dataset_defaults(dataset)
-            final_vis = {**default_vis, **vis_params}
+            info = await loop.run_in_executor(None, _sync_get_asset_info, dataset)
+            asset_type = info.get("type")
+            if not asset_type:
+                return {
+                    "error": (
+                        f"Earth Engine asset '{dataset}' was not found or is not accessible. "
+                        "Call search_gee_datasets to find the exact dataset ID."
+                    ),
+                    "code": "gee_error",
+                }
 
-            def build_image():
-                if is_collection:
+            # Region used for scene filtering / auto-stretch statistics (not clipping):
+            # the study boundary when one exists, otherwise the current viewport.
+            region = ee_geom
+            if region is None:
+                vp = self._viewport_bounds(args)
+                if vp:
+                    region = ee.Geometry.Rectangle(vp, None, False)
+
+            if asset_type == "TABLE":
+                return await self._add_gee_table_layer(
+                    args, dataset, title, b_geojson, ee_geom, region, place_nm, bbox
+                )
+
+            default_vis, _ = _get_dataset_defaults(dataset)
+            catalog_vis = _catalog_vis_from_properties(info.get("properties") or {})
+            legend_holder: dict = {}
+
+            def prepare_image():
+                d_lower = dataset.lower()
+                if asset_type == "IMAGE_COLLECTION":
                     coll = ee.ImageCollection(dataset)
-                    if ee_geom is not None:
-                        try:
-                            coll = coll.filterBounds(ee_geom)
-                        except Exception:
-                            pass
+                    if region is not None:
+                        coll = coll.filterBounds(region)
                     if date_str:
                         start = f"{date_str}-01-01" if len(date_str) == 4 else date_str
-                        end_yr = date_str.split("-")[0]
-                        end = f"{end_yr}-12-31"
+                        if end_date:
+                            end = f"{end_date}-12-31" if len(end_date) == 4 else end_date
+                        else:
+                            end = f"{date_str.split('-')[0]}-12-31"
                         coll = coll.filterDate(start, end)
-                    d_lower = dataset.lower()
+                    else:
+                        # No date given: use the most recent year of available data.
+                        latest = coll.aggregate_max("system:time_start").getInfo()
+                        if latest:
+                            end_d = ee.Date(latest).advance(1, "day")
+                            coll = coll.filterDate(end_d.advance(-1, "year"), end_d)
                     if "copernicus/s2" in d_lower:
                         coll = coll.filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 15))
-                    elif "landsat" in d_lower:
+                    elif "landsat" in d_lower and "c02" in d_lower:
                         coll = coll.filter(ee.Filter.lt("CLOUD_COVER", 20))
-                    return coll.median()
-                return ee.Image(dataset)
+                    if coll.size().getInfo() == 0:
+                        raise ValueError(
+                            "No images found for this dataset in the requested area/date range."
+                        )
+                    sample = coll.first()
+                    try:
+                        sample_props = sample.propertyNames().getInfo() or []
+                    except Exception:
+                        sample_props = []
+                    categorical = any(str(p).endswith("_class_values") for p in sample_props)
+                    img = coll.mode() if categorical else coll.median()
+                else:
+                    img = ee.Image(dataset)
+                    sample = img
 
-            map_id, tile_url = await self._tile_proxy(build_image, final_vis, ee_geom)
+                if band:
+                    img = img.select([band])
+                    sample = sample.select([band])
+
+                if _vis_is_complete(vis_params):
+                    return img, vis_params
+                if not band and _vis_is_complete(default_vis):
+                    return img, {**default_vis, **vis_params}
+                if not band and _vis_is_complete(catalog_vis):
+                    return img, {**catalog_vis, **vis_params}
+                out_img, auto_vis, legend = _sync_auto_visualize(img, sample, region)
+                if legend:
+                    legend_holder["legend"] = legend
+                return out_img, {**auto_vis, **vis_params}
+
+            image, final_vis = await loop.run_in_executor(None, prepare_image)
+            map_id, tile_url = await self._tile_proxy(lambda: image, final_vis, ee_geom)
+
             centroid = None
             if bbox:
                 centroid = {
                     "lat": round((bbox["south"] + bbox["north"]) / 2, 6),
                     "lng": round((bbox["west"] + bbox["east"]) / 2, 6),
                 }
-            return {
+            result = {
                 "status": "success",
                 "message": f"GEE layer '{title}' added to map" + (f" for {place_nm}." if place_nm else "."),
                 "tile_url": tile_url,
                 "map_id": map_id,
                 "dataset_id": dataset,
+                "asset_type": asset_type.lower(),
                 "vis": final_vis,
                 "layer_title": title,
                 "place_name": place_nm,
@@ -1413,9 +2253,350 @@ class GEEServer:
                 "centroid": centroid,
                 "center": centroid,
             }
+            if legend_holder.get("legend"):
+                result["legend"] = legend_holder["legend"]
+                result["vis"] = {**final_vis, "palette_labels": [c["name"] for c in legend_holder["legend"]]}
+            return result
 
         except Exception as exc:
             return {"error": f"GEE layer failed: {exc}", "code": "gee_error"}
+
+    @staticmethod
+    def _viewport_bounds(args: dict) -> list[float] | None:
+        """Current map viewport as [west, south, east, north] from the map context, if any."""
+        b = (args.get("_map_context") or {}).get("bounds")
+        try:
+            if isinstance(b, dict):
+                vals = [float(b["west"]), float(b["south"]), float(b["east"]), float(b["north"])]
+            elif isinstance(b, (list, tuple)) and len(b) == 4:
+                vals = [float(v) for v in b]
+            elif isinstance(b, str) and b.count(",") == 3:
+                vals = [float(v) for v in b.split(",")]
+            else:
+                return None
+        except (KeyError, TypeError, ValueError):
+            return None
+        if vals[2] <= vals[0] or vals[3] <= vals[1]:
+            return None
+        return vals
+
+    def _write_vector_output(self, workspace: str | None, filename: str, geojson: dict) -> str | None:
+        if not workspace:
+            return None
+        out_path = Path(workspace) / filename
+        out_path.write_text(json.dumps(geojson), encoding="utf-8")
+        return str(out_path)
+
+    @staticmethod
+    def _with_workspace(tile_url: str, workspace: str | None) -> str:
+        if workspace and "workspace=" not in tile_url:
+            from urllib.parse import quote
+            sep = "&" if "?" in tile_url else "?"
+            return f"{tile_url}{sep}workspace={quote(str(workspace))}"
+        return tile_url
+
+    async def _add_gee_table_layer(
+        self,
+        args: dict,
+        dataset: str,
+        title: str,
+        b_geojson: Any,
+        ee_geom: Any,
+        region: Any,
+        place_nm: str | None,
+        bbox: dict | None,
+    ) -> dict:
+        """Render an Earth Engine FeatureCollection (table) as vector GeoJSON, or tiles when huge."""
+        import ee
+
+        workspace = args.get("_workspace")
+        max_features = int(args.get("max_features") or 5000)
+        color = str(args.get("color") or "#2563EB")
+        if not color.startswith("#") and len(color) in (3, 6):
+            color = f"#{color}"
+
+        def fetch():
+            fc = ee.FeatureCollection(dataset)
+            if region is not None:
+                fc = fc.filterBounds(region)
+            total = fc.size().getInfo()
+            if total == 0:
+                return 0, None
+            if region is None or total > max_features:
+                return total, None
+            try:
+                simplified = fc.map(lambda f: f.simplify(maxError=5))
+                return total, simplified.getInfo()
+            except Exception as exc:
+                logger.info(f"Vector download for {dataset} failed ({exc}); falling back to tiles.")
+                return total, None
+
+        loop = asyncio.get_event_loop()
+        total, data = await loop.run_in_executor(None, fetch)
+
+        centroid = None
+        if bbox:
+            centroid = {
+                "lat": round((bbox["south"] + bbox["north"]) / 2, 6),
+                "lng": round((bbox["west"] + bbox["east"]) / 2, 6),
+            }
+
+        if total == 0:
+            return {
+                "status": "success",
+                "dataset_id": dataset,
+                "asset_type": "table",
+                "feature_count": 0,
+                "place_name": place_nm,
+                "layer_title": title,
+                "message": f"No features from '{dataset}' intersect " + (f"{place_nm}." if place_nm else "the current view."),
+            }
+
+        if data is None:
+            # Too many features (or no bounded region) → server-side styled raster tiles.
+            style_img = lambda: ee.FeatureCollection(dataset).style(  # noqa: E731
+                color=color.lstrip("#"), width=1.5, fillColor=f"{color.lstrip('#')}55", pointSize=3
+            )
+            map_id, tile_url = await self._tile_proxy(style_img, {}, ee_geom)
+            return {
+                "status": "success",
+                "dataset_id": dataset,
+                "asset_type": "table",
+                "rendered_as": "styled_tiles",
+                "feature_count": total,
+                "tile_url": tile_url,
+                "map_id": map_id,
+                "vis": {"color": color},
+                "layer_title": title,
+                "place_name": place_nm,
+                "clipped_to_boundary": bool(ee_geom),
+                "bbox": bbox,
+                "bounds": bbox,
+                "centroid": centroid,
+                "center": centroid,
+                "message": (
+                    f"'{title}' has {total} features in this area — rendered as styled tiles. "
+                    "Provide a smaller boundary to extract them as vector features."
+                ),
+            }
+
+        features = data.get("features", [])
+        if b_geojson:
+            features = _clip_features_to_boundary(features, b_geojson)
+
+        total_len_km = 0.0
+        total_area_km2 = 0.0
+        geom_types: dict[str, int] = {}
+        try:
+            from pyproj import Geod
+            from shapely.geometry import shape
+            geod = Geod(ellps="WGS84")
+        except Exception:
+            geod = None
+        for feat in features:
+            props = feat.setdefault("properties", {}) or {}
+            feat["properties"] = props
+            g = feat.get("geometry") or {}
+            gtype = g.get("type", "Unknown")
+            geom_types[gtype] = geom_types.get(gtype, 0) + 1
+            if geod is not None and g:
+                try:
+                    s = shape(g)
+                    if gtype in ("LineString", "MultiLineString"):
+                        total_len_km += abs(geod.geometry_length(s)) / 1000.0
+                    elif gtype in ("Polygon", "MultiPolygon"):
+                        total_area_km2 += abs(geod.geometry_area_perimeter(s)[0]) / 1e6
+                except Exception:
+                    pass
+            props["layer_name"] = title
+            props["source_dataset"] = dataset
+            props["source_tool"] = "add_gee_layer"
+            props.setdefault("fillColor", color)
+            props.setdefault("strokeColor", color)
+
+        output = {"type": "FeatureCollection", "features": features}
+        place_slug = f"_{_safe_slug(place_nm)}" if place_nm else ""
+        geojson_file = self._write_vector_output(workspace, f"gee_{_safe_slug(dataset)}{place_slug}.geojson", output)
+
+        result = {
+            "status": "success",
+            "dataset_id": dataset,
+            "asset_type": "table",
+            "rendered_as": "vector",
+            "feature_count": len(features),
+            "geometry_types": geom_types,
+            "layer_title": title,
+            "layer_name": title,
+            "color": color,
+            "place_name": place_nm,
+            "clipped_to_boundary": bool(b_geojson),
+            "geojson": output,
+            "geojson_file": geojson_file,
+            "bbox": bbox,
+            "centroid": centroid,
+            "message": f"Loaded {len(features)} vector features from '{dataset}'" + (f" clipped to {place_nm}." if place_nm else "."),
+        }
+        if total_len_km:
+            result["total_length_km"] = round(total_len_km, 3)
+        if total_area_km2:
+            result["total_area_km2"] = round(total_area_km2, 4)
+            result["area_hectares"] = round(total_area_km2 * 100, 2)
+        return result
+
+    # ── Hydrography: rivers / streams / drainage network ──────────────────────
+
+    async def _extract_water_streams(self, args: dict) -> dict:
+        workspace = args.get("_workspace")
+        ws = args.get("_ws")
+        color = str(args.get("color") or "#1E88E5")
+        if not color.startswith("#") and len(color) in (3, 6):
+            color = f"#{color}"
+        min_upa = float(args.get("min_upstream_area_km2") or 0)
+        include_raster = args.get("include_drainage_raster")
+        include_raster = True if include_raster is None else bool(include_raster)
+        threshold = float(args.get("drainage_threshold_km2") or 1.0)
+        lat, lng = args.get("lat"), args.get("lng")
+        radius_km = float(args.get("radius_km") or 10.0)
+
+        ok, err = await _ensure_gee(workspace)
+        if not ok:
+            return {"error": err, "code": "upstream_unavailable"}
+
+        b_geojson, ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
+        loop = asyncio.get_event_loop()
+
+        try:
+            import ee
+
+            if ee_geom is None and lat is not None and lng is not None:
+                ee_geom = ee.Geometry.Point([float(lng), float(lat)]).buffer(radius_km * 1000.0)
+                b_geojson = await loop.run_in_executor(None, ee_geom.getInfo)
+                place_nm = place_nm or f"{radius_km:g} km around ({float(lat):.4f}, {float(lng):.4f})"
+                ring = b_geojson["coordinates"][0]
+                xs, ys = [p[0] for p in ring], [p[1] for p in ring]
+                bbox = {"west": round(min(xs), 6), "south": round(min(ys), 6), "east": round(max(xs), 6), "north": round(max(ys), 6)}
+            if ee_geom is None:
+                return {
+                    "error": (
+                        "A study area is required to plot streams. Provide place_name, a boundary GeoJSON, "
+                        "select a polygon on the map, or pass lat/lng with radius_km."
+                    ),
+                    "code": "invalid_input",
+                }
+
+            cap = 5000
+            props = ["RIV_ORD", "UPLAND_SKM", "DIS_AV_CMS", "LENGTH_KM", "REACH_ID"]
+
+            def fetch_rivers():
+                fc = ee.FeatureCollection(_HYDRO_RIVERS_ID).filterBounds(ee_geom)
+                if min_upa > 0:
+                    fc = fc.filter(ee.Filter.gte("UPLAND_SKM", min_upa))
+                total = fc.size().getInfo()
+                if total == 0:
+                    return 0, False, []
+                truncated = total > cap
+                if truncated:
+                    fc = fc.sort("UPLAND_SKM", False).limit(cap)
+                data = fc.select(props).getInfo()
+                return total, truncated, data.get("features", [])
+
+            total, truncated, features = await loop.run_in_executor(None, fetch_rivers)
+            features = _clip_features_to_boundary(features, b_geojson) if b_geojson else features
+
+            display_title = str(args.get("title") or "").strip() or (
+                f"Water Streams - {place_nm}" if place_nm else "Water Streams"
+            )
+
+            length_by_order: dict[str, float] = {}
+            total_len = 0.0
+            max_upa = 0.0
+            max_dis = 0.0
+            for feat in features:
+                p = feat.get("properties") or {}
+                seg_len = _geodesic_length_km(feat.get("geometry") or {})
+                total_len += seg_len
+                order = p.get("RIV_ORD")
+                key = f"class_{int(order)}" if order is not None else "class_unknown"
+                length_by_order[key] = round(length_by_order.get(key, 0.0) + seg_len, 3)
+                upa = float(p.get("UPLAND_SKM") or 0)
+                dis = float(p.get("DIS_AV_CMS") or 0)
+                max_upa = max(max_upa, upa)
+                max_dis = max(max_dis, dis)
+                feat["properties"] = {
+                    "river_order": order,
+                    "upstream_area_km2": round(upa, 2),
+                    "mean_discharge_m3s": round(dis, 3),
+                    "reach_id": p.get("REACH_ID"),
+                    "length_km": round(seg_len, 3),
+                    "layer_name": display_title,
+                    "source_tool": "extract_water_streams",
+                    "source_dataset": _HYDRO_RIVERS_ID,
+                    "strokeColor": color,
+                    "fillColor": color,
+                }
+
+            output = {"type": "FeatureCollection", "features": features}
+            place_slug = f"_{_safe_slug(place_nm)}" if place_nm else ""
+            geojson_file = self._write_vector_output(workspace, f"water_streams{place_slug}.geojson", output)
+
+            drainage = None
+            if include_raster:
+                import math
+
+                def build_channels():
+                    upa = ee.Image(_MERIT_HYDRO_ID).select("upa")
+                    return upa.updateMask(upa.gte(threshold)).log10().rename("log_upa")
+
+                d_vis = {
+                    "min": round(math.log10(max(threshold, 0.01)), 3),
+                    "max": 4,
+                    "palette": ["c6dbef", "6baed6", "2171b5", "08306b"],
+                }
+                try:
+                    _, d_url = await self._tile_proxy(build_channels, d_vis, ee_geom)
+                    d_url = self._with_workspace(d_url, workspace)
+                    d_title = f"Drainage Channels (MERIT Hydro ≥{threshold:g} km²)" + (f" - {place_nm}" if place_nm else "")
+                    await self._send_layer(ws, d_url, _MERIT_HYDRO_ID, d_vis, d_title, bbox=bbox)
+                    drainage = {"tile_url": d_url, "title": d_title, "threshold_km2": threshold}
+                except Exception as exc:
+                    logger.warning(f"MERIT Hydro drainage raster failed: {exc}")
+
+            if not features and not drainage:
+                msg = f"No mapped river reaches found in {place_nm or 'the study area'}."
+            else:
+                msg = (
+                    f"Plotted {len(features)} stream/river reaches ({round(total_len, 2)} km) "
+                    + (f"in {place_nm}" if place_nm else "")
+                    + (" plus a fine drainage-channel raster." if drainage else ".")
+                )
+                if truncated:
+                    msg += f" Showing the {cap} largest of {total} reaches."
+
+            return {
+                "status": "success",
+                "dataset_id": _HYDRO_RIVERS_ID,
+                "target_class": "Water Streams",
+                "place_name": place_nm,
+                "layer_name": display_title,
+                "layer_title": display_title,
+                "color": color,
+                "stream_reaches": len(features),
+                "reaches_in_area_total": total,
+                "truncated": truncated,
+                "total_stream_length_km": round(total_len, 3),
+                "length_by_river_order_km": dict(sorted(length_by_order.items())),
+                "river_order_note": "HydroRIVERS discharge-based river order: 1 = largest rivers, 10 = smallest streams.",
+                "max_upstream_area_km2": round(max_upa, 2),
+                "max_mean_discharge_m3s": round(max_dis, 3),
+                "drainage_raster": drainage,
+                "geojson": output,
+                "geojson_file": geojson_file,
+                "bbox": bbox,
+                "clipped_to_boundary": bool(b_geojson),
+                "message": msg,
+            }
+        except Exception as exc:
+            return {"error": f"Stream network extraction failed: {exc}", "code": "gee_error"}
 
     # ── 2. Surface Temperature (LST) ──────────────────────────────────────────
 
@@ -2135,13 +3316,36 @@ class GEEServer:
     # ── 9. MODIS Planetary Suite ──────────────────────────────────────────────
 
     async def _get_modis_layer(self, args: dict) -> dict:
+        from datetime import date, timedelta
+
         product = (args.get("product") or "ndvi_evi").strip().lower()
-        year = int(args.get("year") or 2023)
-        title = args.get("title", "").strip()
+        today = date.today()
+        try:
+            year = int(str(args.get("year") or today.year)[:4])
+        except ValueError:
+            return {"error": f"Invalid year '{args.get('year')}'.", "code": "invalid_input"}
+        if year < 2000 or year > today.year:
+            return {"error": f"MODIS data is available from 2000 to {today.year}; got {year}.", "code": "invalid_input"}
+        # Only the requested calendar year (year-to-date for the current year).
+        y_start = f"{year}-01-01"
+        y_end = (today + timedelta(days=1)).isoformat() if year == today.year else f"{year + 1}-01-01"
+        title = (args.get("title") or "").strip()
         ws = args.get("_ws")
         workspace = args.get("_workspace")
+        requested_place = any(
+            str(args.get(k) or "").strip()
+            for k in ("place_name", "city", "location", "study_area", "boundary_name", "place")
+        ) or bool(args.get("geojson"))
 
         b_geojson, ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
+        if requested_place and ee_geom is None:
+            return {
+                "error": (
+                    f"Could not resolve the boundary for '{args.get('place_name') or 'the requested area'}'. "
+                    "Refusing to fetch MODIS data outside the requested place."
+                ),
+                "code": "boundary_unresolved",
+            }
         layer_title = title or (f"MODIS {product.replace('_', ' ').title()} ({year}) - {place_nm}" if place_nm else f"MODIS {product.replace('_', ' ').title()} ({year})")
         if place_nm and place_nm.lower() not in layer_title.lower():
             layer_title = f"{layer_title} - {place_nm}"
@@ -2156,7 +3360,7 @@ class GEEServer:
             if product == "reflectance":
                 dataset_id = "MODIS/061/MOD09A1"
                 vis = {"bands": ["sur_refl_b01", "sur_refl_b04", "sur_refl_b03"], "min": -100, "max": 8000}
-                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                coll = ee.ImageCollection(dataset_id).filterDate(y_start, y_end)
                 if ee_geom is not None:
                     try:
                         coll = coll.filterBounds(ee_geom)
@@ -2167,7 +3371,7 @@ class GEEServer:
             elif product == "surface_temperature":
                 dataset_id = "MODIS/061/MOD11A1"
                 vis = {"min": 10, "max": 48, "palette": ["0000ff", "00ffff", "ffff00", "ff7700", "ff0000"]}
-                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                coll = ee.ImageCollection(dataset_id).filterDate(y_start, y_end)
                 if ee_geom is not None:
                     try:
                         coll = coll.filterBounds(ee_geom)
@@ -2178,7 +3382,7 @@ class GEEServer:
             elif product == "active_fires":
                 dataset_id = "FIRMS"
                 vis = {"min": 0, "max": 1, "palette": ["ffff00", "ff0000"]}
-                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                coll = ee.ImageCollection(dataset_id).filterDate(y_start, y_end)
                 if ee_geom is not None:
                     try:
                         coll = coll.filterBounds(ee_geom)
@@ -2189,7 +3393,7 @@ class GEEServer:
             elif product == "snow_cover":
                 dataset_id = "MODIS/061/MOD10A1"
                 vis = {"bands": ["NDSI_Snow_Cover"], "min": 0, "max": 100, "palette": ["000000", "00ffff", "ffffff"]}
-                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                coll = ee.ImageCollection(dataset_id).filterDate(y_start, y_end)
                 if ee_geom is not None:
                     try:
                         coll = coll.filterBounds(ee_geom)
@@ -2200,7 +3404,7 @@ class GEEServer:
             elif product == "burned_area":
                 dataset_id = "MODIS/061/MCD64A1"
                 vis = {"bands": ["BurnDate"], "min": 1, "max": 366, "palette": ["ffff00", "ff7700", "ff0000"]}
-                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                coll = ee.ImageCollection(dataset_id).filterDate(y_start, y_end)
                 if ee_geom is not None:
                     try:
                         coll = coll.filterBounds(ee_geom)
@@ -2217,7 +3421,7 @@ class GEEServer:
                     "palette": _MODIS_IGBP_PALETTE,
                     "palette_labels": _MODIS_IGBP_LABELS,
                 }
-                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                coll = ee.ImageCollection(dataset_id).filterDate(y_start, y_end)
                 if ee_geom is not None:
                     try:
                         coll = coll.filterBounds(ee_geom)
@@ -2228,7 +3432,7 @@ class GEEServer:
             else:
                 dataset_id = "MODIS/061/MOD13Q1"
                 vis = {"min": 0.0, "max": 0.85, "palette": ["ffffff", "ce7e45", "df923d", "f1b555", "fcd163", "99b718", "74a901", "66a000", "529400", "3e8601", "207401", "056201", "004c00"]}
-                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                coll = ee.ImageCollection(dataset_id).filterDate(y_start, y_end)
                 if ee_geom is not None:
                     try:
                         coll = coll.filterBounds(ee_geom)
@@ -2236,6 +3440,17 @@ class GEEServer:
                         pass
                 build_fn = lambda: coll.select("NDVI").median().multiply(0.0001)
 
+            loop = asyncio.get_event_loop()
+            image_count = await loop.run_in_executor(None, lambda: coll.size().getInfo())
+            if not image_count:
+                return {
+                    "error": (
+                        f"No MODIS {product.replace('_', ' ')} data has been published for {year}"
+                        + (f" over {place_nm}" if place_nm else "")
+                        + " yet. Try an earlier year."
+                    ),
+                    "code": "no_data",
+                }
             map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
 
             centroid = None
@@ -2249,6 +3464,9 @@ class GEEServer:
                 "status": "success",
                 "product": product,
                 "year": year,
+                "date_range": [y_start, y_end],
+                "year_to_date": year == today.year,
+                "image_count": image_count,
                 "tile_url": tile_url,
                 "map_id": map_id,
                 "dataset_id": dataset_id,
@@ -2269,7 +3487,7 @@ class GEEServer:
 
     async def _compare_modis_fire_history(self, args: dict) -> dict:
         """Calculate comparable annual MODIS fire/burned-area metrics per village."""
-        from datetime import date
+        from datetime import date, timedelta
 
         raw_villages = args.get("villages") or []
         raw_villages = [({"name": v} if isinstance(v, str) else v) for v in raw_villages]
@@ -2283,13 +3501,15 @@ class GEEServer:
         if not raw_villages:
             return {"error": "Provide village geometries in villages or a GeoJSON FeatureCollection."}
 
-        # Use completed calendar years by default; the current year is usually
-        # incomplete and would make annual fire comparisons misleading.
-        end_year = int(args.get("end_year") or (date.today().year - 1))
-        start_year = int(args.get("start_year") or (end_year - 2))
-        if end_year < start_year or end_year - start_year > 10:
-            return {"error": "The year range must be valid and no longer than 11 years."}
-        years = list(range(start_year, end_year + 1))
+        # Years = the year(s) asked for + the present year; no year asked ->
+        # the current year only (year-to-date). See tools/fire_report.py.
+        from tools.fire_report import resolve_years, compute_differences
+        years, year_err = resolve_years(args)
+        if year_err:
+            return {"error": year_err, "code": "invalid_input"}
+        start_year, end_year = years[0], years[-1]
+        today = date.today()
+        current_year = today.year
         workspace = args.get("_workspace")
         ok, err = await _ensure_gee(workspace)
         if not ok:
@@ -2306,11 +3526,15 @@ class GEEServer:
                 has_geometry = bool(item.get("geojson") or item.get("geometry") or item.get("type"))
                 if has_geometry or not item.get("name"):
                     return item, None
-                boundary, _ee_geom, matched_name, _bbox = await self._resolve_place_boundary({
-                    "place_name": str(item["name"]),
-                    "_workspace": workspace,
-                    "_map_context": {},
-                })
+                try:
+                    boundary, _ee_geom, matched_name, _bbox = await self._resolve_place_boundary({
+                        "place_name": str(item["name"]),
+                        "_workspace": workspace,
+                        "_map_context": {},
+                        "_ws": args.get("_ws"),
+                    })
+                except BoundaryUnresolved:
+                    return None, str(item["name"])
                 if boundary:
                     return {"name": matched_name or item["name"], "geojson": boundary}, None
                 return None, str(item["name"])
@@ -2346,10 +3570,25 @@ class GEEServer:
                     ee.Feature(geom, {"village": name}) for name, geom in village_geoms
                 ])
                 annual_by_village = {name: {} for name, _ in village_geoms}
+                partial = None
                 for year in years:
-                    burned = (ee.ImageCollection("MODIS/061/MCD64A1")
-                              .filterDate(f"{year}-01-01", f"{year + 1}-01-01")
-                              .select("BurnDate").max().gt(0).selfMask())
+                    y_end = (
+                        (today + timedelta(days=1)).isoformat()
+                        if year == current_year else f"{year + 1}-01-01"
+                    )
+                    burned_coll = ee.ImageCollection("MODIS/061/MCD64A1").filterDate(f"{year}-01-01", y_end)
+                    fire_coll = ee.ImageCollection("FIRMS").filterDate(f"{year}-01-01", y_end)
+                    if year == current_year:
+                        def latest(coll):
+                            ts = coll.aggregate_max("system:time_start").getInfo()
+                            return ee.Date(ts).format("YYYY-MM-dd").getInfo() if ts else None
+                        partial = {
+                            "year": year,
+                            "as_of": today.isoformat(),
+                            "burned_area_data_through": latest(burned_coll),
+                            "active_fire_data_through": latest(fire_coll),
+                        }
+                    burned = burned_coll.select("BurnDate").max().gt(0).selfMask()
                     burned_regions = ee.Image.pixelArea().updateMask(burned).reduceRegions(
                         collection=village_fc,
                         reducer=ee.Reducer.sum(),
@@ -2357,8 +3596,7 @@ class GEEServer:
                         tileScale=4,
                     ).getInfo().get("features", [])
 
-                    fires = (ee.ImageCollection("FIRMS")
-                             .filterDate(f"{year}-01-01", f"{year + 1}-01-01")
+                    fires = (fire_coll
                              .select("T21")
                              .map(lambda image: image.gt(300).rename("fire"))
                              .sum())
@@ -2386,27 +3624,25 @@ class GEEServer:
                 rows = []
                 for name, _ in village_geoms:
                     annual = annual_by_village[name]
-                    deltas = {}
-                    for prev, curr in zip(years, years[1:]):
-                        p, c = annual[str(prev)], annual[str(curr)]
-                        deltas[f"{prev}_to_{curr}"] = {
-                            "burned_area_hectares_difference": round(c["burned_area_hectares"] - p["burned_area_hectares"], 3),
-                            "burned_area_percent_difference": round(((c["burned_area_hectares"] - p["burned_area_hectares"]) / p["burned_area_hectares"] * 100), 2) if p["burned_area_hectares"] else None,
-                            "active_fire_pixel_days_difference": round(c["active_fire_pixel_days"] - p["active_fire_pixel_days"], 3),
-                        }
-                    rows.append({"village": name, "annual": annual, "differences": deltas})
-                return rows
+                    rows.append({"village": name, "annual": annual, "differences": compute_differences(annual, years)})
+                return rows, partial
 
-            rows = await asyncio.get_event_loop().run_in_executor(None, compute)
+            rows, partial = await asyncio.get_event_loop().run_in_executor(None, compute)
+            year_text = " vs ".join(map(str, years))
             return {
                 "status": "success",
                 "source": "NASA MODIS MCD64A1 burned area + FIRMS active fires via Google Earth Engine",
+                "years": years,
                 "start_year": start_year,
                 "end_year": end_year,
+                "partial_year": partial,
                 "villages_count": len(rows),
                 "unresolved_villages": unresolved,
                 "results": rows,
-                "message": f"Compared MODIS fire history for {len(rows)} villages from {start_year} through {end_year}.",
+                "message": (
+                    f"Compared MODIS fire history for {len(rows)} area(s): {year_text}"
+                    + (f" ({current_year} is year-to-date)." if partial else ".")
+                ),
             }
         except Exception as exc:
             return {"error": f"MODIS fire comparison failed: {exc}", "code": "gee_error"}
@@ -2513,21 +3749,97 @@ class GEEServer:
 
     # ── 11. Multi-Class Land Cover (LULC) ─────────────────────────────────────
 
-    async def _get_land_cover(self, args: dict) -> dict:
-        source = (args.get("source") or "dynamic_world").strip().lower()
-        year = int(args.get("year") or 2023)
-        title = args.get("title", "").strip()
-        ws = args.get("_ws")
-        workspace = args.get("_workspace")
+    # ── Land cover helpers (instance) ─────────────────────────────────────────
 
+    @staticmethod
+    def _parse_year(value: Any) -> tuple[int | None, str | None]:
+        if value in (None, ""):
+            return None, None
+        try:
+            return int(str(value).strip()[:4]), None
+        except ValueError:
+            return None, f"Invalid year '{value}'."
+
+    @staticmethod
+    def _place_was_requested(args: dict) -> bool:
+        return any(
+            str(args.get(k) or "").strip()
+            for k in ("place_name", "city", "location", "study_area", "boundary_name", "place")
+        ) or bool(args.get("geojson"))
+
+    @staticmethod
+    def _boundary_area_km2(boundary_geojson: Any) -> float | None:
+        try:
+            from pyproj import Geod
+            shp = _boundary_shape(boundary_geojson)
+            if shp is None:
+                return None
+            return abs(Geod(ellps="WGS84").geometry_area_perimeter(shp)[0]) / 1e6
+        except Exception:
+            return None
+
+    async def _resolve_study_area(self, args: dict, default_radius_km: float = 5.0):
+        """Boundary (or lat/lng circle) for land-cover analysis. Never a hard-coded default place."""
         b_geojson, ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
-        layer_title = title or (f"Land Cover ({source.replace('_', ' ').title()} {year}) - {place_nm}" if place_nm else f"Land Cover ({source.replace('_', ' ').title()} {year})")
-        if place_nm and place_nm.lower() not in layer_title.lower():
-            layer_title = f"{layer_title} - {place_nm}"
+        if ee_geom is None and self._place_was_requested(args):
+            raise ValueError(
+                f"Could not resolve the boundary for '{args.get('place_name') or 'the requested area'}'. "
+                "Refusing to compute land cover for a different area."
+            )
+        if ee_geom is None and args.get("lat") is not None and args.get("lng") is not None:
+            import ee
+            radius = float(args.get("radius_km") or default_radius_km)
+            ee_geom = ee.Geometry.Point([float(args["lng"]), float(args["lat"])]).buffer(radius * 1000.0)
+            loop = asyncio.get_event_loop()
+            b_geojson = await loop.run_in_executor(None, ee_geom.getInfo)
+            place_nm = place_nm or f"{radius:g} km around ({float(args['lat']):.4f}, {float(args['lng']):.4f})"
+        if ee_geom is None:
+            raise ValueError(
+                "A study area is required: pass place_name, a boundary GeoJSON, select a polygon on the map, "
+                "or pass lat/lng with radius_km."
+            )
+        return b_geojson, ee_geom, place_nm, bbox
+
+    # ── 11. Land Cover layer ──────────────────────────────────────────────────
+
+    async def _get_land_cover(self, args: dict) -> dict:
+        from datetime import date
+
+        requested_source = (args.get("source") or "auto").strip().lower()
+        year, year_err = self._parse_year(args.get("year"))
+        if year_err:
+            return {"error": year_err, "code": "invalid_input"}
+        title = (args.get("title") or "").strip()
+        workspace = args.get("_workspace")
 
         ok, err = await _ensure_gee(workspace)
         if not ok:
             return {"error": err, "code": "upstream_unavailable"}
+
+        b_geojson, ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
+        if self._place_was_requested(args) and ee_geom is None:
+            return {
+                "error": f"Could not resolve the boundary for '{args.get('place_name') or 'the requested area'}'. "
+                         "Refusing to fetch land cover outside the requested place.",
+                "code": "boundary_unresolved",
+            }
+
+        loop = asyncio.get_event_loop()
+        source = _lc_resolve_source(requested_source, year)
+        if source not in _LC_SOURCE_LABELS:
+            return {"error": f"Unknown land cover source '{source}'.", "code": "invalid_input"}
+        if year is None:
+            # No year mentioned → latest year the chosen product has.
+            available = await loop.run_in_executor(None, _lc_available_years, source)
+            year = date.today().year if source == "dynamic_world" else available[-1]
+        year_error = await loop.run_in_executor(None, _lc_year_error, source, year)
+        if year_error:
+            return {"error": year_error, "code": "no_data", "source": source, "year": year}
+
+        label = source.replace("_", " ").title()
+        layer_title = title or (f"Land Cover ({label} {year})" + (f" - {place_nm}" if place_nm else ""))
+        if place_nm and place_nm.lower() not in layer_title.lower():
+            layer_title = f"{layer_title} - {place_nm}"
 
         try:
             import ee
@@ -2536,27 +3848,32 @@ class GEEServer:
                 dw_palette = ["419BDF", "397D49", "88B053", "7A87C6", "E49635", "DFC35A", "C4281B", "A59B8F", "B39FE1"]
                 dw_classes = ["Water", "Trees", "Grass", "Flooded Vegetation", "Crops", "Shrub & Scrub", "Built Area", "Bare Ground", "Snow & Ice"]
                 vis = {"min": 0, "max": 8, "palette": dw_palette, "palette_labels": dw_classes}
-                dataset_id = "GOOGLE/DYNAMICWORLD/V1"
-                def dw_fn():
-                    coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
+                dataset_id = _DW_ID
+
+                def count_images():
+                    c = ee.ImageCollection(_DW_ID).filterDate(f"{year}-01-01", f"{year + 1}-01-01")
                     if ee_geom is not None:
-                        try:
-                            coll = coll.filterBounds(ee_geom)
-                        except Exception:
-                            pass
-                    return coll.select("label").mode()
-                build_fn = dw_fn
+                        c = c.filterBounds(ee_geom)
+                    return c.size().getInfo()
+
+                if not await loop.run_in_executor(None, count_images):
+                    return {
+                        "error": f"No Dynamic World scenes for {year}" + (f" over {place_nm}" if place_nm else "") + ".",
+                        "code": "no_data",
+                    }
+                build_fn = lambda: _lc_class_image("dynamic_world", year, ee_geom)  # noqa: E731
 
             elif source == "esa_worldcover":
-                yr_map = {2020: "ESA/WorldCover/v100/2020", 2021: "ESA/WorldCover/v200/2021"}
-                dataset_id = yr_map.get(year, "ESA/WorldCover/v200/2021")
+                dataset_id = _ESA_WORLDCOVER_YEARS[year]
+                esa_values = [10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 100]
                 esa_palette = ["006400", "ffbb22", "ffff4c", "f096ff", "fa0000", "b4b4b4", "f0f0f0", "0064c8", "0096a0", "00cf75", "fae6a0"]
                 esa_classes = ["Trees", "Shrubland", "Grassland", "Cropland", "Built-up", "Barren", "Snow & Ice", "Open Water", "Wetland", "Mangroves", "Moss & Lichen"]
-                vis = {"bands": ["Map"], "min": 10, "max": 100, "palette": esa_palette, "palette_labels": esa_classes}
-                build_fn = lambda: ee.Image(dataset_id)
+                # Remap the non-contiguous class codes so each class gets its exact colour.
+                vis = {"min": 0, "max": 10, "palette": esa_palette, "palette_labels": esa_classes}
+                build_fn = lambda: _lc_class_image("esa_worldcover", year).remap(esa_values, list(range(11)))  # noqa: E731
 
             elif source == "modis_landcover":
-                dataset_id = "MODIS/061/MCD12Q1"
+                dataset_id = _MODIS_LC_ID
                 vis = {
                     "bands": ["LC_Type1"],
                     "min": 1,
@@ -2564,24 +3881,20 @@ class GEEServer:
                     "palette": _MODIS_IGBP_PALETTE,
                     "palette_labels": _MODIS_IGBP_LABELS,
                 }
-                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
-                if ee_geom is not None:
-                    try:
-                        coll = coll.filterBounds(ee_geom)
-                    except Exception:
-                        pass
-                build_fn = lambda: coll.select("LC_Type1").first().toFloat()
+                build_fn = lambda: (  # noqa: E731
+                    ee.ImageCollection(_MODIS_LC_ID)
+                    .filter(ee.Filter.calendarRange(year, year, "year"))
+                    .select("LC_Type1").first().toFloat()
+                )
 
-            else:
+            else:  # copernicus_landcover
                 dataset_id = "COPERNICUS/Landcover/100m/Proba-V-C3/Global"
                 vis = {"bands": ["discrete_classification"], "min": 0, "max": 200}
-                coll = ee.ImageCollection(dataset_id).filterDate(f"{year}-01-01", f"{year}-12-31")
-                if ee_geom is not None:
-                    try:
-                        coll = coll.filterBounds(ee_geom)
-                    except Exception:
-                        pass
-                build_fn = lambda: coll.select("discrete_classification").first()
+                build_fn = lambda: (  # noqa: E731
+                    ee.ImageCollection(dataset_id)
+                    .filter(ee.Filter.calendarRange(year, year, "year"))
+                    .select("discrete_classification").first()
+                )
 
             map_id, tile_url = await self._tile_proxy(build_fn, vis, ee_geom)
 
@@ -2591,11 +3904,13 @@ class GEEServer:
                     "lat": round((bbox["south"] + bbox["north"]) / 2, 6),
                     "lng": round((bbox["west"] + bbox["east"]) / 2, 6),
                 }
-
+            note = _lc_year_notes(source, year)
             return {
                 "status": "success",
                 "source": source,
+                "source_label": _LC_SOURCE_LABELS[source],
                 "year": year,
+                "year_note": note,
                 "tile_url": tile_url,
                 "map_id": map_id,
                 "dataset_id": dataset_id,
@@ -2608,11 +3923,561 @@ class GEEServer:
                 "bounds": bbox,
                 "centroid": centroid,
                 "center": centroid,
-                "message": f"Land cover layer '{layer_title}' added to map" + (f" for {place_nm}." if place_nm else "."),
+                "message": f"Land cover layer '{layer_title}' added to map" + (f" for {place_nm}." if place_nm else ".")
+                + (f" Note: {note}" if note else ""),
             }
 
         except Exception as exc:
             return {"error": f"Land cover layer failed: {exc}", "code": "gee_error"}
+
+    # ── Land cover zonal statistics (single year) ─────────────────────────────
+
+    async def _analyze_land_use_zonal_stats(self, args: dict) -> dict:
+        from datetime import date
+
+        year, year_err = self._parse_year(args.get("year"))
+        if year_err:
+            return {"error": year_err, "code": "invalid_input"}
+        workspace = args.get("_workspace")
+        ok, err = await _ensure_gee(workspace)
+        if not ok:
+            return {"error": err, "code": "upstream_unavailable"}
+
+        try:
+            b_geojson, ee_geom, place_nm, _bbox = await self._resolve_study_area(args)
+        except ValueError as exc:
+            return {"error": str(exc), "code": "boundary_unresolved"}
+
+        loop = asyncio.get_event_loop()
+        source = _lc_resolve_source(args.get("source"), year)
+        if source not in _LC_GROUP_REMAP:
+            return {"error": f"Zonal statistics support dynamic_world, modis_landcover or esa_worldcover (got '{source}').", "code": "invalid_input"}
+        if year is None:
+            available = await loop.run_in_executor(None, _lc_available_years, source)
+            year = date.today().year if source == "dynamic_world" else available[-1]
+        year_error = await loop.run_in_executor(None, _lc_year_error, source, year)
+        if year_error:
+            return {"error": year_error, "code": "no_data", "source": source, "year": year}
+
+        class_names = {
+            "dynamic_world": {i: n for i, n in enumerate(["Water", "Trees", "Grass", "Flooded Vegetation", "Crops", "Shrub & Scrub", "Built Area", "Bare Ground", "Snow & Ice"])},
+            "modis_landcover": {i + 1: n for i, n in enumerate(_MODIS_IGBP_LABELS)},
+            "esa_worldcover": dict(zip([10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 100], ["Trees", "Shrubland", "Grassland", "Cropland", "Built-up", "Barren", "Snow & Ice", "Open Water", "Wetland", "Mangroves", "Moss & Lichen"])),
+        }[source]
+        values, groups = _LC_GROUP_REMAP[source]
+        value_to_group = dict(zip(values, groups))
+        scale = _lc_reduce_scale(source, self._boundary_area_km2(b_geojson))
+
+        try:
+            import ee
+
+            def run_zonal():
+                if source == "dynamic_world":
+                    n = ee.ImageCollection(_DW_ID).filterDate(f"{year}-01-01", f"{year + 1}-01-01").filterBounds(ee_geom).size().getInfo()
+                    if not n:
+                        raise ValueError(f"No Dynamic World scenes for {year} over this area.")
+                lc = _lc_class_image(source, year, ee_geom)
+                stats = ee.Image.pixelArea().addBands(lc).reduceRegion(
+                    reducer=ee.Reducer.sum().group(groupField=1, groupName="class_id"),
+                    geometry=ee_geom,
+                    scale=scale,
+                    maxPixels=int(1e10),
+                    tileScale=4,
+                ).getInfo()
+                return stats.get("groups", [])
+
+            groups_out = await loop.run_in_executor(None, run_zonal)
+            total_m2 = sum(float(g.get("sum", 0)) for g in groups_out) or 1.0
+            breakdown = []
+            harmonised = {g: 0.0 for g in LC_GROUPS}
+            for g in groups_out:
+                cid = int(g.get("class_id", 0))
+                area_m2 = float(g.get("sum", 0))
+                gi = value_to_group.get(cid)
+                if gi is not None:
+                    harmonised[LC_GROUPS[gi]] += area_m2
+                breakdown.append({
+                    "class_id": cid,
+                    "class_name": class_names.get(cid, f"Class {cid}"),
+                    "area_km2": round(area_m2 / 1e6, 4),
+                    "area_hectares": round(area_m2 / 1e4, 2),
+                    "percentage": round(area_m2 / total_m2 * 100, 2),
+                })
+            breakdown.sort(key=lambda r: r["area_km2"], reverse=True)
+            harmonised_rows = [
+                {"group": k, "area_km2": round(v / 1e6, 4), "percentage": round(v / total_m2 * 100, 2)}
+                for k, v in harmonised.items() if v > 0
+            ]
+            dominant = breakdown[0]["class_name"] if breakdown else "Unknown"
+            note = _lc_year_notes(source, year)
+            return {
+                "status": "success",
+                "year": year,
+                "year_note": note,
+                "source": _LC_SOURCE_LABELS[source],
+                "source_id": source,
+                "scale_m": scale,
+                "zonal_analysis": {
+                    "total_area_km2": round(total_m2 / 1e6, 4),
+                    "dominant_land_use": dominant,
+                    "breakdown": breakdown,
+                    "harmonised_breakdown": harmonised_rows,
+                },
+                "place_name": place_nm,
+                "clipped_to_boundary": True,
+                "boundary_geojson": b_geojson if place_nm else None,
+                "message": (
+                    f"Zonal land-use analysis for {year}" + (f" ({place_nm})" if place_nm else "")
+                    + f" from {_LC_SOURCE_LABELS[source]}. Total area {round(total_m2 / 1e6, 2)} km²; dominant: {dominant}."
+                    + (f" Note: {note}" if note else "")
+                ),
+            }
+        except Exception as exc:
+            return {"error": f"Zonal land use analysis failed: {exc}", "code": "gee_error"}
+
+    # ── Land cover time series (multi-year trend + line chart) ────────────────
+
+    async def _analyze_land_cover_timeseries(self, args: dict) -> dict:
+        from concurrent.futures import ThreadPoolExecutor
+        from datetime import date
+
+        current = date.today().year
+        start, s_err = self._parse_year(args.get("start_year") or args.get("year_start"))
+        end, e_err = self._parse_year(args.get("end_year") or args.get("year_end"))
+        if s_err or e_err:
+            return {"error": s_err or e_err, "code": "invalid_input"}
+        end = end or current
+        start = start or (end - 10)
+        if start > end:
+            start, end = end, start
+        if start < 2001 or end > current:
+            return {"error": f"Land cover time series are available for 2001–{current}.", "code": "invalid_input"}
+        if end - start > 30:
+            return {"error": "At most 31 years per time series.", "code": "invalid_input"}
+        metric = (args.get("metric") or "percent").strip().lower()
+        if metric not in ("percent", "area_km2"):
+            metric = "percent"
+        requested_source = (args.get("source") or "auto").strip().lower()
+        make_chart = args.get("create_chart", True) is not False
+        workspace = args.get("_workspace")
+
+        ok, err = await _ensure_gee(workspace)
+        if not ok:
+            return {"error": err, "code": "upstream_unavailable"}
+        try:
+            b_geojson, ee_geom, place_nm, bbox = await self._resolve_study_area(args)
+        except ValueError as exc:
+            return {"error": str(exc), "code": "boundary_unresolved"}
+
+        loop = asyncio.get_event_loop()
+        modis_latest = await loop.run_in_executor(None, _modis_lc_latest_year)
+        requested_years = list(range(start, end + 1))
+
+        # Plan which product computes which years. Never mix products within one line.
+        plan: list[tuple[str, list[int]]] = []
+        if requested_source in ("", "auto"):
+            if start < _DW_FIRST_FULL_YEAR:
+                modis_years = [y for y in requested_years if y <= modis_latest]
+                if modis_years:
+                    plan.append(("modis_landcover", modis_years))
+                if end > modis_latest or end >= _DW_FIRST_FULL_YEAR:
+                    dw_years = [y for y in requested_years if y >= _DW_FIRST_FULL_YEAR]
+                    if dw_years and end > modis_latest:
+                        plan.append(("dynamic_world", dw_years))
+            else:
+                plan.append(("dynamic_world", requested_years))
+        else:
+            if requested_source not in _LC_GROUP_REMAP:
+                return {"error": f"Time series support auto, dynamic_world, modis_landcover or esa_worldcover (got '{requested_source}').", "code": "invalid_input"}
+            avail = set(await loop.run_in_executor(None, _lc_available_years, requested_source))
+            plan.append((requested_source, [y for y in requested_years if y in avail]))
+        plan = [(s, ys) for s, ys in plan if ys]
+        if not plan:
+            return {"error": f"No land cover product has data for {start}–{end}.", "code": "no_data"}
+
+        area_km2 = self._boundary_area_km2(b_geojson)
+
+        try:
+            import ee
+
+            def compute_source(source: str, years: list[int]) -> dict[int, dict[str, float]]:
+                scale = _lc_reduce_scale(source, area_km2)
+                if source == "dynamic_world":
+                    sizes = ee.Dictionary({
+                        str(y): ee.ImageCollection(_DW_ID).filterDate(f"{y}-01-01", f"{y + 1}-01-01").filterBounds(ee_geom).size()
+                        for y in years
+                    }).getInfo()
+                    years = [y for y in years if sizes.get(str(y))]
+
+                def one_year(y: int) -> tuple[int, dict[str, float]]:
+                    stats = ee.Image.pixelArea().addBands(_lc_group_image(source, y, ee_geom)).reduceRegion(
+                        reducer=ee.Reducer.sum().group(groupField=1, groupName="g"),
+                        geometry=ee_geom,
+                        scale=scale,
+                        maxPixels=int(1e10),
+                        tileScale=4,
+                    ).getInfo()
+                    out = {g: 0.0 for g in LC_GROUPS}
+                    for row in stats.get("groups", []):
+                        gi = int(row.get("g", -1))
+                        if 0 <= gi < len(LC_GROUPS):
+                            out[LC_GROUPS[gi]] += float(row.get("sum", 0)) / 1e6
+                    return y, out
+
+                with ThreadPoolExecutor(max_workers=6) as pool:
+                    return dict(pool.map(one_year, years))
+
+            results: dict[str, dict[int, dict[str, float]]] = {}
+            for source, years in plan:
+                results[source] = await loop.run_in_executor(None, compute_source, source, years)
+
+            covered = {y for per_year in results.values() for y in per_year}
+            missing_years = [y for y in requested_years if y not in covered]
+
+            series_out: list[dict] = []
+            panels: list[dict] = []
+            for source, per_year in results.items():
+                if not per_year:
+                    continue
+                yrs = sorted(per_year)
+                table = {}
+                for y in yrs:
+                    total = sum(per_year[y].values()) or 1.0
+                    table[str(y)] = {
+                        g: {"area_km2": round(v, 4), "percent": round(v / total * 100, 2)}
+                        for g, v in per_year[y].items() if v > 0
+                    }
+                # Classes that are present (≥0.1 % in any year) get a line.
+                present = [
+                    g for g in LC_GROUPS
+                    if any(table[str(y)].get(g, {}).get("percent", 0) >= 0.1 for y in yrs)
+                ]
+                x_all = [y for y in requested_years if (yrs[0] <= y <= yrs[-1])]
+                lines = {
+                    g: [
+                        (table[str(y)][g][metric] if g in table.get(str(y), {}) else (0.0 if str(y) in table else None))
+                        for y in x_all
+                    ]
+                    for g in present
+                }
+                first, last = str(yrs[0]), str(yrs[-1])
+                change = {
+                    g: {
+                        "from_year": yrs[0], "to_year": yrs[-1],
+                        "percent_points": round(table[last].get(g, {}).get("percent", 0) - table[first].get(g, {}).get("percent", 0), 2),
+                        "area_km2": round(table[last].get(g, {}).get("area_km2", 0) - table[first].get(g, {}).get("area_km2", 0), 4),
+                    }
+                    for g in present
+                }
+                notes = [n for n in (_lc_year_notes(source, y) for y in yrs) if n]
+                series_out.append({
+                    "source": source,
+                    "source_label": _LC_SOURCE_LABELS[source],
+                    "years": yrs,
+                    "table": table,
+                    "change_first_to_last": change,
+                    "notes": notes,
+                })
+                panels.append({
+                    "subtitle": f"{_LC_SOURCE_LABELS[source]} · {yrs[0]}–{yrs[-1]}" + (" (latest year YTD)" if yrs[-1] == current and source == "dynamic_world" else ""),
+                    "x": x_all,
+                    "series": lines,
+                    "colors": {g: LC_GROUP_COLORS[LC_GROUPS.index(g)] for g in present},
+                })
+
+            place_label = place_nm or "Study area"
+            title = f"Land Cover Change — {place_label} ({start}–{end})"
+            chart = None
+            if make_chart and panels:
+                from tools.charts import normalise_spec, save_chart
+                footnote = (
+                    "Different products use different sensors and resolutions; compare trends within a panel, not absolute "
+                    "values across panels." if len(panels) > 1 else ""
+                )
+                if missing_years:
+                    footnote = (footnote + " " if footnote else "") + f"No data: {', '.join(map(str, missing_years))}."
+                footnote = (footnote + " " if footnote else "") + f"Computed inside the {place_label} boundary ({round(area_km2, 2) if area_km2 else '?'} km²)."
+                spec = normalise_spec({
+                    "plot_type": "line", "title": title, "panels": panels, "x_label": "Year",
+                    "y_label": "Share of area (%)" if metric == "percent" else "Area (km²)",
+                    "y_suffix": "%" if metric == "percent" else "", "footnote": footnote,
+                })
+                chart = await loop.run_in_executor(None, lambda: save_chart(spec, workspace, overwrite=True))
+
+            return {
+                "status": "success",
+                "place_name": place_nm,
+                "start_year": start,
+                "end_year": end,
+                "metric": metric,
+                "total_area_km2": round(area_km2, 4) if area_km2 else None,
+                "series": series_out,
+                "missing_years": missing_years,
+                "chart": chart,
+                "chart_artifact_id": chart["artifact_id"] if chart else None,
+                "clipped_to_boundary": True,
+                "message": (
+                    f"Land cover trend for {place_label} {start}–{end} computed from "
+                    + " and ".join(f"{_LC_SOURCE_LABELS[s['source']]} ({s['years'][0]}–{s['years'][-1]})" for s in series_out)
+                    + (f"; no data for {', '.join(map(str, missing_years))}" if missing_years else "")
+                    + (f". Line chart saved as artifact {chart['artifact_id']}." if chart else ".")
+                ),
+            }
+        except Exception as exc:
+            return {"error": f"Land cover time series failed: {exc}", "code": "gee_error"}
+
+
+    # ── Population & building growth (backend analysis + chart, boundary-only) ──
+
+    async def _timeseries_setup(self, args: dict, default_span: int = 10):
+        """Common year-range / boundary / EE setup for growth analyses."""
+        from datetime import date
+        current = date.today().year
+        start, s_err = self._parse_year(args.get("start_year") or args.get("year_start"))
+        end, e_err = self._parse_year(args.get("end_year") or args.get("year_end"))
+        if s_err or e_err:
+            raise ValueError(s_err or e_err)
+        end = end or current
+        start = start or (end - default_span)
+        if start > end:
+            start, end = end, start
+        ok, err = await _ensure_gee(args.get("_workspace"))
+        if not ok:
+            raise RuntimeError(err)
+        b_geojson, ee_geom, place_nm, _bbox = await self._resolve_study_area(args)
+        return start, end, current, b_geojson, ee_geom, place_nm, self._boundary_area_km2(b_geojson)
+
+    @staticmethod
+    def _parallel_years(fn, years: list[int]) -> dict[int, Any]:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            return dict(zip(years, pool.map(fn, years)))
+
+    async def _analyze_population_timeseries(self, args: dict) -> dict:
+        try:
+            start, end, current, b_geojson, ee_geom, place_nm, area_km2 = await self._timeseries_setup(args, 15)
+        except BoundaryUnresolved as exc:
+            return {"error": str(exc), "code": "boundary_unresolved"}
+        except ValueError as exc:
+            return {"error": str(exc), "code": "boundary_unresolved" if "boundary" in str(exc).lower() else "invalid_input"}
+        except RuntimeError as exc:
+            return {"error": str(exc), "code": "upstream_unavailable"}
+        loop = asyncio.get_event_loop()
+        years = list(range(start, end + 1))
+        wp_years = [y for y in years if 2000 <= y <= 2020]
+        ghs_years = [y for y in years if y % 5 == 0 and 1975 <= y <= 2030]
+        if end > 2020 and start <= 2025:
+            # Requested years after the last census-based epoch: include GHSL 2025 (projected).
+            ghs_years.append(2025)
+        ghs_years = sorted(set(ghs_years))
+
+        try:
+            import ee
+
+            def wp(y):
+                img = ee.ImageCollection("WorldPop/GP/100m/pop").filterBounds(ee_geom).filter(ee.Filter.eq("year", y)).mosaic()
+                v = img.select("population").reduceRegion(ee.Reducer.sum(), ee_geom, 100, maxPixels=int(1e10), tileScale=4).getInfo()
+                return v.get("population")
+
+            def ghs(y):
+                img = ee.ImageCollection("JRC/GHSL/P2023A/GHS_POP").filter(ee.Filter.calendarRange(y, y, "year")).first()
+                v = img.select("population_count").reduceRegion(ee.Reducer.sum(), ee_geom, 100, maxPixels=int(1e10), tileScale=4).getInfo()
+                return v.get("population_count")
+
+            wp_vals = await loop.run_in_executor(None, self._parallel_years, wp, wp_years) if wp_years else {}
+            ghs_vals = await loop.run_in_executor(None, self._parallel_years, ghs, ghs_years) if ghs_years else {}
+        except Exception as exc:
+            return {"error": f"Population time series failed: {exc}", "code": "gee_error"}
+
+        def rnd(v):
+            return None if v is None else int(round(float(v)))
+
+        x = sorted(set(years) | set(ghs_years))
+        series = {}
+        if wp_vals:
+            series["WorldPop (annual, 100 m)"] = [rnd(wp_vals.get(y)) if y in wp_vals else None for y in x]
+        if ghs_vals:
+            series["GHS-POP (5-yearly; 2025/2030 projected)"] = [rnd(ghs_vals.get(y)) if y in ghs_vals else None for y in x]
+        missing = [y for y in years if y not in wp_vals and y not in ghs_vals]
+        place_label = place_nm or "Study area"
+        chart = None
+        if args.get("create_chart", True) is not False and series:
+            from tools.charts import normalise_spec, save_chart
+            spec = normalise_spec({
+                "plot_type": "line", "title": f"Population Growth — {place_label} ({start}–{end})",
+                "x_data": x, "series": series, "x_label": "Year", "y_label": "Population",
+                "connect": ["GHS-POP (5-yearly; 2025/2030 projected)"],
+                "footnote": (
+                    f"Sum of gridded population inside the {place_label} boundary ({round(area_km2 or 0, 2)} km²). "
+                    "Years without a data release are left blank"
+                    + (f" ({', '.join(map(str, missing))})" if missing else "") + ". GHS-POP 2025/2030 are model projections."
+                ),
+            })
+            chart = await loop.run_in_executor(None, lambda: save_chart(spec, args.get("_workspace"), overwrite=True))
+
+        def growth(vals: dict):
+            ks = sorted(k for k, v in vals.items() if v)
+            if len(ks) < 2:
+                return None
+            a, b = vals[ks[0]], vals[ks[-1]]
+            yrs = ks[-1] - ks[0]
+            return {"from_year": ks[0], "to_year": ks[-1], "change": rnd(b - a), "percent": round((b - a) / a * 100, 2),
+                    "cagr_percent": round(((b / a) ** (1 / yrs) - 1) * 100, 3) if yrs else None}
+
+        return {
+            "status": "success",
+            "place_name": place_nm,
+            "area_km2": round(area_km2, 3) if area_km2 else None,
+            "worldpop_annual": {str(k): rnd(v) for k, v in sorted(wp_vals.items())},
+            "ghs_pop_5yearly": {str(k): rnd(v) for k, v in sorted(ghs_vals.items())},
+            "ghs_projected_years": [y for y in ghs_vals if y > 2020],
+            "growth_worldpop": growth(wp_vals),
+            "growth_ghs_pop": growth(ghs_vals),
+            "years_without_data": missing,
+            "density_per_km2_latest": (
+                round(float(ghs_vals.get(max(k for k in ghs_vals if k <= current)) or 0) / area_km2, 1)
+                if ghs_vals and area_km2 and any(k <= current for k in ghs_vals) else None
+            ),
+            "chart": chart,
+            "chart_artifact_id": chart["artifact_id"] if chart else None,
+            "clipped_to_boundary": True,
+            "message": f"Population inside the {place_label} boundary computed for {start}–{end}" + (f"; chart saved as artifact {chart['artifact_id']}." if chart else "."),
+        }
+
+    async def _analyze_building_growth(self, args: dict) -> dict:
+        try:
+            start, end, current, b_geojson, ee_geom, place_nm, area_km2 = await self._timeseries_setup(args, 10)
+        except BoundaryUnresolved as exc:
+            return {"error": str(exc), "code": "boundary_unresolved"}
+        except ValueError as exc:
+            return {"error": str(exc), "code": "boundary_unresolved" if "boundary" in str(exc).lower() else "invalid_input"}
+        except RuntimeError as exc:
+            return {"error": str(exc), "code": "upstream_unavailable"}
+        loop = asyncio.get_event_loop()
+        years = list(range(start, end + 1))
+        ob_years = [y for y in years if 2016 <= y <= 2023]
+        ghs_years = sorted({y for y in years if y % 5 == 0 and 1975 <= y <= 2030} | ({2025} if end >= 2021 and start <= 2025 else set()))
+        # Open Buildings is ~0.5 m effective resolution delivered on a 4 m grid.
+        ob_scale = 4 if (area_km2 or 0) <= 400 else (10 if (area_km2 or 0) <= 3000 else 30)
+
+        try:
+            import ee
+
+            def ob(y):
+                coll = (ee.ImageCollection("GOOGLE/Research/open-buildings-temporal/v1")
+                        .filterBounds(ee_geom).filter(ee.Filter.calendarRange(y, y, "year")))
+                # Native grid is 0.5 m (UTM). Sample on that grid at ob_scale so the
+                # sample is regular/unbiased; per-pixel COUNTS must then be scaled by
+                # (ob_scale / 0.5)² — areas use pixelArea and need no correction.
+                native_crs = coll.first().select("building_presence").projection().crs()
+                img = coll.mosaic()
+                presence = img.select("building_presence").gte(0.5)
+                height = img.select("building_height").updateMask(presence)
+                px = ee.Image.pixelArea()
+                stack = (px.updateMask(presence).rename("footprint_m2")
+                         .addBands(height.multiply(px).rename("volume_m3"))
+                         .addBands(img.select("building_fractional_count").rename("count")))
+                sums = stack.reduceRegion(ee.Reducer.sum(), ee_geom, ob_scale, crs=native_crs,
+                                          maxPixels=int(1e11), tileScale=16).getInfo()
+                sums["count"] = float(sums.get("count") or 0) * (ob_scale / 0.5) ** 2
+                med = height.reduceRegion(ee.Reducer.median(), ee_geom, max(ob_scale, 10), crs=native_crs,
+                                          maxPixels=int(1e11), tileScale=16).getInfo()
+                return {**sums, "median_height": med.get("building_height")}
+
+            def ghs(y):
+                s_img = ee.ImageCollection("JRC/GHSL/P2023A/GHS_BUILT_S").filter(ee.Filter.calendarRange(y, y, "year")).first()
+                v_img = ee.ImageCollection("JRC/GHSL/P2023A/GHS_BUILT_V").filter(ee.Filter.calendarRange(y, y, "year")).first()
+                stack = s_img.select(["built_surface", "built_surface_nres"]).addBands(v_img.select(["built_volume_total", "built_volume_nres"]))
+                return stack.reduceRegion(ee.Reducer.sum(), ee_geom, 100, maxPixels=int(1e10), tileScale=4).getInfo()
+
+            ob_vals = await loop.run_in_executor(None, self._parallel_years, ob, ob_years) if ob_years else {}
+            ghs_vals = await loop.run_in_executor(None, self._parallel_years, ghs, ghs_years) if ghs_years else {}
+        except Exception as exc:
+            return {"error": f"Building growth analysis failed: {exc}", "code": "gee_error"}
+
+        ob_table = {}
+        for y, v in sorted(ob_vals.items()):
+            fp = float(v.get("footprint_m2") or 0)
+            vol = float(v.get("volume_m3") or 0)
+            ob_table[str(y)] = {
+                "footprint_km2": round(fp / 1e6, 4),
+                "footprint_share_percent": round(fp / 1e6 / area_km2 * 100, 3) if area_km2 else None,
+                "building_count": int(round(float(v.get("count") or 0))),
+                "mean_height_m": round(vol / fp, 2) if fp else None,
+                "median_height_m": round(float(v["median_height"]), 2) if v.get("median_height") is not None else None,
+                "built_volume_million_m3": round(vol / 1e6, 3),
+            }
+        ghs_table = {}
+        for y, v in sorted(ghs_vals.items()):
+            surf = float(v.get("built_surface") or 0)
+            vol = float(v.get("built_volume_total") or 0)
+            ghs_table[str(y)] = {
+                "built_surface_km2": round(surf / 1e6, 4),
+                "non_residential_surface_km2": round(float(v.get("built_surface_nres") or 0) / 1e6, 4),
+                "built_volume_million_m3": round(vol / 1e6, 3),
+                "avg_height_m": round(vol / surf, 2) if surf else None,
+                "projected": y > 2020,
+            }
+
+        x = sorted(set(years) | {int(k) for k in ghs_table})
+        def col(table, key):
+            return [table.get(str(y), {}).get(key) for y in x]
+        OB, GH = "Open Buildings Temporal (yearly)", "GHSL (5-yearly; 2025/2030 projected)"
+        colors = {OB: "#2563eb", GH: "#f97316"}
+        panels = [
+            {"subtitle": "Horizontal growth — built-up footprint (km²)", "x": x, "colors": colors, "connect": [GH], "series": {
+                **({OB: col(ob_table, "footprint_km2")} if ob_table else {}),
+                **({GH: col(ghs_table, "built_surface_km2")} if ghs_table else {}),
+            }},
+            {"subtitle": "Vertical growth — average building height (m)", "x": x, "colors": colors, "connect": [GH], "series": {
+                **({OB: col(ob_table, "mean_height_m")} if ob_table else {}),
+                **({GH: col(ghs_table, "avg_height_m")} if ghs_table else {}),
+            }},
+            {"subtitle": "Built volume (million m³)", "x": x, "colors": colors, "connect": [GH], "series": {
+                **({OB: col(ob_table, "built_volume_million_m3")} if ob_table else {}),
+                **({GH: col(ghs_table, "built_volume_million_m3")} if ghs_table else {}),
+            }},
+        ]
+        panels = [p for p in panels if p["series"]]
+        place_label = place_nm or "Study area"
+        missing = [y for y in years if str(y) not in ob_table and str(y) not in ghs_table]
+        chart = None
+        if args.get("create_chart", True) is not False and panels:
+            from tools.charts import normalise_spec, save_chart
+            spec = normalise_spec({
+                "plot_type": "line", "title": f"Building Growth — {place_label} ({start}–{end})", "panels": panels,
+                "x_label": "Year",
+                "footnote": (
+                    f"Computed inside the {place_label} boundary ({round(area_km2 or 0, 2)} km²). Open Buildings Temporal covers 2016–2023 "
+                    f"(sampled at {ob_scale} m); GHSL is 5-yearly at 100 m. Years without data are blank"
+                    + (f" ({', '.join(map(str, missing))})" if missing else "") + "."
+                ),
+            })
+            chart = await loop.run_in_executor(None, lambda: save_chart(spec, args.get("_workspace"), overwrite=True))
+
+        def change(table, key):
+            ks = [k for k in table if table[k].get(key) is not None]
+            if len(ks) < 2:
+                return None
+            a, b = table[ks[0]][key], table[ks[-1]][key]
+            return {"from_year": int(ks[0]), "to_year": int(ks[-1]), "change": round(b - a, 4),
+                    "percent": round((b - a) / a * 100, 2) if a else None}
+
+        return {
+            "status": "success",
+            "place_name": place_nm,
+            "area_km2": round(area_km2, 3) if area_km2 else None,
+            "open_buildings": ob_table,
+            "ghsl": ghs_table,
+            "horizontal_change": {"open_buildings_footprint_km2": change(ob_table, "footprint_km2"), "ghsl_built_surface_km2": change(ghs_table, "built_surface_km2")},
+            "vertical_change": {"open_buildings_mean_height_m": change(ob_table, "mean_height_m"), "ghsl_avg_height_m": change(ghs_table, "avg_height_m")},
+            "building_count_change": change(ob_table, "building_count"),
+            "years_without_data": missing,
+            "chart": chart,
+            "chart_artifact_id": chart["artifact_id"] if chart else None,
+            "clipped_to_boundary": True,
+            "message": f"Building growth inside the {place_label} boundary computed for {start}–{end}" + (f"; chart saved as artifact {chart['artifact_id']}." if chart else "."),
+        }
 
     # ── 12. Agriculture & Crop Intelligence ───────────────────────────────────
 
@@ -2851,65 +4716,57 @@ class GEEServer:
     async def _search_gee_datasets(self, args: dict) -> dict:
         query = (args.get("query") or "").strip().lower()
         category = (args.get("category") or "").strip().lower()
+        limit = int(args.get("limit") or 25)
 
-        _CATALOG = [
-            # Surface Temp
-            {"id": "LANDSAT/LC09/C02/T1_L2", "name": "Landsat 9 Collection 2 Level 2", "category": "surface_temperature", "bands": ["SR_B4", "SR_B3", "SR_B2", "ST_B10"], "res": "30m", "desc": "High-res optical surface reflectance and thermal surface temperature (ST_B10)."},
-            {"id": "MODIS/061/MOD11A1", "name": "MODIS Terra Land Surface Temperature Daily", "category": "surface_temperature", "bands": ["LST_Day_1km", "LST_Night_1km"], "res": "1km", "desc": "Daily global land surface temperature in Kelvin (scale 0.02)."},
-            # Climate & Weather
-            {"id": "IDAHO_EPSCOR/TERRACLIMATE", "name": "TerraClimate Monthly Water Balance", "category": "climate", "bands": ["pr", "tmmx", "tmmn", "pdsi", "sm", "vpd", "ro"], "res": "4km", "desc": "Monthly climate water balance, Palmer Drought Severity Index, and runoff."},
-            {"id": "ECMWF/ERA5_LAND/HOURLY", "name": "ERA5-Land Hourly Climate Reanalysis", "category": "weather", "bands": ["temperature_2m", "total_precipitation", "u_component_of_wind_10m", "v_component_of_wind_10m"], "res": "9km", "desc": "Hourly gridded atmospheric weather and land surface temperature."},
-            {"id": "UCSB-CHG/CHIRPS/PENTAD", "name": "CHIRPS Precipitation Pentad", "category": "climate", "bands": ["precipitation"], "res": "5.5km", "desc": "Quasi-global high-resolution precipitation estimates."},
-            # Atmospheric
-            {"id": "COPERNICUS/S5P/NRTI/L3_NO2", "name": "Sentinel-5P TROPOMI NO2", "category": "atmospheric", "bands": ["tropospheric_NO2_column_number_density"], "res": "3.5km", "desc": "Tropospheric nitrogen dioxide air pollution monitoring."},
-            {"id": "COPERNICUS/S5P/NRTI/L3_CO", "name": "Sentinel-5P TROPOMI Carbon Monoxide", "category": "atmospheric", "bands": ["CO_column_number_density"], "res": "5.5km", "desc": "Total carbon monoxide atmospheric column."},
-            {"id": "COPERNICUS/S5P/NRTI/L3_SO2", "name": "Sentinel-5P TROPOMI Sulfur Dioxide", "category": "atmospheric", "bands": ["SO2_column_number_density"], "res": "3.5km", "desc": "Sulfur dioxide emissions from industry and volcanism."},
-            {"id": "COPERNICUS/S5P/NRTI/L3_AER_AI", "name": "Sentinel-5P Absorbing Aerosol Index", "category": "atmospheric", "bands": ["absorbing_aerosol_index"], "res": "3.5km", "desc": "Atmospheric dust, smoke, smog, and particulate loading."},
-            # Landsat & Sentinel
-            {"id": "COPERNICUS/S2_SR_HARMONIZED", "name": "Sentinel-2 Surface Reflectance Harmonized", "category": "sentinel", "bands": ["B2", "B3", "B4", "B8", "B11", "B12"], "res": "10m-20m", "desc": "Harmonized 10m multispectral optical imagery for land and vegetation."},
-            {"id": "COPERNICUS/S1_GRD", "name": "Sentinel-1 SAR C-Band Synthetic Aperture Radar", "category": "sentinel", "bands": ["VV", "VH"], "res": "10m", "desc": "All-weather day/night radar backscatter for flood mapping and terrain structure."},
-            # High Resolution Aerial
-            {"id": "USDA/NAIP/DOQQ", "name": "USDA National Agriculture Imagery Program (NAIP)", "category": "high_resolution", "bands": ["R", "G", "B", "N"], "res": "0.6m - 1m", "desc": "Sub-meter aerial digital ortho photography covering the US."},
-            # MODIS
-            {"id": "MODIS/061/MOD09A1", "name": "MODIS Surface Reflectance 8-Day", "category": "modis", "bands": ["sur_refl_b01", "sur_refl_b04", "sur_refl_b03"], "res": "500m", "desc": "Surface reflectance imagery suitable for vegetation, burn scars, and land surface monitoring."},
-            {"id": "MODIS/061/MOD10A1", "name": "MODIS Snow Cover Daily", "category": "modis", "bands": ["NDSI_Snow_Cover"], "res": "500m", "desc": "Daily snow extent and snow cover fraction."},
-            {"id": "MODIS/061/MOD11A1", "name": "MODIS Terra Land Surface Temperature Daily", "category": "modis", "bands": ["LST_Day_1km", "LST_Night_1km"], "res": "1km", "desc": "Daily land surface temperature using thermal infrared bands."},
-            {"id": "MODIS/061/MCD12Q1", "name": "MODIS Land Cover Type Yearly", "category": "modis", "bands": ["LC_Type1"], "res": "500m", "desc": "Annual IGBP land cover classes globally."},
-            {"id": "MODIS/061/MOD13Q1", "name": "MODIS Terra Vegetation Indices 16-Day", "category": "modis", "bands": ["NDVI", "EVI"], "res": "250m", "desc": "Global Normalized Difference Vegetation Index and Enhanced Vegetation Index."},
-            {"id": "MODIS/061/MOD14A1", "name": "MODIS Thermal Anomalies & Fire Daily", "category": "modis", "bands": ["FireMask"], "res": "1km", "desc": "Daily active fire hotspots and thermal anomalies."},
-            {"id": "MODIS/061/MCD64A1", "name": "MODIS Burned Area Monthly", "category": "modis", "bands": ["BurnDate"], "res": "500m", "desc": "Monthly burned-area detection and burn date."},
-            {"id": "MODIS/061/MOD16A2", "name": "MODIS Evapotranspiration 8-Day", "category": "modis", "bands": ["ET_500m"], "res": "500m", "desc": "Evapotranspiration and water use estimates."},
-            # Terrain
-            {"id": "USGS/SRTMGL1_003", "name": "NASA Shuttle Radar Topography Mission (SRTM)", "category": "terrain", "bands": ["elevation"], "res": "30m", "desc": "Global digital elevation model between 60°N and 56°S."},
-            {"id": "COPERNICUS/DEM/GLO30", "name": "Copernicus DEM Global 30m", "category": "terrain", "bands": ["DEM"], "res": "30m", "desc": "High-accuracy global 30m digital elevation model from WorldDEM."},
-            # Land Cover
-            {"id": "GOOGLE/DYNAMICWORLD/V1", "name": "Google Dynamic World Land Cover V1", "category": "landcover", "bands": ["label", "water", "trees", "built", "crops"], "res": "10m", "desc": "Near real-time 9-class global land cover from Sentinel-2."},
-            {"id": "ESA/WorldCover/v200/2021", "name": "ESA WorldCover 10m 2021", "category": "landcover", "bands": ["Map"], "res": "10m", "desc": "Global 11-class land cover map produced by ESA."},
-            # Agriculture
-            {"id": "USDA/NASS/CDL", "name": "USDA NASS Cropland Data Layer", "category": "agriculture", "bands": ["cropland"], "res": "30m", "desc": "Crop-specific land cover classification across the US."},
-            {"id": "NASA_USDA/HSL/SMAP10KM_soil_moisture", "name": "NASA-USDA SMAP Global Soil Moisture", "category": "agriculture", "bands": ["ssm", "susm"], "res": "10km", "desc": "Surface and subsurface soil moisture estimates."},
-            # Geophysical
-            {"id": "JRC/GSW1_4/GlobalSurfaceWater", "name": "JRC Global Surface Water Occurrence", "category": "geophysical", "bands": ["occurrence", "seasonality", "change_abs"], "res": "30m", "desc": "Decadal changes in global surface water occurrence and recurrence."},
-            {"id": "NOAA/VIIRS/DNB/MONTHLY_V1/VCMSLCFG", "name": "VIIRS Nighttime Day/Night Band", "category": "geophysical", "bands": ["avg_rad"], "res": "500m", "desc": "Monthly nighttime visible light luminosity from settlements."},
-            {"id": "UMD/hansen/global_forest_change_2024_v1_12", "name": "Hansen Global Forest Change", "category": "geophysical", "bands": ["treecover2000", "loss", "gain"], "res": "30m", "desc": "Global forest extent, loss, and gain from 2000 to 2024."},
-        ]
+        loop = asyncio.get_event_loop()
+        catalog = await loop.run_in_executor(None, _load_full_catalog)
+        terms = _expand_query_terms(query) if query else []
+        cat_words = _CATEGORY_KEYWORDS.get(category, [category]) if category else []
 
-        matches = []
-        for item in _CATALOG:
-            if category and item["category"] != category:
-                continue
-            if query:
-                haystack = f"{item['id']} {item['name']} {item['category']} {item['desc']}".lower()
-                if query not in haystack:
+        scored: list[tuple[float, dict]] = []
+        for entry in catalog:
+            if category:
+                hay = f"{entry.get('category', '')} {entry.get('tags', '')} {entry.get('title', '')} {entry.get('id', '')}".lower()
+                if entry.get("category") != category and not any(w in hay for w in cat_words):
                     continue
-            matches.append(item)
+            score = _score_catalog_entry(entry, query, terms) if query else (1.0 if entry.get("desc") else 0.5)
+            if query and score <= 0.5:
+                continue
+            scored.append((score, entry))
+        scored.sort(key=lambda t: (-t[0], t[1].get("title", "")))
+
+        datasets = []
+        for _, entry in scored[:limit]:
+            ds_type = entry.get("type") or "unknown"
+            item = {
+                "id": entry["id"],
+                "name": entry.get("title"),
+                "type": ds_type,
+                "layer_kind": _layer_kind(ds_type),
+                "category": entry.get("category") or "",
+                "provider": entry.get("provider") or "",
+                "date_range": f"{entry.get('start_date', '')} – {entry.get('end_date', '')}".strip(" –"),
+                "tags": entry.get("tags") or "",
+                "recommended_tool": (
+                    "extract_water_streams" if entry["id"] == _HYDRO_RIVERS_ID else "add_gee_layer"
+                ),
+            }
+            if entry.get("bands"):
+                item["bands"] = entry["bands"]
+            if entry.get("res"):
+                item["res"] = entry["res"]
+            if entry.get("desc"):
+                item["desc"] = entry["desc"]
+            datasets.append(item)
 
         return {
             "status": "success",
             "query": query,
             "category": category or "all",
-            "count": len(matches),
-            "datasets": matches,
+            "catalog_size": len(catalog),
+            "count": len(datasets),
+            "datasets": datasets,
+            "hint": "Pass a dataset 'id' to add_gee_layer(dataset=..., place_name=...) to render it (raster or vector).",
         }
 
     # ── 15. Generalized Zonal Statistics ──────────────────────────────────────
@@ -3222,6 +5079,10 @@ class GEEServer:
 
         if year_start >= year_end:
             return {"error": "year_start must be less than year_end"}
+        for _yr in (year_start, year_end):
+            _dw_err = _lc_year_error("dynamic_world", _yr)
+            if _dw_err:
+                return {"error": _dw_err + " analyze_lulc_change uses Dynamic World; for earlier years use analyze_land_cover_timeseries.", "code": "no_data"}
 
         b_geojson, ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
         if not title:
@@ -3457,121 +5318,6 @@ class GEEServer:
         except Exception as exc:
             return {"error": f"GEE execution failed: {exc}", "code": "gee_error"}
 
-    async def _analyze_land_use_zonal_stats(self, args: dict) -> dict:
-        geojson_input = args.get("geojson")
-        lat = args.get("lat")
-        lng = args.get("lng")
-        radius_km = float(args.get("radius_km") or 5.0)
-        year = int(args.get("year") or 2023)
-        workspace = args.get("_workspace")
-
-        b_geojson, resolved_ee_geom, place_nm, bbox = await self._resolve_place_boundary(args)
-
-        dw_classes = [
-            "Water", "Trees", "Grass", "Flooded Vegetation",
-            "Crops", "Shrub & Scrub", "Built Area", "Bare Ground", "Snow & Ice",
-        ]
-        dw_colors = [
-            "#419BDF", "#397D49", "#88B053", "#7A87C6",
-            "#E49635", "#DFC35A", "#C4281B", "#A59B8F", "#B39FE1",
-        ]
-
-        ok, err = await _ensure_gee(workspace)
-        if not ok:
-            return {
-                "status": "partial_fallback",
-                "message": f"GEE credentials not active ({err}). Displaying standard Dynamic World class schema for {year}.",
-                "classes": {str(i): {"name": name, "color": color} for i, (name, color) in enumerate(zip(dw_classes, dw_colors))},
-                "place_name": place_nm,
-                "note": "Configure GEE credentials in workspace root (ee-service-account.json) for live pixel-reduction zonal stats."
-            }
-
-        try:
-            import ee
-
-            def run_zonal():
-                ee_geom = resolved_ee_geom
-                if ee_geom is None:
-                    if geojson_input:
-                        ee_geom = _geojson_to_ee_geometry(geojson_input)
-                    elif lat is not None and lng is not None:
-                        ee_geom = ee.Geometry.Point([float(lng), float(lat)]).buffer(radius_km * 1000.0)
-                    else:
-                        ee_geom = ee.Geometry.Point([76.7794, 30.7333]).buffer(5000)
-
-                coll = ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1").filterDate(f"{year}-01-01", f"{year}-12-31")
-                if ee_geom is not None:
-                    try:
-                        coll = coll.filterBounds(ee_geom)
-                    except Exception:
-                        pass
-                img = coll.select("label").mode()
-
-                area_img = ee.Image.pixelArea().addBands(img)
-                stats = area_img.reduceRegion(
-                    reducer=ee.Reducer.sum().group(groupField=1, groupName="class_id"),
-                    geometry=ee_geom,
-                    scale=10,
-                    maxPixels=1_000_000_000,
-                ).getInfo()
-
-                groups = stats.get("groups", [])
-                total_area_m2 = sum(g.get("sum", 0) for g in groups) or 1.0
-
-                class_results = []
-                dominant_name = "Unknown"
-                max_area = -1.0
-
-                for g in groups:
-                    cid = int(g.get("class_id", 0))
-                    area_m2 = float(g.get("sum", 0))
-                    cname = dw_classes[cid] if 0 <= cid < len(dw_classes) else f"Class {cid}"
-                    ccolor = dw_colors[cid] if 0 <= cid < len(dw_colors) else "#cccccc"
-                    pct = round((area_m2 / total_area_m2) * 100.0, 2)
-                    area_km2 = round(area_m2 / 1e6, 4)
-                    area_ha = round(area_m2 / 10000.0, 2)
-
-                    if area_m2 > max_area:
-                        max_area = area_m2
-                        dominant_name = cname
-
-                    class_results.append({
-                        "class_id": cid,
-                        "class_name": cname,
-                        "color": ccolor,
-                        "area_km2": area_km2,
-                        "area_hectares": area_ha,
-                        "percentage": pct,
-                    })
-
-                class_results.sort(key=lambda x: x["area_km2"], reverse=True)
-
-                return {
-                    "total_area_km2": round(total_area_m2 / 1e6, 4),
-                    "dominant_land_use": dominant_name,
-                    "breakdown": class_results,
-                }
-
-            loop = asyncio.get_event_loop()
-            res = await loop.run_in_executor(None, run_zonal)
-
-            return {
-                "status": "success",
-                "year": year,
-                "source": "Google Dynamic World V1 (10m resolution)",
-                "zonal_analysis": res,
-                "place_name": place_nm,
-                "clipped_to_boundary": bool(resolved_ee_geom),
-                "boundary_geojson": b_geojson if place_nm else None,
-                "message": (
-                    f"Zonal land-use analysis complete for {year}" + (f" ({place_nm})" if place_nm else "") + ". "
-                    f"Total Area: {res['total_area_km2']} km². Dominant Land Use: {res['dominant_land_use']}."
-                ),
-            }
-
-        except Exception as exc:
-            return {"error": f"Zonal land use analysis failed: {exc}", "code": "gee_error"}
-
     async def _extract_land_use_polygons(self, args: dict) -> dict:
         target_input = str(args.get("target_class", "Built Area")).strip().lower()
         geojson_input = args.get("geojson")
@@ -3623,6 +5369,10 @@ class GEEServer:
                     break
 
         class_name = dw_display_names[target_idx] if 0 <= target_idx < len(dw_display_names) else "Built Area"
+
+        dw_year_error = _lc_year_error("dynamic_world", year)
+        if dw_year_error:
+            return {"error": dw_year_error, "code": "no_data"}
 
         COLOR_MAP = {
             "blue": "#2563EB",

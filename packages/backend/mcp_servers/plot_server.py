@@ -1,19 +1,33 @@
 """
-Plot MCP Server — Enables the AI assistant to generate publication-ready
-charts, histograms, bar plots, pie charts, and scatter plots using Matplotlib/Seaborn,
-saving them into the workspace artifacts store as image artifacts.
+Plot MCP Server — publication-ready Plotly charts saved as downloadable image
+artifacts (PNG), with an interactive HTML version and the Plotly figure stored
+alongside. Rendering lives in tools/charts.py (Matplotlib fallback included).
 """
 from __future__ import annotations
 
-import io
-import json
-
 from llm.base import ToolDeclaration
-from tools.artifact_store import save_artifact
+from tools.charts import CHART_TYPES, ChartError, normalise_spec, render_png, save_chart
+
+
+def render_line_panels(
+    title: str,
+    panels: list[dict],
+    x_label: str = "",
+    y_label: str = "",
+    footnote: str = "",
+    y_suffix: str = "",
+) -> bytes:
+    """Stacked multi-series line panels → PNG bytes (gaps preserved)."""
+    spec = normalise_spec({
+        "plot_type": "line", "title": title, "panels": panels,
+        "x_label": x_label, "y_label": y_label, "footnote": footnote, "y_suffix": y_suffix,
+    })
+    png, _fig, _engine = render_png(spec)
+    return png
 
 
 class PlotServer:
-    description: str = "Generate publication-ready charts, histograms, bar plots, and demographic visualizations, saving them as image artifacts."
+    description: str = "Generate accurate Plotly charts (line, bar, pie, area, scatter, box, heatmap, treemap, radar, …) saved as downloadable image artifacts."
     tool_names: set[str] = {"create_plot"}
 
     def get_declarations(self) -> list[ToolDeclaration]:
@@ -21,178 +35,76 @@ class PlotServer:
             ToolDeclaration(
                 name="create_plot",
                 description=(
-                    "Generate a publication-ready chart or histogram (bar, histogram, pie, line, scatter) "
-                    "from data arrays/dict and save it directly as an image artifact in the project workspace."
+                    "Create an accurate Plotly chart from data you ALREADY HAVE from tool results and save it as a "
+                    "downloadable PNG image artifact (plus an interactive HTML version). Use the exact numbers returned by "
+                    "tools — never invent, round away, or repeat values to fill gaps (use null for missing points). "
+                    "Types: line (one or many lines via `series`), area, stacked_area, bar, grouped_bar, stacked_bar, "
+                    "horizontal_bar, pie, donut, histogram, scatter, bubble, box, violin, heatmap, treemap, funnel, "
+                    "waterfall, radar."
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
-                        "plot_type": {
-                            "type": "string",
-                            "enum": ["bar", "histogram", "pie", "line", "scatter"],
-                            "description": "Type of visualization to generate.",
-                        },
-                        "title": {
-                            "type": "string",
-                            "description": "Title of the chart/histogram.",
-                        },
+                        "plot_type": {"type": "string", "enum": CHART_TYPES, "description": "Chart type."},
+                        "title": {"type": "string", "description": "Chart title."},
+                        "subtitle": {"type": "string", "description": "Optional subtitle (e.g. data source, place, period)."},
                         "x_data": {
                             "type": "array",
                             "items": {"type": ["string", "number"]},
-                            "description": "Categories or values for the X axis.",
+                            "description": "Categories / x values (pie & treemap: labels).",
                         },
                         "y_data": {
                             "type": "array",
-                            "items": {"type": "number"},
-                            "description": "Numeric values for the Y axis (heights/counts/frequencies).",
+                            "items": {"type": ["number", "null"]},
+                            "description": "Values for a single series (one per x_data item). For several series use `series`.",
                         },
-                        "x_label": {
-                            "type": "string",
-                            "description": "Label for the X axis.",
+                        "series": {
+                            "type": "object",
+                            "description": (
+                                "Several series: {\"<name>\": [one value per x_data item, null for missing]}. "
+                                "Used by line/area/stacked_area/grouped_bar/stacked_bar/horizontal_bar/scatter/radar; "
+                                "for box/violin/histogram each series is a list of raw observations."
+                            ),
                         },
-                        "y_label": {
-                            "type": "string",
-                            "description": "Label for the Y axis.",
-                        },
-                        "color_palette": {
-                            "type": "string",
-                            "description": "Color theme: 'viridis', 'teal', 'coral', 'indigo', 'sunset', 'landuse'.",
-                        },
+                        "z_data": {"type": "array", "items": {"type": "array", "items": {"type": ["number", "null"]}}, "description": "heatmap: 2-D values, one row per y_categories entry."},
+                        "y_categories": {"type": "array", "items": {"type": "string"}, "description": "heatmap: row labels."},
+                        "sizes": {"type": "array", "items": {"type": "number"}, "description": "bubble: size value per point."},
+                        "parents": {"type": "array", "items": {"type": "string"}, "description": "treemap: parent label per item ('' for root)."},
+                        "colors": {"type": "object", "description": "Optional {series or category name: '#hex'}."},
+                        "x_label": {"type": "string", "description": "X axis label."},
+                        "y_label": {"type": "string", "description": "Y axis label (include units)."},
+                        "y_suffix": {"type": "string", "description": "Optional unit suffix for y ticks, e.g. '%'."},
+                        "footnote": {"type": "string", "description": "Optional source / note text under the chart."},
+                        "theme": {"type": "string", "enum": ["dark", "light"], "description": "Default dark."},
                     },
-                    "required": ["plot_type", "title", "x_data"],
+                    "required": ["plot_type", "title"],
                 },
             )
         ]
 
     async def execute(self, tool_name: str, args: dict) -> dict:
         if tool_name == "create_plot":
-            return self._create_plot(args)
+            import asyncio
+            return await asyncio.get_event_loop().run_in_executor(None, self._create_plot, args)
         return {"error": f"Unknown tool '{tool_name}'"}
 
     def _create_plot(self, args: dict) -> dict:
+        map_context = args.get("_map_context") or {}
+        workspace = args.get("_workspace") or (map_context.get("workspace") if map_context else None)
         try:
-            import matplotlib
-            matplotlib.use("Agg")  # Non-interactive backend
-            import matplotlib.pyplot as plt
-
-            plot_type = args.get("plot_type", "bar")
-            title = args.get("title", "Geospatial Data Chart")
-            x_data = args.get("x_data", [])
-            y_data = args.get("y_data", [])
-            x_label = args.get("x_label", "")
-            y_label = args.get("y_label", "")
-            palette_name = args.get("color_palette", "teal")
-            map_context = args.get("_map_context", {})
-            workspace = map_context.get("workspace") if map_context else None
-
-            if not x_data:
-                return {"error": "x_data cannot be empty."}
-
-            fig, ax = plt.subplots(figsize=(8, 4.8), dpi=200)
-
-            # Palette definitions
-            colors_map = {
-                "teal": "#0d9488",
-                "indigo": "#4f46e5",
-                "coral": "#f97316",
-                "sunset": ["#0284c7", "#38bdf8", "#fbbf24", "#f97316", "#ef4444"],
-                "landuse": ["#22c55e", "#ef4444", "#3b82f6", "#eab308", "#a855f7", "#64748b"],
-            }
-            color_choice = colors_map.get(palette_name, "#0284c7")
-
-            # Apply clean dark/modern theme styling
-            fig.patch.set_facecolor('#0f172a')
-            ax.set_facecolor('#1e293b')
-            ax.spines['bottom'].set_color('#475569')
-            ax.spines['left'].set_color('#475569')
-            ax.spines['top'].set_visible(False)
-            ax.spines['right'].set_visible(False)
-            ax.tick_params(colors='#94a3b8', labelsize=9)
-            ax.grid(True, linestyle='--', alpha=0.15, color='#cbd5e1')
-
-            if plot_type == "bar":
-                if not y_data:
-                    return {"error": "y_data required for bar chart."}
-                colors = color_choice if isinstance(color_choice, list) else [color_choice] * len(x_data)
-                bars = ax.bar(x_data, y_data, color=colors[:len(x_data)], width=0.55, edgecolor='#0f172a', linewidth=0.8)
-                for bar in bars:
-                    h = bar.get_height()
-                    ax.annotate(f'{h:g}',
-                                xy=(bar.get_x() + bar.get_width() / 2, h),
-                                xytext=(0, 3),
-                                textcoords="offset points",
-                                ha='center', va='bottom', color='#f8fafc', fontsize=8, fontweight='bold')
-
-            elif plot_type == "histogram":
-                vals = y_data if y_data else x_data
-                ax.hist(vals, bins=10, color='#38bdf8', edgecolor='#0f172a', alpha=0.85)
-
-            elif plot_type == "pie":
-                if not y_data:
-                    return {"error": "y_data required for pie chart."}
-                if len(x_data) < 2 or len(y_data) < 2:
-                    return {
-                        "error": (
-                            "Pie charts require at least 2 distinct slices/categories in x_data and y_data "
-                            "(e.g. breakdown by land use class, demographic brackets, or ward distribution). "
-                            "Do not generate a 1-slice 100% pie chart for a single scalar value."
-                        )
-                    }
-                pie_colors = color_choice if isinstance(color_choice, list) else plt.cm.tab10.colors
-                wedges, texts, autotexts = ax.pie(
-                    y_data,
-                    labels=x_data,
-                    autopct='%1.1f%%',
-                    startangle=140,
-                    colors=pie_colors[:len(x_data)],
-                    textprops=dict(color="#f8fafc", fontsize=9),
-                    wedgeprops=dict(width=0.45, edgecolor='#0f172a', linewidth=1.5)
-                )
-                for at in autotexts:
-                    at.set_color('#ffffff')
-                    at.set_weight('bold')
-
-            elif plot_type == "line":
-                if not y_data:
-                    return {"error": "y_data required for line plot."}
-                ax.plot(x_data, y_data, marker='o', color='#38bdf8', linewidth=2.2, markersize=6, markerfacecolor='#0284c7')
-
-            elif plot_type == "scatter":
-                if not y_data:
-                    return {"error": "y_data required for scatter plot."}
-                ax.scatter(x_data, y_data, color='#f97316', s=45, alpha=0.85, edgecolors='#ffffff', linewidths=0.5)
-
-            if title:
-                ax.set_title(title, color='#f8fafc', fontsize=12, fontweight='bold', pad=12)
-            if x_label:
-                ax.set_xlabel(x_label, color='#cbd5e1', fontsize=9.5, labelpad=8)
-            if y_label:
-                ax.set_ylabel(y_label, color='#cbd5e1', fontsize=9.5, labelpad=8)
-
-            plt.tight_layout()
-
-            # Render to buffer
-            buf = io.BytesIO()
-            plt.savefig(buf, format="png", dpi=200, facecolor=fig.get_facecolor(), bbox_inches="tight")
-            plt.close(fig)
-            img_bytes = buf.getvalue()
-
-            # Save as image artifact
-            artifact = save_artifact(
-                title=title,
-                artifact_type="plot",
-                format="image",
-                file_bytes=img_bytes,
-                file_ext="png",
-                workspace=workspace,
-            )
-
-            return {
-                "status": "success",
-                "artifact_id": artifact["id"],
-                "file_path": artifact.get("file_path"),
-                "title": title,
-                "plot_type": plot_type,
-            }
+            spec = normalise_spec(args)
+            saved = save_chart(spec, workspace)
+        except ChartError as exc:
+            return {"status": "error", "error": str(exc)}
         except Exception as exc:
-            return {"status": "error", "error": f"Failed to generate plot: {str(exc)}"}
+            return {"status": "error", "error": f"Failed to generate plot: {exc}"}
+        return {
+            "status": "success",
+            "artifact_id": saved["artifact_id"],
+            "file_path": saved["file_path"],
+            "interactive_html": saved["interactive_html"],
+            "title": saved["title"],
+            "plot_type": saved["plot_type"],
+            "engine": saved["engine"],
+            "series_count": len(spec.get("series") or {}) or len(spec.get("panels") or []),
+        }

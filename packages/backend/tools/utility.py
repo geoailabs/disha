@@ -29,7 +29,7 @@ import asyncio
 _active_questions: dict[int, asyncio.Future] = {}
 
 def register_question_response(ws, response) -> None:
-    ws_id = id(ws)
+    ws_id = id(getattr(ws, "_real_ws", ws))
     future = _active_questions.get(ws_id)
     if future and not future.done():
         future.set_result(response)
@@ -1696,7 +1696,7 @@ class UtilityServer:
             return {"error": "Question and options are required parameters."}
 
         future = asyncio.Future()
-        ws_id = id(ws)
+        ws_id = id(getattr(ws, "_real_ws", ws))
         _active_questions[ws_id] = future
 
         try:

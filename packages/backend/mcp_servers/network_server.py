@@ -410,6 +410,58 @@ def _find_shortest_path_with_restrictions(G: nx.MultiDiGraph, source: tuple, tar
     return path, path_length
 
 
+def _street_network_stats(features: list, ways: list, nodes: dict, boundary_shape, area_km2: float | None) -> dict:
+    """Geodesic lengths by road class, intersections and densities inside the study area."""
+    from collections import Counter, defaultdict
+    from pyproj import Geod
+    from shapely.geometry import Point, shape
+    from shapely.prepared import prep
+
+    geod = Geod(ellps="WGS84")
+    by_class: dict[str, float] = defaultdict(float)
+    total = 0.0
+    for f in features:
+        try:
+            length = abs(geod.geometry_length(shape(f["geometry"]))) / 1000.0
+        except Exception:
+            continue
+        total += length
+        by_class[f["properties"].get("highway") or "unknown"] += length
+
+    # Node degree from the OSM topology: a node used by ways with ≥3 incident segments
+    # is an intersection; degree 1 is a dead end. Only nodes inside the study area count.
+    degree: Counter = Counter()
+    for w in ways:
+        nds = w.get("nodes") or []
+        for i, nid in enumerate(nds):
+            degree[nid] += 1 if i in (0, len(nds) - 1) else 2
+    inside = prep(boundary_shape) if boundary_shape is not None else None
+    intersections = dead_ends = 0
+    for nid, d in degree.items():
+        if d < 3 and d != 1:
+            continue
+        c = nodes.get(nid)
+        if not c or (inside is not None and not inside.contains(Point(c))):
+            continue
+        if d >= 3:
+            intersections += 1
+        else:
+            dead_ends += 1
+    out = {
+        "total_length_km": round(total, 3),
+        "length_by_class_km": {k: round(v, 3) for k, v in sorted(by_class.items(), key=lambda kv: -kv[1])},
+        "intersections": intersections,
+        "dead_ends": dead_ends,
+    }
+    if area_km2:
+        out["area_km2"] = round(area_km2, 3)
+        out["road_density_km_per_km2"] = round(total / area_km2, 3)
+        out["intersection_density_per_km2"] = round(intersections / area_km2, 3)
+    if intersections + dead_ends:
+        out["connectivity_ratio"] = round(intersections / (intersections + dead_ends), 3)
+    return out
+
+
 class NetworkServer:
     description = "Street Network Analysis & Shortest Path Routing"
     tool_names = {
@@ -608,8 +660,10 @@ class NetworkServer:
             ToolDeclaration(
                 name="fetch_street_network",
                 description=(
-                    "Fetch a topologically connected street/road network from OpenStreetMap within the map view or coordinates. "
-                    "Saves a clean GeoJSON FeatureCollection of ways to the workspace and automatically displays it on the map."
+                    "Fetch the street/road network from OpenStreetMap. When the user names a place pass place_name (or place_names): "
+                    "the official boundary is outlined and ONLY the streets inside it are drawn (clipped at the boundary). Returns "
+                    "total length and length by road class (km), intersections, dead ends, road density and intersection density "
+                    "computed for that area only. Saves GeoJSON to the workspace and displays it on the map."
                 ),
                 parameters={
                     "type": "object",
@@ -645,7 +699,12 @@ class NetworkServer:
                         "boundary_layer_name": {
                             "type": "string",
                             "description": "Optional: Name of a polygon layer in the active map context (e.g., 'Sector 1 boundary'). If provided, the fetched streets will be strictly clipped to the boundaries of this polygon."
-                        }
+                        },
+                        "place_name": {"type": "string", "description": "Place whose official boundary polygon defines the study area (preferred whenever the user names a place)."},
+                        "place_names": {"type": "array", "items": {"type": "string"}, "description": "Several places merged into one study area (e.g. a tri-city region)."},
+                        "region_name": {"type": "string", "description": "Label for a merged multi-place region."},
+                        "country_code": {"type": "string", "description": "ISO alpha-2 code to disambiguate the place."},
+                        "network_type": {"type": "string", "enum": ["drive", "major", "arterial", "walk", "cycle", "all"], "description": "Road classes: drive (default, incl. highways/trunk roads), major, arterial, walk, cycle, all. Ignored if highway_types is given."}
                     },
                     "required": ["workspace"]
                 }
@@ -1294,114 +1353,27 @@ class NetworkServer:
         if not workspace:
             return {"error": "workspace is required"}
 
-        # Determine bounding box or center+radius
-        boundary_layer_name = args.get("boundary_layer_name", "").strip()
+        # Study area: a named place / multi-place region / boundary layer / given polygon is
+        # resolved to its exact polygon (outlined on the map). Radius / viewport mode is only
+        # for "around here" requests.
+        from tools.boundary import BoundaryError, boundary_args_present, resolve_study_boundary
         shapely_shape = None
-
-        logger.debug(f"fetch_street_network boundary_layer_name={boundary_layer_name!r}")
-        if isinstance(map_context, dict):
-            logger.debug(f"map_context layers={[l.get('name') for l in map_context.get('layers', []) if isinstance(l, dict)]}")
-
-        if boundary_layer_name and isinstance(map_context, dict):
-
-            layers = map_context.get("layers", [])
-            match = None
-            for l in layers:
-                if isinstance(l, dict) and l.get("name", "").lower() == boundary_layer_name.lower():
-                    match = l
-                    break
-            
-            if match and isinstance(match, dict):
-                from shapely.geometry import shape
-                from shapely.ops import unary_union
-                
-                polygons = []
-                features_list = []
-                
-                # 1. Read directly from the local file path if present (handles any size layer!)
-                file_path = match.get("filePath")
-                if file_path and os.path.exists(file_path):
-                    try:
-                        with open(file_path, "r") as f:
-                            file_data = json.load(f)
-                            if isinstance(file_data, dict):
-                                features_list = file_data.get("features", [])
-                    except Exception as e:
-                        logger.debug(f"Failed to read local file path {file_path}: {e}")
-                
-                # 2. Fall back to raw feature list if present in match["data"]
-                if not features_list and match.get("data"):
-                    data = match["data"]
-                    features_list = data.get("features", []) if isinstance(data, dict) else []
-                
-                # Parse geometries from features list with automatic validation & repair
-                for f in features_list:
-                    if isinstance(f, dict):
-                        geom = f.get("geometry")
-                        if geom and isinstance(geom, dict) and geom.get("type") in ("Polygon", "MultiPolygon"):
-                            try:
-                                s = shape(geom)
-                                if not s.is_valid:
-                                    from shapely.validation import make_valid
-                                    try:
-                                        s = make_valid(s)
-                                    except Exception:
-                                        try:
-                                            s = s.buffer(0)
-                                        except Exception:
-                                            pass
-                                if s and s.is_valid:
-                                    polygons.append(s)
-                            except Exception:
-                                pass
-                                
-                # 3. Fall back to geometry_data in case it was sent inline
-                if not polygons and isinstance(match.get("geometry_data"), list):
-                    for g in match["geometry_data"]:
-                        if isinstance(g, dict) and g.get("type") in ("Polygon", "MultiPolygon"):
-                            try:
-                                s = shape(g)
-                                if not s.is_valid:
-                                    from shapely.validation import make_valid
-                                    try:
-                                        s = make_valid(s)
-                                    except Exception:
-                                        try:
-                                            s = s.buffer(0)
-                                        except Exception:
-                                            pass
-                                if s and s.is_valid:
-                                    polygons.append(s)
-                            except Exception:
-                                pass
-                
-                if polygons:
-                    from shapely.validation import make_valid
-                    shapely_shape = unary_union(polygons)
-                    if not shapely_shape.is_valid:
-                        try:
-                            shapely_shape = make_valid(shapely_shape)
-                        except Exception:
-                            try:
-                                shapely_shape = shapely_shape.buffer(0)
-                            except Exception:
-                                pass
-                    logger.debug(f"Successfully resolved and repaired shapely_shape for '{boundary_layer_name}' with {len(polygons)} parts.")
-                else:
-                    logger.warning(f"Could not extract any valid shapes for '{boundary_layer_name}'!")
-
+        boundary = None
+        if boundary_args_present(args):
+            try:
+                boundary = await resolve_study_boundary(args)
+            except BoundaryError as exc:
+                return {"error": str(exc), "code": "boundary_unresolved"}
+            shapely_shape = boundary.shape
+            if title == "Street Network":
+                title = f"Street Network - {boundary.name}"
 
         bounds = map_context.get("bounds") if isinstance(map_context, dict) else None
 
-        
-        if shapely_shape:
-            minx, miny, maxx, maxy = shapely_shape.bounds
-            diag = haversine_distance((minx, miny), (maxx, maxy))
-            if diag > 15000:
-                return {
-                    "error": f"The boundary polygon '{boundary_layer_name}' is too large (diagonal {round(diag/1000, 1)}km > 15km)."
-                }
-            bbox_filter = f"({miny},{minx},{maxy},{maxx})"
+        if boundary is not None:
+            if boundary.area_km2 > 6000:
+                return {"error": f"The study area '{boundary.name}' is {round(boundary.area_km2)} km²; street extraction is limited to 6000 km². Use a smaller area or highway_types='motorway|trunk|primary'.", "code": "too_large"}
+            bbox_filter = boundary.overpass_bbox
         elif use_current_bounds and bounds and all(bounds.get(k) is not None for k in ["south", "west", "north", "east"]):
             s = bounds["south"]
             w = bounds["west"]
@@ -1411,7 +1383,7 @@ class NetworkServer:
             diag = haversine_distance((w, s), (e, n))
             if diag > 15000:
                 return {
-                    "error": f"Requested search bounds are too large (diagonal {round(diag/1000, 1)}km > 15km). Please zoom in or specify coordinates with a smaller radius."
+                    "error": f"Requested search bounds are too large (diagonal {round(diag/1000, 1)}km > 15km). Pass place_name to use the place's boundary instead."
                 }
             bbox_filter = f"({s},{w},{n},{e})"
         else:
@@ -1426,16 +1398,13 @@ class NetworkServer:
                     elif isinstance(center, (list, tuple)) and len(center) >= 2:
                         lng = center[0]
                         lat = center[1]
-                
-                if lat is None or lng is None:
-                    return {"error": "Missing coordinates (lat/lng) or active map context to determine location."}
 
-            
+                if lat is None or lng is None:
+                    return {"error": "Pass place_name (preferred) or lat/lng to determine the study area."}
+
             # Capped at 7.5km (15km diameter search area) to prevent Overpass timeouts
             radius = min(int(args.get("radius_meters", 1500)), 7500)
             bbox_filter = f"(around:{radius},{lat},{lng})"
-
-
 
         # Construct highway tag filter
         highway_types = args.get("highway_types")
@@ -1450,12 +1419,21 @@ class NetworkServer:
             else:
                 tag_filter = '["highway"]'
         else:
-            # Default to standard drivable streets (excluding footway, steps, path etc unless asked)
-            drivable_types = "motorway|primary|secondary|tertiary|unclassified|residential|living_street|service|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link"
-            tag_filter = f'["highway"~"^({drivable_types})$"]'
+            presets = {
+                # Drivable public streets. 'trunk' = national/state highways (was missing before).
+                "drive": "motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street|service",
+                "major": "motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link",
+                "arterial": "motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link",
+                "walk": "footway|pedestrian|path|steps|living_street|residential|unclassified|tertiary|secondary|primary|service|track",
+                "cycle": "cycleway|path|residential|living_street|unclassified|tertiary|secondary|primary|service",
+                "all": "motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street|service|pedestrian|footway|cycleway|path|steps|track",
+            }
+            preset = str(args.get("network_type") or "drive").lower()
+            chosen = presets.get(preset, presets["drive"])
+            tag_filter = f'["highway"~"^({chosen})$"]'
 
         overpass_query = f"""
-[out:json][timeout:30];
+[out:json][timeout:180][maxsize:1073741824];
 (
   way{tag_filter}{bbox_filter};
   relation["type"="restriction"]{bbox_filter};
@@ -1466,7 +1444,7 @@ out skel qt;
 """
 
         try:
-            data = await _overpass_post(overpass_query, timeout=35.0)
+            data = await _overpass_post(overpass_query, timeout=200.0 if boundary is not None else 35.0)
             
             nodes: dict[int, tuple[float, float]] = {}
             ways: list[dict] = []
@@ -1575,41 +1553,39 @@ out skel qt;
 
             if not features:
                 return {
-                    "error": "No street network features were found in the selected area. Please try a different location or zoom bounds."
+                    "error": "No street network features were found in the study area."
                 }
+
+            stats = _street_network_stats(features, ways, nodes, shapely_shape, boundary.area_km2 if boundary else None)
 
             out_geojson = {
                 "type": "FeatureCollection",
                 "features": features,
                 "restrictions": parsed_restrictions
             }
-            
+
             # Slugify title for filename
             slug = "".join(c if c.isalnum() or c in "._-" else "_" for c in title.lower())
             filename = f"{slug}.geojson"
             target_path = Path(workspace) / filename
-            
+
             with open(target_path, "w") as f:
-                json.dump(out_geojson, f, indent=2)
-                
-            if ws:
-                await ws.send_text(json.dumps({
-                    "type": "action",
-                    "action": "add_geojson_file",
-                    "payload": {
-                        "path": str(target_path),
-                        "name": title
-                    }
-                }))
-                
-            return {
+                json.dump(out_geojson, f)
+
+            result = {
                 "status": "success",
                 "displayed_on_map": True,
                 "features_count": len(features),
                 "output_layer": str(target_path),
-                "title": title
+                "title": title,
+                "network_type": str(args.get("network_type") or ("custom" if args.get("highway_types") else "drive")),
+                **stats,
             }
-            
+            if boundary is not None:
+                result["study_area"] = boundary.summary()
+                result["clipped_to_boundary"] = True
+            return result
+
         except OverpassError as e:
             return {
                 "error": f"The Overpass API server is currently busy or rate-limiting requests. Please wait a few seconds or try a smaller search area. (Details: {str(e)})"

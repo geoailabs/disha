@@ -120,6 +120,53 @@ class SpatialHub(BaseDomainHub):
             for d in decls
         ]
 
+    async def _place_bounded_layers_result(self, res: dict, context: dict | None) -> ToolResult:
+        """Add one map layer per requested category (file-backed) and return only counts to the LLM."""
+        import json as _json
+        from pathlib import Path
+
+        context = context or {}
+        ws = context.get("_ws")
+        workspace = context.get("_workspace") or (context.get("_map_context") or {}).get("workspace")
+        actions = []
+        summaries = []
+        for layer in res["layers"]:
+            payload = {"name": layer["name"], "color": layer["color"]}
+            fc = layer["geojson"]
+            if workspace and fc["features"]:
+                slug = "".join(c if c.isalnum() else "_" for c in layer["name"].lower()).strip("_")[:80]
+                path = Path(workspace) / f"{slug}.geojson"
+                path.write_text(_json.dumps(fc), encoding="utf-8")
+                actions.append({"action": "add_geojson_file", "payload": {**payload, "path": str(path)}})
+            elif fc["features"]:
+                actions.append({"action": "add_geojson", "payload": {**payload, "geojson": fc}})
+            names = [f["properties"].get("name") for f in fc["features"] if f["properties"].get("name")]
+            summaries.append({
+                "category": layer["category"],
+                "layer_name": layer["name"],
+                **layer["stats"],
+                "named_examples": names[:25],
+                "unnamed_count": len(fc["features"]) - len(names),
+            })
+        # Several layers: send all but the last directly; the last goes back as map_action.
+        map_action = actions[-1] if actions else None
+        if ws:
+            for act in actions[:-1]:
+                try:
+                    await ws.send_text(_json.dumps({"type": "action", **act}))
+                except Exception as exc:
+                    logger.debug(f"Failed to send layer: {exc}")
+        data = {
+            "status": "success",
+            "study_area": res["boundary"],
+            "results": summaries,
+            "displayed_on_map": bool(actions),
+            "note": "Counts/lengths are computed only inside the study-area boundary polygon (outlined on the map).",
+        }
+        if res.get("unknown_categories"):
+            data["unknown_categories"] = res["unknown_categories"]
+        return ToolResult(status="success", data=data, map_action=map_action)
+
     async def execute(
         self,
         tool_name: str,
@@ -235,6 +282,8 @@ class SpatialHub(BaseDomainHub):
         # ── 4. OSM Search ──
         if tool_name == "osm_search":
             res = await self.osm_server.execute(tool_name, {**args, **context})
+            if res.get("layers"):
+                return await self._place_bounded_layers_result(res, context)
             map_action = None
             if "geojson" in res and res.get("count", 0) > 0:
                 label = f"{args.get('feature_value', 'features')} ({args.get('feature_type', '')})"

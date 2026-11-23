@@ -31,9 +31,14 @@ Your job is to convert a user's raw prompt into a precise, numbered execution pl
 AVAILABLE TOOL CATEGORIES (for planning purposes):
 - Boundary: osm_boundary(place_name, country_code)
 - Land cover (single class): extract_land_use_polygons(target_class, place_name) -- use for "built-up area", "water bodies", "forest", "cropland"
+- Streams / rivers / drainage network: extract_water_streams(place_name) -- vector stream lines + drainage raster
+- Any other Earth Engine dataset: search_gee_datasets(query) then add_gee_layer(dataset, place_name) -- rasters or vector tables
 - Full LULC raster: get_land_cover(source) -- ONLY if user wants all land classes at once
+- Land cover over a RANGE of years / trend / graph: analyze_land_cover_timeseries(place_name, start_year, end_year) -- ONE call, chart is automatic; never create_plot with own numbers
 - Route: osm_route_overview(origin, destination)
-- Amenities/POIs: osm_search(query, boundary_name) or nearby_places(query, lat, lng)
+- Facilities in a place (hospitals/schools/offices/malls/...): osm_search(categories=[...], place_name) or place_names=[...] for a multi-city region -- ONE call, boundary-clipped
+- Road network of a place: fetch_street_network(place_name or place_names)
+- Population growth: analyze_population_timeseries(place_name, start_year, end_year); building growth: analyze_building_growth(place_name, start_year, end_year)
 - Demographics: project_population(place_name) or get_worldpop_data(lat, lng)
 - Export map (isolated): export_map_jpeg(title, save_to_artifacts=True, layers_to_show=[<only this section's layers>])
 - Create document: create_artifact(title, format, content)

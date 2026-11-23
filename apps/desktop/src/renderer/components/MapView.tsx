@@ -17,7 +17,7 @@ interface NominatimSearchResult {
 export type MapViewHandle = {
   getCanvas: () => HTMLCanvasElement | null
   resize: () => void
-  fitBboxAndSnapshot: (bboxTarget?: any, padding?: number, layersToShow?: string[]) => Promise<MapSnapshot | null>
+  fitBboxAndSnapshot: (bboxTarget?: any, padding?: number, layersToShow?: string[], fitLayers?: string[]) => Promise<MapSnapshot | null>
 }
 
 export type MapExportLabel = {
@@ -30,6 +30,10 @@ export type MapExportLabel = {
 export type MapSnapshot = {
   canvas: HTMLCanvasElement
   labels: MapExportLabel[]
+  /** Camera at capture time (for scale bar / north arrow). */
+  view?: { lat: number; zoom: number; bearing: number }
+  /** Layers that were visible in the capture (for the legend); empty = all visible. */
+  layerIds?: string[]
 }
 
 // Helper to check if a polygon/multipolygon geometry intersects the viewport bounds
@@ -637,50 +641,87 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
         mapRef.current.zoomTo(mapRef.current.getZoom() - delta, { animate: false })
       }
     },
-    fitBboxAndSnapshot: async (bboxTarget?: any, padding = 100, layersToShow?: string[]) => {
+    fitBboxAndSnapshot: async (bboxTarget?: any, padding = 100, layersToShow?: string[], fitLayers?: string[]) => {
       const map = mapRef.current
       if (!map) return null
 
-      const origCenter = map.getCenter()
-      const origZoom = map.getZoom()
-      const origBearing = map.getBearing()
-      const origPitch = map.getPitch()
+      const norm = (s: string | undefined | null) => String(s || '').toLowerCase().trim()
+      const genericWords = new Set(['boundary', 'layer', 'polygon', 'area', 'shape', 'map', 'admin'])
 
-      // Save original layout visibility for layers when filtering
-      const savedVisibility: Array<{ layerId: string; visibility: string }> = []
+      // Resolve layer queries to concrete layers: exact id / name / group name first,
+      // fuzzy matching only when nothing matches exactly. (Fuzzy-first matching used to
+      // pull in every "* boundary" layer and stale layers from other places.)
+      const resolveLayers = (queries?: string[]): GeoJSONLayer[] => {
+        const all = layersRef.current
+        if (!queries || queries.length === 0) return []
+        if (queries.length === 1 && queries[0] === '__latest__') {
+          const visible = all.filter((l) => l.visible)
+          const nonBoundary = visible.filter((l) => !norm(l.name).endsWith('boundary'))
+          const latest = (nonBoundary.length ? nonBoundary : visible).slice(-1)[0]
+          if (!latest) return []
+          // A point group (legacy grouped markers) is one logical layer.
+          return latest.groupId ? visible.filter((l) => l.groupId === latest.groupId) : [latest]
+        }
+        const out = new Map<string, GeoJSONLayer>()
+        for (const raw of queries) {
+          const q = norm(raw)
+          if (!q) continue
+          let hits = all.filter((l) => norm(l.id) === q || norm(l.name) === q || (l.groupName && norm(l.groupName) === q))
+          if (!hits.length && !genericWords.has(q)) {
+            if (q.endsWith('boundary')) {
+              const place = q.replace(/\s*boundary$/, '').trim()
+              const bounds = all.filter((l) => norm(l.name).endsWith('boundary') && !norm(l.name).includes('land cover'))
+              hits = place ? bounds.filter((l) => norm(l.name).includes(place) || place.includes(norm(l.name).replace(/\s*boundary$/, ''))) : bounds
+            } else {
+              hits = all.filter((l) => {
+                const n = norm(l.name)
+                const g = norm(l.groupName)
+                return n.includes(q) || q.includes(n) || (g && (g.includes(q) || q.includes(g)))
+              })
+            }
+          }
+          for (const h of hits) out.set(h.id, h)
+        }
+        return [...out.values()]
+      }
+
+      // Wait (bounded) until requested layers exist in React state AND their sources are
+      // on the map. Exports are often requested in the same turn as the layer itself,
+      // before the file has been read and the source added.
+      const queries = layersToShow && layersToShow.length ? layersToShow : fitLayers
+      if (queries && queries.length && queries[0] !== '__latest__') {
+        const deadline = Date.now() + 10000
+        while (Date.now() < deadline) {
+          const found = resolveLayers(queries)
+          const ready = found.length > 0 && found.every((l) => map.getSource(l.id))
+          const allNamed = queries.every((q) => resolveLayers([q]).length > 0)
+          if (ready && allNamed) break
+          await new Promise((r) => setTimeout(r, 200))
+        }
+      }
+
+      const shown = resolveLayers(layersToShow)
+      const shownIds = new Set(shown.map((l) => l.id))
       const sublayerSuffixes = ['-fill', '-outline', '-line', '-circle', '-label', '-raster']
+      const savedVisibility: Array<{ layerId: string; visibility: string }> = []
 
-      if (layersToShow && layersToShow.length > 0) {
-        const normalizedFilter = layersToShow.map((s) => s.toLowerCase().trim())
-        const genericWords = new Set(['boundary', 'layer', 'polygon', 'area', 'shape', 'map', 'admin'])
+      // Strict isolation only when the caller listed layers AND at least one resolved;
+      // an unresolvable list must never produce an empty image.
+      if (layersToShow && layersToShow.length > 0 && shown.length > 0) {
         for (const layer of layersRef.current) {
-          const layerNameLower = layer.name.toLowerCase().trim()
-          const layerIdLower = layer.id.toLowerCase().trim()
-          const isMatch = normalizedFilter.some((f) => {
-            if (!f) return false
-            if (layerIdLower === f || layerNameLower === f) return true
-            if (f.includes('boundary')) {
-              return layerNameLower.endsWith('boundary') && !layerNameLower.includes('land cover')
-            }
-            if (genericWords.has(f)) {
-              return layerNameLower === f
-            }
-            return layerNameLower.includes(f) || f.includes(layerNameLower)
-          })
           for (const suffix of sublayerSuffixes) {
             const sublayerId = `${layer.id}${suffix}`
             if (map.getLayer(sublayerId)) {
               const currVis = (map.getLayoutProperty(sublayerId, 'visibility') as string) || 'visible'
               savedVisibility.push({ layerId: sublayerId, visibility: currVis })
-              map.setLayoutProperty(sublayerId, 'visibility', isMatch ? 'visible' : 'none')
+              map.setLayoutProperty(sublayerId, 'visibility', shownIds.has(layer.id) ? 'visible' : 'none')
             }
           }
         }
-        map.triggerRepaint()
       }
 
+      // Camera: explicit bbox, else the extent of the target layers (like "Zoom to layer").
       let boundsToFit: [[number, number], [number, number]] | null = null
-
       if (bboxTarget) {
         if (Array.isArray(bboxTarget) && bboxTarget.length === 4) {
           boundsToFit = [[bboxTarget[0], bboxTarget[1]], [bboxTarget[2], bboxTarget[3]]]
@@ -688,93 +729,51 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
           boundsToFit = [[bboxTarget.west, bboxTarget.south], [bboxTarget.east, bboxTarget.north]]
         }
       }
-
-      if (!boundsToFit && layersRef.current.length > 0) {
-        let combinedBbox: [number, number, number, number] | null = null
-        const hasLayerFilter = Boolean(layersToShow && layersToShow.length > 0)
-        const targetLayers = hasLayerFilter
-          ? layersRef.current.filter((layer) => {
-              const n = layer.name.toLowerCase().trim()
-              const id = layer.id.toLowerCase().trim()
-              const genericWords = new Set(['boundary', 'layer', 'polygon', 'area', 'shape', 'map', 'admin'])
-              return layersToShow.some((fRaw) => {
-                const f = fRaw.toLowerCase().trim()
-                if (!f) return false
-                if (id === f || n === f) return true
-                if (f.includes('boundary')) {
-                  return n.endsWith('boundary') && !n.includes('land cover')
-                }
-                if (genericWords.has(f)) return n === f
-                return n.includes(f) || f.includes(n)
-              })
-            })
-          : layersRef.current.filter((layer) => layer.visible)
-
-        // A requested layer filter is strict. Falling back to every canvas layer
-        // silently contaminates MODIS/section exports when a name is stale or
-        // slightly different from the current layer name.
-        for (const layer of targetLayers) {
-          if (layer.data) {
-            try {
-              const b = turf.bbox(layer.data)
-              if (b && b.length === 4 && isFinite(b[0])) {
-                if (!combinedBbox) {
-                  combinedBbox = [b[0], b[1], b[2], b[3]]
-                } else {
-                  combinedBbox[0] = Math.min(combinedBbox[0], b[0])
-                  combinedBbox[1] = Math.min(combinedBbox[1], b[1])
-                  combinedBbox[2] = Math.max(combinedBbox[2], b[2])
-                  combinedBbox[3] = Math.max(combinedBbox[3], b[3])
-                }
-              }
-            } catch {}
+      if (!boundsToFit) {
+        const targets = shown.length ? shown : resolveLayers(fitLayers)
+        let bb: [number, number, number, number] | null = null
+        const grow = (b: number[]) => {
+          if (!b || b.length !== 4 || !b.every((v) => Number.isFinite(v))) return
+          bb = bb ? [Math.min(bb[0], b[0]), Math.min(bb[1], b[1]), Math.max(bb[2], b[2]), Math.max(bb[3], b[3])] : [b[0], b[1], b[2], b[3]]
+        }
+        for (const layer of targets) {
+          if (layer.data?.features?.length) {
+            try { grow(turf.bbox(layer.data) as number[]) } catch {}
+          }
+          const g: any = layer.geeSpec
+          const gb = g?.bbox || g?.bounds
+          if (gb) grow(Array.isArray(gb) ? gb : [gb.west, gb.south, gb.east, gb.north])
+          const corners = layer.rasterOverlaySpec?.corners
+          if (corners && corners.length >= 2) {
+            grow([Math.min(...corners.map((c) => c[0])), Math.min(...corners.map((c) => c[1])), Math.max(...corners.map((c) => c[0])), Math.max(...corners.map((c) => c[1]))])
           }
         }
-        if (combinedBbox) {
-          boundsToFit = [[combinedBbox[0], combinedBbox[1]], [combinedBbox[2], combinedBbox[3]]]
-        }
+        if (bb) boundsToFit = [[bb[0], bb[1]], [bb[2], bb[3]]]
       }
 
+      map.stop()
       if (boundsToFit) {
-        const w = boundsToFit[0][0]
-        const s = boundsToFit[0][1]
-        const e = boundsToFit[1][0]
-        const n = boundsToFit[1][1]
-
-        map.fitBounds([[w, s], [e, n]], { padding: Math.max(padding, 20), animate: false })
-      } else {
-        map.zoomTo(origZoom - 0.8, { animate: false })
+        map.fitBounds(boundsToFit, { padding: Math.max(padding, 20), animate: false, maxZoom: 17 })
       }
 
-      // Wait for map to load tiles after jump
+      // Wait until the map is fully rendered at the new camera: every vector source
+      // parsed and every basemap / raster tile loaded ('idle'), bounded by a timeout.
       await new Promise<void>((resolve) => {
-        if (map.isStyleLoaded() && map.areTilesLoaded()) {
-          resolve()
-          return
-        }
-        let timeout: any
-        const onIdle = () => {
-          map.off('idle', onIdle)
-          clearTimeout(timeout)
+        let done = false
+        const finish = () => {
+          if (done) return
+          done = true
+          map.off('idle', finish)
+          clearTimeout(timer)
           resolve()
         }
-        map.on('idle', onIdle)
-        timeout = setTimeout(() => {
-          map.off('idle', onIdle)
-          resolve()
-        }, 3000) // Fallback timeout
+        const timer = setTimeout(finish, 15000)
+        map.once('idle', finish)
+        map.triggerRepaint()
       })
-
-      // Flush the WebGL pipeline so the GPU reflects visibility & bounds changes
-      map.triggerRepaint()
-      if ((map as any)._render) {
-        ;(map as any)._render()
-        ;(map as any)._render()
-        ;(map as any)._render()
-      }
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
 
       const canvas = map.getCanvas()
-
       // Clone canvas immediately to freeze snapshot pixels before restoring visibility
       const clone = document.createElement('canvas')
       clone.width = canvas.width
@@ -785,71 +784,34 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       }
 
       // MapLibre text layers can be omitted from a WebGL capture when glyphs
-      // have not finished loading, and many imported layers do not have a
-      // label style at all. Collect a small, deterministic set of feature
-      // labels while the export camera is active so the compositor can bake
-      // them into every image format without changing the live map.
+      // have not finished loading. Collect a small, deterministic set of feature
+      // labels while the export camera is active so the compositor can bake them in.
       const exportLabels: MapExportLabel[] = []
-      const labelLayers = layersRef.current.filter((layer) => {
-        if (!layer.visible || !layer.data?.features?.length) return false
-        if (!layersToShow || layersToShow.length === 0) return true
-        const name = layer.name.toLowerCase().trim()
-        const id = layer.id.toLowerCase().trim()
-        return layersToShow.some((raw) => {
-          const filter = raw.toLowerCase().trim()
-          if (!filter) return false
-          if (filter.includes('boundary')) {
-            return name.endsWith('boundary') && !name.includes('land cover')
-          }
-          return id === filter || name === filter || name.includes(filter) || filter.includes(name)
-        })
-      })
+      const labelLayers = (shown.length ? shown : layersRef.current).filter((layer) => layer.visible && layer.data?.features?.length)
       for (const layer of labelLayers) {
         const labelSpec = layer.styleSpec?.label
-        const isPointMarkerLayer =
-          layer.name.toLowerCase().includes('marker') ||
-          layer.name.toLowerCase().includes('terminal') ||
-          layer.name.toLowerCase().includes('stops') ||
-          layer.name.toLowerCase().includes('waypoints') ||
-          layer.name.toLowerCase().includes('isbt')
-
-        // Only export labels if explicitly enabled by user/agent style or for dedicated point markers
+        const lname = layer.name.toLowerCase()
+        const isPointMarkerLayer = ['marker', 'terminal', 'stops', 'waypoints', 'isbt'].some((k) => lname.includes(k))
         const shouldLabel = Boolean(labelSpec?.enabled && labelSpec.property) || isPointMarkerLayer
         if (!shouldLabel) continue
-
         const targetProperty = labelSpec?.enabled && labelSpec.property ? labelSpec.property : null
-        const featureLimit = Math.min(layer.data.features.length, 25)
-
-        for (const feature of layer.data.features.slice(0, featureLimit)) {
-          // Never draw centroid labels on line strings (routes, roads, contours) in exports
+        for (const feature of layer.data!.features.slice(0, 25)) {
           const geomType = feature.geometry?.type
-          if (geomType === 'LineString' || geomType === 'MultiLineString') {
-            continue
-          }
-
+          if (geomType === 'LineString' || geomType === 'MultiLineString') continue
           const props = feature.properties || {}
           const property =
             targetProperty ||
-            ['label', 'name', 'title', 'display_name', 'address'].find(
-              (key) => props[key] != null && String(props[key]).trim(),
-            )
+            ['label', 'name', 'title', 'display_name', 'address'].find((key) => props[key] != null && String(props[key]).trim())
           if (!property || !feature.geometry) continue
-
           try {
             const point = turf.pointOnFeature(feature as any)
             const projected = map.project(point.geometry.coordinates as [number, number])
-            const canvasW = map.getCanvas().width / (window.devicePixelRatio || 1)
-            const canvasH = map.getCanvas().height / (window.devicePixelRatio || 1)
+            const canvasW = canvas.width / (window.devicePixelRatio || 1)
+            const canvasH = canvas.height / (window.devicePixelRatio || 1)
             if (projected.x < 12 || projected.y < 12 || projected.x > canvasW - 12 || projected.y > canvasH - 12) continue
-
             const rawText = String(props[property]).trim().replace(/\s+/g, ' ')
             if (rawText) {
-              exportLabels.push({
-                text: rawText.slice(0, 36),
-                x: projected.x,
-                y: projected.y,
-                color: labelSpec?.color || layer.lineColor || layer.color,
-              })
+              exportLabels.push({ text: rawText.slice(0, 36), x: projected.x, y: projected.y, color: labelSpec?.color || layer.lineColor || layer.color })
             }
           } catch {
             // Ignore malformed feature geometry or coordinates.
@@ -859,16 +821,21 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
         if (exportLabels.length >= 25) break
       }
 
-      // Restore camera view and layer visibility immediately after all export
-      // pixels and label coordinates have been collected.
+      // Restore layer visibility. The camera stays on the exported extent (like
+      // "Zoom to layer") so the user sees exactly what was captured.
       for (const item of savedVisibility) {
         if (map.getLayer(item.layerId)) {
           map.setLayoutProperty(item.layerId, 'visibility', item.visibility)
         }
       }
-      map.jumpTo({ center: origCenter, zoom: origZoom, bearing: origBearing, pitch: origPitch })
 
-      return { canvas: clone, labels: exportLabels }
+      const c = map.getCenter()
+      return {
+        canvas: clone,
+        labels: exportLabels,
+        view: { lat: c.lat, zoom: map.getZoom(), bearing: map.getBearing() },
+        layerIds: shown.length ? shown.map((l) => l.id) : layersRef.current.filter((l) => l.visible).map((l) => l.id),
+      }
     },
   }), [mapReady])
 

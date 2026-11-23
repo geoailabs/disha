@@ -124,6 +124,9 @@ async def test_modis_layer_uses_explicit_palette_and_class_ranges(gee_server, mo
         def filterBounds(self, *_args, **_kwargs):
             return self
 
+        def filter(self, *_args, **_kwargs):
+            return self
+
         def select(self, *_args, **_kwargs):
             return self
 
@@ -133,10 +136,13 @@ async def test_modis_layer_uses_explicit_palette_and_class_ranges(gee_server, mo
         def median(self):
             return object()
 
+        def size(self):
+            return types.SimpleNamespace(getInfo=lambda: 1)
+
     fake_ee = types.SimpleNamespace(
         ImageCollection=lambda dataset: FakeCollection(dataset),
         Image=lambda dataset: object(),
-        Filter=types.SimpleNamespace(lt=lambda *args, **kwargs: object()),
+        Filter=types.SimpleNamespace(lt=lambda *args, **kwargs: object(), calendarRange=lambda *args, **kwargs: object()),
     )
 
     async def fake_ensure_gee(*args, **kwargs):
@@ -734,3 +740,318 @@ async def test_compare_modis_fire_history_uses_tile_scale(gee_server, monkeypatc
     for kwargs in reduction_args:
         assert kwargs["tileScale"] == 4
         assert "maxPixels" not in kwargs
+
+
+# ── Full-catalog coverage, vector tables & stream networks ────────────────────
+
+@pytest.mark.asyncio
+async def test_search_finds_stream_datasets_offline(gee_server, monkeypatch, tmp_path):
+    """Natural phrasing ('water streams') must find hydrography datasets even offline."""
+    import mcp_servers.gee_server as gs
+    monkeypatch.setenv("DISHA_GEE_CATALOG_OFFLINE", "1")
+    monkeypatch.setattr(gs, "_GEE_CATALOG_CACHE", None)
+    monkeypatch.setattr(gs, "_catalog_cache_path", lambda: tmp_path / "missing.json")
+    res = await gee_server.execute("search_gee_datasets", {"query": "water streams"})
+    assert res["status"] == "success"
+    ids = [d["id"] for d in res["datasets"]]
+    assert ids[0] == "WWF/HydroSHEDS/v1/FreeFlowingRivers"
+    assert res["datasets"][0]["recommended_tool"] == "extract_water_streams"
+    assert res["datasets"][0]["layer_kind"] == "vector"
+
+
+def test_water_streams_tool_declared(gee_server, env_hub):
+    decls = {d.name: d for d in gee_server.get_declarations()}
+    assert "extract_water_streams" in decls
+    assert "extract_water_streams" in env_hub.tool_names
+    assert "place_name" in decls["extract_water_streams"].parameters["properties"]
+
+
+def test_chat_tools_have_no_duplicate_names():
+    """add_gee_layer used to be declared twice (url-required action + GEE server)."""
+    import collections
+    from routers.chat import _TOOLS, SYSTEM_PROMPT
+    counts = collections.Counter(t["function"]["name"] for t in _TOOLS)
+    assert [n for n, c in counts.items() if c > 1] == []
+    gee_decl = next(t for t in _TOOLS if t["function"]["name"] == "add_gee_layer")
+    assert gee_decl["function"]["parameters"]["required"] == ["dataset"]
+    assert "extract_water_streams" in SYSTEM_PROMPT
+
+
+def test_clip_features_preserves_line_geometry():
+    from mcp_servers.gee_server import _clip_features_to_boundary, _geodesic_length_km
+    boundary = {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]}
+    features = [
+        {"type": "Feature", "properties": {"id": 1}, "geometry": {"type": "LineString", "coordinates": [[-1, 0.5], [2, 0.5]]}},
+        {"type": "Feature", "properties": {"id": 2}, "geometry": {"type": "LineString", "coordinates": [[5, 5], [6, 6]]}},
+    ]
+    clipped = _clip_features_to_boundary(features, boundary)
+    assert len(clipped) == 1
+    geom = clipped[0]["geometry"]
+    assert geom["type"] == "LineString"
+    xs = [c[0] for c in geom["coordinates"]]
+    assert min(xs) >= 0 and max(xs) <= 1
+    assert 100 < _geodesic_length_km(geom) < 115  # ~111 km per degree at the equator
+
+
+def test_catalog_visualization_properties_are_used():
+    from mcp_servers.gee_server import _catalog_vis_from_properties, _vis_is_complete
+    vis = _catalog_vis_from_properties({
+        "visualization_0_bands": "elevation",
+        "visualization_0_min": "0.0",
+        "visualization_0_max": "6000.0",
+        "visualization_0_palette": "000000,#ffffff",
+    })
+    assert vis == {"bands": ["elevation"], "min": 0.0, "max": 6000.0, "palette": ["000000", "ffffff"]}
+    assert _vis_is_complete(vis)
+    assert not _vis_is_complete({"bands": ["Map"]})
+
+
+@pytest.mark.asyncio
+async def test_add_gee_layer_routes_tables_to_vector_extraction(gee_server, monkeypatch):
+    import mcp_servers.gee_server as gs
+
+    async def fake_ensure(_ws=None):
+        return True, None
+
+    async def fake_boundary(self, args):
+        return None, None, None, None
+
+    called = {}
+
+    async def fake_table(self, args, dataset, title, *rest):
+        called["dataset"] = dataset
+        return {"status": "success", "asset_type": "table"}
+
+    monkeypatch.setattr(gs, "_ensure_gee", fake_ensure)
+    monkeypatch.setattr(gs, "_sync_get_asset_info", lambda ds: {"type": "TABLE", "properties": {}})
+    monkeypatch.setattr(gs.GEEServer, "_resolve_place_boundary", fake_boundary)
+    monkeypatch.setattr(gs.GEEServer, "_add_gee_table_layer", fake_table)
+    monkeypatch.setitem(sys.modules, "ee", types.SimpleNamespace())
+
+    res = await gee_server.execute("add_gee_layer", {"dataset": "SOME/VECTOR/TABLE"})
+    assert res["asset_type"] == "table"
+    assert called["dataset"] == "SOME/VECTOR/TABLE"
+
+
+# ── MODIS fire: year selection & one comparison report per turn ──────────────
+
+def test_fire_years_asked_year_plus_present():
+    from datetime import date
+    from tools.fire_report import resolve_years
+    today = date(2026, 11, 23)
+    assert resolve_years({}, today) == ([2026], None)                       # no year → current only
+    assert resolve_years({"year": 2021}, today) == ([2021, 2026], None)    # asked + present
+    assert resolve_years({"year": 2026}, today) == ([2026], None)
+    assert resolve_years({"years": [2019, 2022]}, today) == ([2019, 2022, 2026], None)
+    assert resolve_years({"start_year": 2020, "end_year": 2022}, today)[0] == [2020, 2021, 2022]
+    assert resolve_years({"year": 1990}, today)[1]                          # before MODIS → error
+
+
+@pytest.mark.asyncio
+async def test_modis_layer_refuses_unresolved_place(gee_server, monkeypatch):
+    async def fake_ensure(*a, **k):
+        return True, None
+
+    async def no_boundary(*a, **k):
+        return None, None, None, None
+
+    monkeypatch.setattr("mcp_servers.gee_server._ensure_gee", fake_ensure)
+    monkeypatch.setattr(gee_server, "_resolve_place_boundary", no_boundary)
+    res = await gee_server.execute("get_modis_layer", {"product": "active_fires", "place_name": "Nowhere-xyz", "year": 2024})
+    assert res["code"] == "boundary_unresolved"
+
+
+def test_fire_reports_merge_into_one_artifact_per_turn(tmp_path, monkeypatch):
+    import tools.fire_report as fr
+    saved = {}
+    next_id = iter(range(1, 100))
+
+    def fake_save(title, artifact_type, format, *, content=None, meta=None, artifact_id=None, overwrite=False, workspace=None, **_):
+        aid = artifact_id or next(next_id)
+        saved[aid] = {"id": aid, "title": title, "content": content, "meta": meta}
+        return saved[aid]
+
+    monkeypatch.setattr("tools.artifact_store.save_artifact", fake_save)
+    ws = str(tmp_path)
+    fr.begin_turn(ws)
+
+    def result(name, years, ha):
+        annual = {str(y): {"burned_area_hectares": ha, "active_fire_pixel_days": 1} for y in years}
+        return {"years": years, "results": [{"village": name, "annual": annual, "differences": fr.compute_differences(annual, years)}]}
+
+    fr.save_tool_artifact(fr.build_artifact(result("Village A", [2022, 2026], 5)), ws)
+    fr.save_tool_artifact(fr.build_artifact(result("Village B", [2022, 2026], 7)), ws)
+    assert len(saved) == 1, "second comparison in the same turn must update the same report"
+    report = next(iter(saved.values()))
+    assert "Village A" in report["content"] and "Village B" in report["content"]
+    assert fr.turn_report_id(ws) == report["id"]
+
+    fr.begin_turn(ws)  # new user request → new report
+    fr.save_tool_artifact(fr.build_artifact(result("Village C", [2026], 1)), ws)
+    assert len(saved) == 2
+
+
+
+# ── Land cover: exact years, no silent substitution, multi-line charts ───────
+
+def test_land_cover_year_availability_is_explicit(monkeypatch):
+    import mcp_servers.gee_server as gs
+    monkeypatch.setattr(gs, "_MODIS_LC_LATEST", 2025)
+    assert gs._lc_resolve_source("auto", 2011) == "modis_landcover"
+    assert gs._lc_resolve_source("auto", 2016) == "dynamic_world"
+    assert gs._lc_resolve_source(None, None) == "dynamic_world"
+    assert gs._lc_year_error("modis_landcover", 2011) is None
+    assert gs._lc_year_error("dynamic_world", 2014)            # DW starts mid-2015
+    assert "2020, 2021" in gs._lc_year_error("esa_worldcover", 2011)  # never silently 2021
+    assert gs._lc_year_error("esa_worldcover", 2020) is None
+    assert gs._lc_year_error("modis_landcover", 2026)
+
+
+@pytest.mark.asyncio
+async def test_land_cover_tools_reject_unavailable_years(gee_server, monkeypatch):
+    import mcp_servers.gee_server as gs
+
+    async def fake_ensure(*a, **k):
+        return True, None
+
+    async def boundary(*a, **k):
+        return {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]}, object(), "Test Place", None
+
+    monkeypatch.setattr(gs, "_ensure_gee", fake_ensure)
+    monkeypatch.setattr(gs, "_MODIS_LC_LATEST", 2025)
+    monkeypatch.setattr(gee_server, "_resolve_place_boundary", boundary)
+    monkeypatch.setitem(sys.modules, "ee", types.SimpleNamespace())
+
+    res = await gee_server.execute("get_land_cover", {"place_name": "Test Place", "year": 2011, "source": "esa_worldcover"})
+    assert res["code"] == "no_data"
+    res = await gee_server.execute("analyze_land_use_zonal_stats", {"place_name": "Test Place", "year": 2013, "source": "dynamic_world"})
+    assert res["code"] == "no_data"
+    res = await gee_server.execute("extract_land_use_polygons", {"target_class": "Built Area", "place_name": "Test Place", "year": 2012})
+    assert res["code"] == "no_data"
+
+
+@pytest.mark.asyncio
+async def test_zonal_stats_never_uses_a_default_location(gee_server, monkeypatch):
+    import mcp_servers.gee_server as gs
+
+    async def fake_ensure(*a, **k):
+        return True, None
+
+    async def no_boundary(*a, **k):
+        return None, None, None, None
+
+    monkeypatch.setattr(gs, "_ensure_gee", fake_ensure)
+    monkeypatch.setattr(gee_server, "_resolve_place_boundary", no_boundary)
+    res = await gee_server.execute("analyze_land_use_zonal_stats", {"year": 2020})
+    assert res["code"] == "boundary_unresolved"
+    res = await gee_server.execute("analyze_land_cover_timeseries", {"place_name": "Unresolvable", "start_year": 2011})
+    assert res["code"] == "boundary_unresolved"
+
+
+def test_timeseries_tool_declared_and_prompted(gee_server, env_hub):
+    from routers.chat import SYSTEM_PROMPT
+    assert "analyze_land_cover_timeseries" in {d.name for d in gee_server.get_declarations()}
+    assert "analyze_land_cover_timeseries" in env_hub.tool_names
+    assert "NEVER plot total area" in SYSTEM_PROMPT
+
+
+def test_line_chart_renders_multiple_series_with_gaps():
+    from mcp_servers.plot_server import render_line_panels
+    png = render_line_panels(
+        "Trend",
+        [{"x": [2011, 2012, 2013], "series": {"A": [1.0, None, 3.0], "B": [2.0, 2.5, 2.0]}}],
+        x_label="Year", y_label="%",
+    )
+    assert png.startswith(bytes([0x89]) + b"PNG")
+
+
+@pytest.mark.asyncio
+async def test_create_plot_line_series_validation(monkeypatch):
+    from mcp_servers.plot_server import PlotServer
+    res = await PlotServer().execute("create_plot", {
+        "plot_type": "line", "title": "t", "x_data": [2011, 2012], "series": {"A": [1]},
+    })
+    assert "error" in res
+
+
+# ── Place boundaries & Plotly charts ─────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_named_place_with_only_a_point_is_not_calculated(gee_server, monkeypatch):
+    """A point/centroid fallback must never become a 1-pixel 'square' study area."""
+    import mcp_servers.gee_server as gs
+
+    async def fake_ensure(*a, **k):
+        return True, None
+
+    class FakeOSM:
+        async def _fetch_boundary(self, args):
+            return {"geojson": {"type": "FeatureCollection", "features": [
+                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [76.7, 30.7]}, "properties": {}}]},
+                "name": args["name"]}
+
+    monkeypatch.setattr(gs, "_ensure_gee", fake_ensure)
+    monkeypatch.setattr("mcp_servers.osm_server.OSMServer", FakeOSM)
+    monkeypatch.setattr("tools.spatial_registry.spatial_registry.get_polygon", lambda name: None)
+    res = await gee_server.execute("analyze_land_use_zonal_stats", {"place_name": "Some Village", "year": 2020})
+    assert res["code"] == "boundary_unresolved"
+    res = await gee_server.execute("get_land_cover", {"place_name": "Some Village", "year": 2020})
+    assert res["code"] == "boundary_unresolved"
+
+
+@pytest.mark.asyncio
+async def test_resolved_boundary_is_outlined_on_map(gee_server, monkeypatch):
+    sent = []
+
+    class WS:
+        async def send_text(self, t):
+            import json as _j
+            sent.append(_j.loads(t))
+
+    poly = {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]}
+
+    class FakeOSM:
+        async def _fetch_boundary(self, args):
+            return {"geojson": {"type": "FeatureCollection", "features": [{"type": "Feature", "geometry": poly, "properties": {}}]},
+                    "name": "Test Town"}
+
+    async def fake_ensure(*a, **k):
+        return True, None
+
+    monkeypatch.setattr("mcp_servers.gee_server._ensure_gee", fake_ensure)
+    monkeypatch.setattr("mcp_servers.osm_server.OSMServer", FakeOSM)
+    monkeypatch.setattr("tools.spatial_registry.spatial_registry.get_polygon", lambda name: None)
+    monkeypatch.setattr("tools.spatial_registry.spatial_registry.register_or_get", lambda **k: None)
+    monkeypatch.setattr("mcp_servers.gee_server._geojson_to_ee_geometry", lambda g: object())
+    geo, ee_geom, name, bbox = await gee_server._resolve_place_boundary({"place_name": "Test Town", "_ws": WS(), "_map_context": {}})
+    outline = [m for m in sent if m.get("action") == "add_geojson"]
+    assert outline and outline[0]["payload"]["name"] == "Test Town boundary"
+    assert outline[0]["payload"]["geojson"]["features"][0]["geometry"]["type"] == "Polygon"
+    assert outline[0]["payload"]["fillOpacity"] == 0
+    assert bbox == {"west": 0.0, "south": 0.0, "east": 1.0, "north": 1.0}
+
+
+def test_chart_spec_validation_and_types():
+    from tools.charts import CHART_TYPES, ChartError, normalise_spec
+    for t in ("line", "grouped_bar", "donut", "heatmap", "box", "radar", "treemap", "waterfall"):
+        assert t in CHART_TYPES
+    spec = normalise_spec({"plot_type": "line", "title": "t", "x_data": [2020, 2021], "series": {"a": [1, None]}})
+    assert spec["series"]["a"] == [1.0, None]          # gaps stay gaps
+    with pytest.raises(ChartError):
+        normalise_spec({"plot_type": "line", "title": "t", "x_data": [1, 2], "series": {"a": [1]}})
+    with pytest.raises(ChartError):
+        normalise_spec({"plot_type": "pie", "title": "t", "x_data": ["a"], "y_data": [1]})
+    with pytest.raises(ChartError):
+        normalise_spec({"plot_type": "bar", "title": "t", "x_data": ["a"], "y_data": ["x"]})
+
+
+@pytest.mark.asyncio
+async def test_create_plot_saves_downloadable_png(tmp_path):
+    from mcp_servers.plot_server import PlotServer
+    res = await PlotServer().execute("create_plot", {
+        "plot_type": "grouped_bar", "title": "Plot test", "x_data": ["A", "B"],
+        "series": {"2022": [1, 2], "2023": [2, 3]}, "_map_context": {"workspace": str(tmp_path)},
+    })
+    assert res["status"] == "success", res
+    png = tmp_path / ".disha" / res["file_path"]
+    assert png.exists() and png.read_bytes()[:4] == bytes([0x89]) + b"PNG"

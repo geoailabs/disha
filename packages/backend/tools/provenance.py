@@ -106,9 +106,9 @@ TOOL_SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
     "osm_search": {
         "name": "OpenStreetMap Amenities & Points of Interest",
         "category": "Places & Amenities",
-        "provider": "OpenStreetMap / Photon Geocoder",
+        "provider": "OpenStreetMap via Overpass API",
         "url": "https://www.openstreetmap.org",
-        "default_basis": "Point of interest inventory filtered spatially within study boundary.",
+        "default_basis": "Every OSM feature of the requested category whose location lies inside the official boundary polygon; duplicates and campus sub-parts counted once.",
     },
     "nearby_places": {
         "name": "Local Amenities & Points of Interest",
@@ -193,6 +193,41 @@ TOOL_SOURCE_REGISTRY: dict[str, dict[str, Any]] = {
         "provider": "Dynamic World / Sentinel-2 LULC (10m)",
         "url": "https://dynamicworld.app",
         "default_basis": "10-meter deep learning near-real-time land cover classification vectorized into analytical polygons.",
+    },
+    "analyze_population_timeseries": {
+        "name": "Population Time Series (WorldPop / GHSL GHS-POP)",
+        "category": "Demographics",
+        "provider": "WorldPop (100 m, annual 2000–2020) and JRC GHSL GHS-POP P2023A (5-yearly) via Google Earth Engine",
+        "url": "https://developers.google.com/earth-engine/datasets/catalog/JRC_GHSL_P2023A_GHS_POP",
+        "default_basis": "Sum of gridded population inside the study boundary per year; GHS-POP 2025/2030 are model projections.",
+    },
+    "analyze_building_growth": {
+        "name": "Building Growth (Google Open Buildings Temporal / GHSL Built-up)",
+        "category": "Urban Morphology",
+        "provider": "Google Open Buildings Temporal V1 (2016–2023) and JRC GHSL GHS-BUILT-S/V P2023A via Google Earth Engine",
+        "url": "https://developers.google.com/earth-engine/datasets/catalog/GOOGLE_Research_open-buildings-temporal_v1",
+        "default_basis": "Footprint = area of pixels with building_presence ≥ 0.5; height/volume from building_height; counts from building_fractional_count on the native 0.5 m grid; all inside the study boundary.",
+    },
+    "analyze_land_cover_timeseries": {
+        "name": "Multi-year Land Cover Time Series (MODIS MCD12Q1 / Dynamic World)",
+        "category": "Earth Observation & Remote Sensing",
+        "provider": "NASA MODIS MCD12Q1 (500 m) and Google Dynamic World (10 m) via Google Earth Engine",
+        "url": "https://developers.google.com/earth-engine/datasets/catalog/MODIS_061_MCD12Q1",
+        "default_basis": "Per-year class areas summed with ee.Image.pixelArea() inside the study boundary; classes harmonised into 8 groups; each product plotted separately, years without data left blank.",
+    },
+    "extract_water_streams": {
+        "name": "River & Stream Network (HydroSHEDS / MERIT Hydro)",
+        "category": "Earth Observation & Remote Sensing",
+        "provider": "WWF HydroSHEDS Free Flowing Rivers + MERIT Hydro via Google Earth Engine",
+        "url": "https://developers.google.com/earth-engine/datasets/catalog/WWF_HydroSHEDS_v1_FreeFlowingRivers",
+        "default_basis": "Vector river reaches clipped to the study boundary; lengths computed geodesically on the WGS84 ellipsoid; fine channels from MERIT Hydro upstream drainage area thresholds.",
+    },
+    "add_gee_layer": {
+        "name": "Google Earth Engine Data Catalog Layer",
+        "category": "Earth Observation & Remote Sensing",
+        "provider": "Google Earth Engine",
+        "url": "https://developers.google.com/earth-engine/datasets",
+        "default_basis": "Catalog dataset rendered for the study boundary (raster composite or clipped vector features).",
     },
     "get_land_cover": {
         "name": "Multi-Class Land Cover Classification",

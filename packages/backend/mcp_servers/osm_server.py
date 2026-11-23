@@ -12,6 +12,7 @@ import json as _json
 
 import httpx
 from llm.base import ToolDeclaration
+from tools.osm_categories import OSM_CATEGORIES
 from tools import cache, http as http_client
 from tools.geo import geodesic_area_m2
 
@@ -289,10 +290,15 @@ class OSMServer:
             ToolDeclaration(
                 name="osm_search",
                 description=(
-                    "Search OpenStreetMap for features near a location. "
-                    "Returns GeoJSON displayed on the map automatically. "
-                    "Use for amenities (hospitals, schools, parks), "
-                    "infrastructure (bus_stop, railway, highway), buildings, land use, shops.\n\n"
+                    "Search OpenStreetMap features. Returns GeoJSON displayed on the map automatically.\n\n"
+                    "PLACE-BOUNDED MODE (use whenever the user names a place, e.g. 'all hospitals in <city>'): pass "
+                    "`place_name` (or `place_names` for a multi-city region, or `boundary_layer_name`) plus `category` "
+                    "(or `categories` for several in one call). The official boundary polygon is resolved and outlined, "
+                    "EVERY matching feature inside it is returned (not a radius sample), each facility is counted once, "
+                    "line/area features are clipped to the boundary, and counts/densities are computed for that area only. "
+                    f"Categories: {', '.join(sorted(OSM_CATEGORIES))}. "
+                    "Plot only what the user asked for — one category per requested item.\n\n"
+                    "RADIUS MODE (only for 'near here / around this point'): lat/lng + radius_meters, or use_current_bounds.\n\n"
                     "feature_value accepts THREE forms:\n"
                     "  • Single value, e.g. 'hospital' → exact match ['amenity'='hospital'].\n"
                     "  • '*' or empty string → ANY value of that key. Use this for 'all shops' "
@@ -303,9 +309,16 @@ class OSMServer:
                 parameters={
                     "type": "object",
                     "properties": {
+                        "category": {"type": "string", "description": "Curated feature category (place-bounded mode), e.g. 'hospitals', 'schools', 'offices', 'malls'."},
+                        "categories": {"type": "array", "items": {"type": "string"}, "description": "Several categories in one call; each becomes its own map layer."},
+                        "place_name": {"type": "string", "description": "Place whose official boundary polygon limits the search (e.g. a city or sector)."},
+                        "place_names": {"type": "array", "items": {"type": "string"}, "description": "Several places merged into one study area (e.g. a tri-city region)."},
+                        "region_name": {"type": "string", "description": "Label for a merged multi-place region."},
+                        "boundary_layer_name": {"type": "string", "description": "Polygon layer already on the map to use as the boundary."},
+                        "country_code": {"type": "string", "description": "ISO alpha-2 code to disambiguate the place, e.g. 'IN'."},
                         "feature_type": {
                             "type": "string",
-                            "description": "OSM tag key: amenity, building, highway, leisure, natural, shop, tourism, landuse, railway, waterway, public_transport, place",
+                            "description": "Raw OSM tag key when no curated category fits: amenity, building, highway, leisure, natural, shop, tourism, landuse, railway, waterway, public_transport, office, healthcare",
                         },
                         "feature_value": {
                             "type": "string",
@@ -316,7 +329,6 @@ class OSMServer:
                         "radius_meters": {"type": "number", "description": "Search radius in meters (default 1000, max 10000). Optional if use_current_bounds is true."},
                         "use_current_bounds": {"type": "boolean", "description": "If true, searches within the current map viewport bounds instead of using lat/lng/radius_meters."},
                     },
-                    "required": ["feature_type"],
                 },
             ),
             ToolDeclaration(
@@ -488,6 +500,95 @@ class OSMServer:
         return {"error": f"Unknown tool: {tool_name}"}
 
     async def _osm_search(self, args: dict) -> dict:
+        from tools.boundary import boundary_args_present
+        if boundary_args_present(args) or args.get("category") or args.get("categories"):
+            return await self._osm_search_in_boundary(args)
+        return await self._osm_search_radius(args)
+
+    async def _osm_search_in_boundary(self, args: dict) -> dict:
+        """Every feature of the requested category inside the exact boundary polygon."""
+        from tools.boundary import BoundaryError, resolve_study_boundary
+        from tools.osm_categories import OSM_CATEGORIES, normalise_category
+        from tools.osm_extract import category_mode, extract_geometries, extract_points_multi, measure
+
+        requested = list(args.get("categories") or [])
+        if args.get("category"):
+            requested.insert(0, args["category"])
+        jobs: list[tuple[str, str, list, dict | None]] = []  # (key, label, tags, category def)
+        unknown = []
+        for raw in requested:
+            key = normalise_category(raw)
+            if key:
+                if key not in [j[0] for j in jobs]:
+                    cat = OSM_CATEGORIES[key]
+                    jobs.append((key, cat["label"], cat["tags"], cat))
+            else:
+                unknown.append(raw)
+        if not jobs:
+            ft = _sanitize_osm_token(args.get("feature_type") or "")
+            if not ft:
+                return {"error": (
+                    f"Unknown category {unknown}. Use one of: {', '.join(sorted(OSM_CATEGORIES))}, "
+                    "or pass feature_type/feature_value with raw OSM tags."
+                ), "code": "invalid_input"}
+            raw_value = args.get("feature_value", "")
+            if isinstance(raw_value, list):
+                raw_value = "|".join(map(str, raw_value))
+            vals = [_sanitize_osm_token(v) for v in str(raw_value).split("|") if v.strip() and v.strip() != "*"]
+            value = "|".join(v for v in vals if v) or None
+            label = f"{ft}={value}" if value else f"{ft} (all)"
+            jobs.append((f"{ft}:{value or '*'}", label, [(ft, value)], None))
+
+        try:
+            boundary = await resolve_study_boundary(args)
+        except BoundaryError as exc:
+            return {"error": str(exc), "code": "boundary_unresolved"}
+
+        layers = []
+        try:
+            modes = {key: (cat["mode"] if cat else category_mode(None, tags[0][0])) for key, _l, tags, cat in jobs}
+            point_jobs = [(key, tags, cat) for key, _l, tags, cat in jobs if modes[key] == "point"]
+            # All facility categories in ONE Overpass round trip
+            point_results = await extract_points_multi(boundary, point_jobs) if point_jobs else {}
+            for key, label, tags, cat in jobs:
+                mode = modes[key]
+                merged = 0
+                if mode == "point":
+                    feats, candidates, merged = point_results[key]
+                else:
+                    feats = await extract_geometries(boundary, tags)
+                    candidates = None
+                stats = measure(feats)
+                stats["per_km2"] = round(len(feats) / boundary.area_km2, 4) if boundary.area_km2 else None
+                if candidates is not None:
+                    stats["merged_duplicates_or_campus_parts"] = merged
+                    stats["outside_boundary_excluded"] = max(0, candidates - len(feats) - merged)
+                layers.append({
+                    "category": key,
+                    "label": label,
+                    "name": f"{label} - {boundary.name}",
+                    "color": (cat or {}).get("color", "#2563eb"),
+                    "mode": mode,
+                    "geojson": {"type": "FeatureCollection", "features": feats},
+                    "stats": stats,
+                })
+        except OverpassError as e:
+            return {"error": str(e), "code": "upstream_unavailable"}
+
+        first = layers[0]
+        return {
+            "status": "success",
+            "boundary": boundary.summary(),
+            "layers": layers,
+            # single-layer compatibility
+            "geojson": first["geojson"],
+            "count": first["stats"]["count"],
+            "total_count": first["stats"]["count"],
+            "truncated": False,
+            "unknown_categories": unknown,
+        }
+
+    async def _osm_search_radius(self, args: dict) -> dict:
         feature_type = _sanitize_osm_token(args.get("feature_type", "amenity")) or "amenity"
         raw_value = args.get("feature_value", "")
         

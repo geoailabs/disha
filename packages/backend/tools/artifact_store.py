@@ -82,6 +82,18 @@ def _render_chart_from_json(title: str, json_str: str) -> Optional[bytes]:
         if not labels or not values:
             return None
 
+        # Preferred: the shared Plotly chart engine (falls back to Matplotlib below).
+        try:
+            from tools.charts import normalise_spec, render_png
+            ptype_guess = data.get("plot_type") or ("pie" if "pie" in title.lower() or "distribution" in title.lower() else "bar")
+            png, _fig, _engine = render_png(normalise_spec({
+                **{k: v for k, v in data.items() if k in ("series", "x_label", "y_label", "subtitle", "colors")},
+                "plot_type": ptype_guess, "title": title, "x_data": labels, "y_data": values,
+            }))
+            return png
+        except Exception:
+            pass
+
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt

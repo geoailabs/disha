@@ -173,6 +173,103 @@ def inject_new_artifact_instruction(tool_calls: list[dict]) -> list[dict]:
     return patched
 
 
+_PLOT_VERBS = re.compile(
+    r"\b(plot|show|map|mark|display|draw|extract|fetch|get|load|visuali[sz]e|highlight|add|find|list|count|overlay)\b"
+)
+_ROUTE_WORDS = re.compile(r"\b(route|routes|directions?|shortest path|travel time|from\s+\S+.*\s+to\s+\S+)\b")
+_ROAD_WORDS = re.compile(r"\b(roads?|streets?|road network|street network|road map|highways?|street grid)\b")
+
+
+def _tool_calls_this_turn(recent: list[dict]) -> list[tuple[str, dict, dict]]:
+    """[(tool_name, args, result)] for every tool call answered in this turn."""
+    names: dict[str, tuple[str, dict]] = {}
+    for msg in recent:
+        for tc in msg.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            except Exception:
+                args = {}
+            names[tc.get("id")] = (fn.get("name") or "", args)
+    out = []
+    for msg in recent:
+        if msg.get("role") != "tool":
+            continue
+        name, args = names.get(msg.get("tool_call_id"), ("", {}))
+        try:
+            res = json.loads(msg.get("content") or "{}")
+        except Exception:
+            res = {}
+        out.append((name, args, res if isinstance(res, dict) else {}))
+    return out
+
+
+def requested_feature_gaps(user_request: str, calls: list[tuple[str, dict, dict]]) -> list[str]:
+    """Map features the user asked to see that no successful tool call produced.
+
+    Deterministic guard against answers such as "the boundary has been plotted"
+    when the user asked for the roads (or hospitals, schools, …) inside it.
+    """
+    text = (user_request or "").lower()
+    if not _PLOT_VERBS.search(text):
+        return []
+
+    def ok(res: dict) -> bool:
+        return not res.get("error") and res.get("status") not in ("error", "cancelled", "blocked")
+
+    gaps = []
+    if _ROAD_WORDS.search(text) and not _ROUTE_WORDS.search(text):
+        has_roads = any(
+            ok(res) and (
+                name == "fetch_street_network"
+                or (name == "osm_search" and "highway" in json.dumps(args).lower())
+            )
+            for name, args, res in calls
+        )
+        if not has_roads:
+            gaps.append(
+                "requested road/street network was not plotted — call fetch_street_network(place_name='<place>') "
+                "(it outlines the boundary AND draws the roads inside it)"
+            )
+
+    try:
+        from tools.osm_categories import ALIASES, OSM_CATEGORIES, normalise_category
+    except Exception:
+        return gaps
+    words = set(re.findall(r"[a-z_]+", text))
+    tokens = [re.sub(r"[^a-z]", "", t) for t in text.split()]
+    pairs = {f"{a}_{b}" for a, b in zip(tokens, tokens[1:])}
+    # Words that are usually modifiers or parts of other phrases ("government schools",
+    # "river bank", "post office") are not treated as separate category requests.
+    ambiguous = {"government", "bank", "industrial", "worship", "fuel", "market", "office"}
+    if pairs & {"post_office", "post_offices"}:
+        ambiguous.add("offices")
+    phrases = {w for w in words if w not in ambiguous} | pairs
+    wanted = set()
+    for token in phrases:
+        token = re.sub(r"[^a-z_]", "", token)
+        if token in OSM_CATEGORIES or token in ALIASES:
+            key = normalise_category(token)
+            if key and OSM_CATEGORIES[key]["mode"] == "point":
+                wanted.add(key)
+    for key in sorted(wanted):
+        produced = False
+        for name, args, res in calls:
+            if not ok(res):
+                continue
+            if name == "osm_search":
+                cats = [args.get("category")] + list(args.get("categories") or [])
+                if any(normalise_category(c) == key for c in cats if c):
+                    produced = True
+            elif name in ("nearby_places", "nearby_places_in_polygon", "overture_places_search", "places_density"):
+                produced = True  # explicit alternative source chosen by the model
+        if not produced:
+            gaps.append(
+                f"requested '{OSM_CATEGORIES[key]['label']}' were not plotted — call osm_search(category='{key}', place_name='<place>')"
+            )
+    return gaps
+
+
 def assess_task_completion(messages: list[dict], since: int = 0, workspace: str | None = None) -> dict:
     """Run a cheap deterministic postcondition check for the current turn.
 
@@ -181,14 +278,20 @@ def assess_task_completion(messages: list[dict], since: int = 0, workspace: str 
     tool was cancelled or returned an error.
     """
     recent = messages[since:]
+    # Only the user's own request — not the system correction messages injected later
+    # in the turn (they mention tools/features and would create false requirements).
     user_text = " ".join(
         str(msg.get("content") or "")
         for msg in recent
-        if msg.get("role") == "user"
+        if msg.get("role") == "user" and not str(msg.get("content") or "").lstrip().startswith("[SYSTEM")
     ).lower()
+    calls = _tool_calls_this_turn(recent)
     requested_gif = bool(re.search(r"\bgif\b", user_text))
     requested_modis_fire = bool(
         re.search(r"\b(?:modis|stubble(?:[- ]burning)?|fire(?:s| history)?|burn(?:ing|ed) area)\b", user_text)
+    )
+    requested_fire_comparison = requested_modis_fire and bool(
+        re.search(r"\b(compar\w*|differen\w*|vs|versus|history|trend|report|change)\b", user_text)
     )
     requested_animation = requested_gif and bool(
         re.search(r"\b(animated?|animation|year[- ]by[- ]year|frame|timeline|over the next)\b", user_text)
@@ -250,8 +353,15 @@ def assess_task_completion(messages: list[dict], since: int = 0, workspace: str 
     if requested_gif and not any(path.endswith(".gif") for path in generated_paths):
         missing_files.append("requested GIF artifact")
 
-    if requested_modis_fire and not any(result.get("results") for result in modis_results):
-        missing_files.append("MODIS fire comparison results")
+    if requested_fire_comparison and not any(result.get("results") for result in modis_results):
+        missing_files.append("MODIS fire comparison results (call compare_modis_fire_history once with all places)")
+    elif requested_modis_fire and not requested_fire_comparison and not any(
+        name in ("get_modis_layer", "compare_modis_fire_history") and not res.get("error")
+        for name, _a, res in calls
+    ):
+        missing_files.append("MODIS fire layer (call get_modis_layer with product='active_fires' or 'burned_area')")
+
+    feature_gaps = requested_feature_gaps(user_text, calls)
 
     # A temporal/animated request must not be satisfied by a one-frame GIF
     # labelled as a storyboard. Static GIFs remain valid for ordinary GIF
@@ -293,9 +403,10 @@ def assess_task_completion(messages: list[dict], since: int = 0, workspace: str 
 
     if failures:
         state = "failed"
-    elif missing_files:
+    elif missing_files or feature_gaps:
         state = "failed"
         failures.extend(f"missing file: {p}" for p in missing_files)
+        failures.extend(f"missing map feature: {g}" for g in feature_gaps)
     elif tool_results:
         state = "verified"
     else:
@@ -306,6 +417,7 @@ def assess_task_completion(messages: list[dict], since: int = 0, workspace: str 
             "tool_results_present": bool(tool_results),
             "all_tool_results_successful": not failures,
             "artifact_files_exist": not missing_files,
+            "requested_features_present": not feature_gaps,
         },
         "failures": failures,
     }

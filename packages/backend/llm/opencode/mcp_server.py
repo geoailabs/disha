@@ -358,6 +358,21 @@ async def execute_disha_tool(
         else:
             await _notify_backend_action(act_name, act_payload)
 
+    # Tools that push extra map actions over `_ws` (boundary outlines, additional
+    # category layers, secondary raster layers) get a shim that forwards each
+    # action through this runtime's action channel instead of being dropped.
+    if not context.get("_ws"):
+        class _ActionSocket:
+            async def send_text(self, text: str) -> None:
+                try:
+                    msg = json.loads(text)
+                except Exception:
+                    return
+                if msg.get("type") == "action" and msg.get("action"):
+                    await _emit_action(msg["action"], msg.get("payload") or {})
+
+        context = {**context, "_ws": _ActionSocket()}
+
     # 1. Real-time Spatial Registry sync
     if map_context and "layers" in map_context:
         spatial_registry.sync_from_map_layers(map_context.get("layers"))
@@ -494,12 +509,10 @@ async def execute_disha_tool(
 
         if result.artifact:
             try:
-                save_artifact(
-                    title=result.artifact.get("title", "Report"),
-                    artifact_type=result.artifact.get("artifact_type", "report"),
-                    format=result.artifact.get("format", "markdown"),
-                    content=result.artifact.get("content", ""),
-                    workspace=map_context.get("workspace") if map_context else None,
+                from tools.fire_report import save_tool_artifact
+                save_tool_artifact(
+                    result.artifact,
+                    map_context.get("workspace") if map_context else None,
                 )
                 await _emit_action("refresh_artifacts", {})
             except Exception as _ae:

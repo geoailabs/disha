@@ -497,6 +497,10 @@ function App() {
   const dirtyLayerIdsRef = useRef<Set<string>>(new Set())
   useEffect(() => { bookmarksRef.current = bookmarks }, [bookmarks])
   useEffect(() => { mapBoundsRef.current = mapBounds }, [mapBounds])
+  // Latest layers for async export code (a layer added moments before an export
+  // is not yet in the closure that started the export).
+  const layersRef = useRef<GeoJSONLayer[]>([])
+  useEffect(() => { layersRef.current = layers }, [layers])
 
   // ── Resizable panels ──
 
@@ -1716,14 +1720,18 @@ function App() {
             .map((l) => l.id)
         : undefined
       const layersToShow = explicitLayersToShow?.length ? explicitLayersToShow : inferredLayersToShow
-      // Preserve the live map camera for ordinary exports. Previously,
-      // fitBboxAndSnapshot() implicitly combined every visible layer when no
-      // bbox/layer filter was supplied. Old layers from another place could
-      // therefore pull a Chandigarh export to an unrelated geography. Only
-      // refit when the caller explicitly supplies a bbox or target layers.
+      // Every export works like "Zoom to layer" + screenshot: frame the target
+      // layers (the named ones, else the most recently added layer — never the
+      // union of everything on the canvas), wait until the map has fully rendered
+      // at that view, then capture the canvas.
       let snapshot: any
-      if (mapView.fitBboxAndSnapshot && (options?.bbox || layersToShow?.length)) {
-        snapshot = await mapView.fitBboxAndSnapshot(options?.bbox, 40, layersToShow)
+      if (mapView.fitBboxAndSnapshot) {
+        snapshot = await mapView.fitBboxAndSnapshot(
+          options?.bbox,
+          40,
+          layersToShow,
+          layersToShow?.length || options?.bbox ? undefined : ['__latest__'],
+        )
       } else {
         await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
         snapshot = mapView.getCanvas()
@@ -1731,26 +1739,18 @@ function App() {
       const canvas = snapshot && 'canvas' in snapshot ? snapshot.canvas : snapshot
       if (!canvas) return null
 
-      // Filter legend entries to match active layers in the snapshot
-      const activeLayers = layersToShow && layersToShow.length > 0
-        ? layers.filter((l) =>
-            layersToShow.some(
-              (q) => {
-                const query = q.toLowerCase().trim()
-                const name = l.name.toLowerCase().trim()
-                const isBoundaryQuery = query.includes('boundary')
-                if (isBoundaryQuery) return name === query || (name.endsWith('boundary') && !name.includes('land cover'))
-                return name.includes(query) || query.includes(name) || l.id.toLowerCase() === query
-              },
-            ),
-          )
-        : layers
+      // Legend = exactly the layers visible in the capture
+      const capturedIds: string[] | undefined = snapshot && 'layerIds' in snapshot ? snapshot.layerIds : undefined
+      const activeLayers = capturedIds && capturedIds.length
+        ? layersRef.current.filter((l) => capturedIds.includes(l.id))
+        : layers.filter((l) => l.visible)
+      const view = snapshot && 'view' in snapshot && snapshot.view ? snapshot.view : null
 
       return composeFigure(canvas, {
         title: title || 'Map',
-        centerLat: mapViewState.center[1],
-        zoom: mapViewState.zoom,
-        bearing: mapViewState.bearing,
+        centerLat: view ? view.lat : mapViewState.center[1],
+        zoom: view ? view.zoom : mapViewState.zoom,
+        bearing: view ? view.bearing : mapViewState.bearing,
         legend: buildLegendEntries(activeLayers),
         attribution: BASEMAPS[basemap]?.attribution || '',
         noTitleBand: options?.noTitleBand,
@@ -2857,7 +2857,11 @@ function App() {
         color: color || '#3b82f6',
         opacity: 1.0,
       } : undefined))
-      if (isPointOnlyCollection(data)) {
+      // A tool result is ONE layer (e.g. "Hospitals - <city>" with all hospitals in a
+      // single colour) so it can be styled, zoomed to and exported as one image.
+      // Splitting points into one layer per feature is only done when explicitly
+      // requested (payload.grouped), e.g. for hand-placed marker sets.
+      if ((action.payload as any)?.grouped && isPointOnlyCollection(data)) {
         addGroupedPointFeaturesToLayers(layerName, data, color)
       } else {
         upsertLayer(layerName, data, color, customStyleSpec)

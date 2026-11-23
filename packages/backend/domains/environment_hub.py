@@ -162,7 +162,21 @@ class EnvironmentHub(BaseDomainHub):
             ws = context.get("_ws")
             start_yr = args.get("year_start") or args.get("start_year") or res.get("year_start")
             end_yr = args.get("year_end") or args.get("end_year") or res.get("year_end")
-            if ws and start_yr and end_yr:
+            timeline_tool = tool_name
+            timeline_args = {k: v for k, v in args.items() if not k.startswith("_")}
+            if ws and res.get("chart_artifact_id"):
+                try:
+                    await ws.send_text(json.dumps({
+                        "type": "action", "action": "refresh_artifacts",
+                        "payload": {"id": res["chart_artifact_id"]},
+                    }))
+                except Exception:
+                    pass
+            analysis_only = tool_name in (
+                "compare_modis_fire_history", "analyze_land_cover_timeseries",
+                "analyze_population_timeseries", "analyze_building_growth",
+            )
+            if ws and start_yr and end_yr and not analysis_only:
                 try:
                     s_int = int(start_yr)
                     e_int = int(end_yr)
@@ -177,8 +191,8 @@ class EnvironmentHub(BaseDomainHub):
                             "end": str(max(s_int, e_int)),
                             "current": str(min(s_int, e_int)),
                             "steps": step_list,
-                            "tool_name": tool_name,
-                            "tool_args": {k: v for k, v in args.items() if not k.startswith("_")},
+                            "tool_name": timeline_tool,
+                            "tool_args": timeline_args,
                         }
                     }))
                 except Exception as _te:
@@ -195,52 +209,47 @@ class EnvironmentHub(BaseDomainHub):
                 except Exception as _re:
                     logger.debug(f"Failed to register in spatial registry: {_re}")
 
-            clean_data = {k: v for k, v in res.items() if k != "geojson"}
+            # Never send raw geometry coordinates back to the LLM (token budget);
+            # boundary_geojson is still available to the hub via `res`.
+            clean_data = {k: v for k, v in res.items() if k not in ("geojson", "boundary_geojson")}
             if map_action:
                 clean_data["displayed_on_map"] = True
 
-            # Fire-history comparisons are analytical deliverables, not only
-            # transient tool JSON. Persist a compact, auditable markdown table
-            # so the result remains available in Artifacts and can be exported.
+            # Fire-history comparisons are analytical deliverables. Exactly ONE
+            # report per user turn: chat/opencode merge every fire comparison of
+            # the turn into the same artifact (tools/fire_report.py). A MODIS
+            # fire layer for a place automatically compares the asked year with
+            # the present year.
+            from tools.fire_report import build_artifact as _build_fire_artifact
             artifact = None
+            fire_result = None
             if tool_name == "compare_modis_fire_history" and res.get("status") == "success":
-                rows = res.get("results") or []
-                years = list(range(int(res.get("start_year")), int(res.get("end_year")) + 1))
-                report_lines = [
-                    f"# MODIS Fire History Comparison ({res.get('start_year')}–{res.get('end_year')})",
-                    "",
-                    "Source: NASA MODIS MCD64A1 burned area and FIRMS active-fire observations via Google Earth Engine.",
-                    "",
-                    "| Village | Year | Burned area (ha) | Active-fire pixel-days |",
-                    "|---|---:|---:|---:|",
-                ]
-                for row in rows:
-                    name = str(row.get("village", "Village")).replace("|", "\\|")
-                    annual = row.get("annual") or {}
-                    for year in years:
-                        metrics = annual.get(str(year), {})
-                        report_lines.append(
-                            f"| {name} | {year} | {metrics.get('burned_area_hectares', 0)} | {metrics.get('active_fire_pixel_days', 0)} |"
-                        )
-                report_lines.extend(["", "## Year-over-year differences", ""])
-                for row in rows:
-                    report_lines.append(f"### {row.get('village', 'Village')}")
-                    report_lines.append("")
-                    report_lines.append("| Interval | Burned area difference (ha) | Burned area difference (%) | Active-fire pixel-day difference |")
-                    report_lines.append("|---|---:|---:|---:|")
-                    for interval, diff in (row.get("differences") or {}).items():
-                        report_lines.append(
-                            f"| {interval} | {diff.get('burned_area_hectares_difference', 0)} | {diff.get('burned_area_percent_difference', '—')} | {diff.get('active_fire_pixel_days_difference', 0)} |"
-                        )
-                unresolved = res.get("unresolved_villages") or []
-                if unresolved:
-                    report_lines.extend(["", "Unresolved villages: " + ", ".join(map(str, unresolved))])
-                artifact = {
-                    "title": f"MODIS Fire History Comparison — {res.get('start_year')}–{res.get('end_year')}",
-                    "artifact_type": "report",
-                    "format": "markdown",
-                    "content": "\n".join(report_lines),
-                }
+                fire_result = res
+            elif (
+                tool_name == "get_modis_layer"
+                and res.get("product") in ("active_fires", "burned_area")
+                and res.get("boundary_geojson")
+                and args.get("auto_compare", True)
+            ):
+                try:
+                    cmp_res = await self.gee_server.execute("compare_modis_fire_history", {
+                        "villages": [{"name": res.get("place_name") or "Study area", "geojson": res["boundary_geojson"]}],
+                        "year": res.get("year"),
+                        "_workspace": workspace,
+                    })
+                    if cmp_res.get("status") == "success":
+                        fire_result = cmp_res
+                        clean_data["fire_comparison"] = {
+                            k: cmp_res.get(k) for k in ("years", "results", "partial_year", "message")
+                        }
+                except Exception as _ce:
+                    logger.warning(f"Automatic MODIS fire comparison failed: {_ce}")
+            if fire_result:
+                artifact = _build_fire_artifact(fire_result)
+                clean_data["comparison_report"] = (
+                    f"Saved as a single comparison report artifact '{artifact['title']}'. "
+                    "Do NOT create another fire report artifact for this request."
+                )
 
             return ToolResult(
                 status=res.get("status", "success"),
