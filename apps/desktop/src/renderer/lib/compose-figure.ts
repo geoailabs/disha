@@ -70,10 +70,14 @@ export function composeFigure(
   const dpr = window.devicePixelRatio || 1
   const tBand = opts.noTitleBand ? 0 : TITLE_BAND
   const fBand = opts.noTitleBand ? 0 : FOOTER_BAND
+  // Reserve a dedicated publication gutter for the legend. Keeping it outside
+  // the map makes every GIF frame readable even when the classified layer has
+  // a large legend.
+  const legendGutter = !opts.noTitleBand && opts.legend?.length ? 280 : 0
 
   const mapW = source.width / dpr
   const mapH = source.height / dpr
-  const outW = mapW
+  const outW = mapW + legendGutter
   const outH = mapH + tBand + fBand
 
   const out = document.createElement('canvas')
@@ -117,9 +121,9 @@ export function composeFigure(
   // ── North arrow (top-right of map) ──
   drawNorthArrow(ctx, mapW - PAD - 18, mapTop + PAD + 18, opts.bearing || 0)
 
-  // ── Legend (bottom-right of map) ──
+  // ── Legend (dedicated gutter, never over the map) ──
   if (opts.legend && opts.legend.length > 0) {
-    drawLegend(ctx, opts.legend, mapW - PAD, mapBottom - PAD)
+    drawLegend(ctx, opts.legend, outW - PAD, mapBottom - PAD)
   }
 
   // ── Footer / attribution ──

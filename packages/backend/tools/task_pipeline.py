@@ -332,6 +332,11 @@ def assess_task_completion(messages: list[dict], since: int = 0, workspace: str 
         if not file_path and isinstance(result.get("artifact"), dict):
             file_path = result["artifact"].get("file_path")
         if file_path:
+            # GIF frame exports are deliberately deleted after encoding. They
+            # are staging inputs, not user-facing deliverables, so they must
+            # not make the final completion check fail after cleanup.
+            if result.get("temporary_gif_frame"):
+                continue
             normalized_path = str(file_path).lower()
             generated_paths.append(normalized_path)
             if normalized_path.endswith(".gif"):

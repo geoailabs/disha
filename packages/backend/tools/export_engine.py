@@ -188,7 +188,7 @@ def export_artifact_multi_format(
         if not frame_refs:
             raise ValueError("GIF export requires map_image_base64 or meta.frames")
 
-        from PIL import Image as PILImage
+        from PIL import Image as PILImage, ImageOps
         frames = []
         frame_digests = []
         for ref in frame_refs:
@@ -197,22 +197,36 @@ def export_artifact_multi_format(
                 raise ValueError(f"Could not resolve GIF frame: {ref}")
             frame_digests.append(hashlib.sha256(raw).hexdigest())
             with PILImage.open(io.BytesIO(raw)) as frame:
-                # Palette conversion keeps GIF output predictable and avoids
-                # RGBA disposal issues across Pillow versions.
-                frames.append(frame.convert("P", palette=PILImage.Palette.ADAPTIVE))
+                # GIF frames must share one canvas.  Browser captures can differ
+                # by a pixel while the map is resizing; normalize those captures
+                # before encoding instead of letting Pillow crop/offset them.
+                frames.append(frame.convert("RGB"))
         if not frames:
             raise ValueError("GIF export received no usable frames")
         if len(frames) > 1 and len(set(frame_digests)) != len(frame_digests):
             raise ValueError("GIF export received duplicate frame images; each animated frame must represent a distinct state.")
+
+        canvas_size = frames[0].size
+        frames = [
+            frame if frame.size == canvas_size else ImageOps.pad(
+                frame, canvas_size, method=PILImage.Resampling.LANCZOS, color="white", centering=(0.5, 0.5)
+            )
+            for frame in frames
+        ]
+        # Use one adaptive palette for the first frame and let Pillow remap the
+        # remaining RGB frames. This avoids per-frame palette/transparency
+        # corruption and keeps colors stable throughout the animation.
+        first = frames[0].quantize(colors=256, method=PILImage.Quantize.MEDIANCUT)
         buf = io.BytesIO()
         gif_meta = meta or {}
-        frames[0].save(
+        first.save(
             buf,
             format="GIF",
             save_all=len(frames) > 1,
             append_images=frames[1:],
             duration=max(20, int(gif_meta.get("duration_ms", 500))),
             loop=max(0, int(gif_meta.get("loop", 0))),
+            disposal=2,
             optimize=False,
         )
         return buf.getvalue(), f"{safe_title}.gif", "image/gif"

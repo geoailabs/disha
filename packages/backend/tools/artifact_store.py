@@ -277,6 +277,10 @@ def save_artifact(
             ).fetchone()
             if existing:
                 file_path_rel = existing["file_path"]
+                try:
+                    existing_meta = json.loads(existing["meta"] or "{}")
+                except Exception:
+                    existing_meta = {}
                 if actual_file_bytes:
                     ext = (file_ext or ("docx" if fmt == "docx" else ("pdf" if fmt == "pdf" else ("jpg" if fmt in ("jpg", "jpeg") else ("png" if fmt in ("png", "image") else fmt))))).lstrip(".")
                     if is_img:
@@ -291,9 +295,18 @@ def save_artifact(
                         except Exception:
                             width, height, mime = 0, 0, f"image/{ext}"
                         img_meta = {"width": width, "height": height, "mime": mime}
-                        final_meta = {**img_meta, **(final_meta or {})}
+                        # Preserve reservation metadata (including the
+                        # temporary GIF-frame marker) when the renderer uploads
+                        # the captured image without sending a meta form field.
+                        final_meta = {**existing_meta, **img_meta, **(final_meta or {})}
                         meta_json = json.dumps(final_meta)
 
+                elif final_meta is None:
+                    # A binary upload that only updates an existing reserved
+                    # artifact must not clear its metadata.
+                    meta_json = existing["meta"]
+
+                if actual_file_bytes:
                     filename = f"{artifact_id}.{ext}"
                     file_path_full = get_artifacts_dir(workspace) / filename
                     file_path_full.write_bytes(actual_file_bytes)
@@ -339,8 +352,11 @@ def save_artifact(
             (title, final_content, artifact_type, fmt, meta_json),
         )
         artifact_id = cursor.lastrowid
-        # Defer commit for images until file write succeeds
-        if not is_img:
+        # Defer commit for image bytes until the file write succeeds. A
+        # reservation without bytes (used by map/GIF exports) must still be
+        # committed so the subsequent renderer upload can update its row and
+        # preserve reservation metadata.
+        if not actual_file_bytes:
             conn.commit()
 
         file_path_rel: Optional[str] = None
@@ -452,6 +468,29 @@ def delete_artifact(artifact_id: int, workspace: Optional[str] = None) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def cleanup_temporary_gif_frames(
+    frame_refs: list[str], workspace: Optional[str] = None
+) -> int:
+    """Remove generated image artifacts used as GIF staging frames.
+
+    GIF frame exports need to exist long enough for the encoder to read them,
+    but they are implementation details and should not remain as user-facing
+    artifacts after the final GIF has been created.  Only artifact-store image
+    references are removed; external files and data URIs are untouched.
+    """
+    removed = 0
+    for ref in frame_refs:
+        path = Path(str(ref).replace("\\", "/"))
+        if path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"} or not path.stem.isdigit():
+            continue
+        artifact = read_artifact(int(path.stem), workspace)
+        if not artifact:
+            continue
+        delete_artifact(int(path.stem), workspace)
+        removed += 1
+    return removed
 
 
 def list_artifacts(workspace: Optional[str] = None) -> list[dict]:

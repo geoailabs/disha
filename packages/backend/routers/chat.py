@@ -458,7 +458,7 @@ SYSTEM_PROMPT = (
     "attempt: (a) alphanumeric name variations (e.g. 'Sector 30 A' vs 'Sector 30'), (b) alternate place_type tags "
     "('suburb', 'neighbourhood', 'quarter'), or (c) osm_search(feature_type='place', feature_value='suburb') near the city center.\n"
     "8. When finished, stop calling tools and respond with a brief summary of what you did.\n"
-    "8c. INTERACTIVE SCENARIO WORKFLOW: If the user asks in natural language to create or develop a planning scenario (for example, rapid urbanisation in a sector, neighbourhood, ward, or district), resolve the exact study-area boundary first when a place is named, then call `prepare_scenario_plan` with the full brief and that boundary's bbox. Stop after the plan is opened in the Scenario panel. Do not create an artifact yet. The user will review/edit the alternatives and press the single approval action in the panel; only then should the panel build and save the final report. Use `create_scenario_report` only when the user explicitly says to skip review or generate immediately.\n"
+    "8c. INTERACTIVE SCENARIO WORKFLOW: If the user asks in natural language to create or develop a planning scenario (for example, rapid urbanisation in a sector, neighbourhood, ward, or district), resolve the exact study-area boundary first when a place is named, then call `prepare_scenario_plan` with the full brief and that boundary's bbox. Stop after the plan is opened in the Scenario panel. Do not create an artifact yet. The user will review/edit the alternatives and press the single approval action in the panel; only then should the panel build and save the final report. Use `create_scenario_report` only when the user explicitly says to skip review or generate immediately. IMPORTANT: when the request asks for a GIF/animation, this scenario workflow does not apply—never call `prepare_scenario_plan`, `generate_planning_scenarios`, or `create_scenario_report`; generate the requested map frames and one GIF directly.\n"
     "8a. When the user asks to download/export map data as GeoJSON, call export_region_clip with a clear output_base_name. This triggers the file download automatically; do not only describe the file or create a report artifact.\n"
     "8b. When a PDF/report request explicitly asks for a Mermaid diagram, include one or more fenced Mermaid blocks in the document content so the PDF renderer embeds the diagram visually; never leave the Mermaid source as an unexplained plain-text block.\n"
     "9. SINGLE POLYGON ACROSS MULTIPLE PLACES: when the user asks for ONE merged boundary or study area "
@@ -519,7 +519,7 @@ SYSTEM_PROMPT = (
     "20. REGIONAL & METROPOLITAN BOUNDARIES (e.g. metropolitan regions, regional urban clusters, or multi-district conurbations): When asked to display a metropolitan region consisting of multiple contiguous districts or administrative units, retrieve and merge the contiguous boundaries (using osm_boundary_union or import_datameet_boundary) so they form a clean regional boundary. If asked to mark both a central core and the broader metropolitan region in different colors, add them as two separate distinct layers and style them with contrasting colors (e.g. green outline/fill for Core City, blue or orange for Metro Region) using set_layer_style.\n"
     "21. JUNCTIONS AND POI PINNING: When pinning a specific point of interest, landmark, chowk, junction, intersection, or address, ALWAYS first call the `geocode` tool with the full descriptive name and containing context (e.g. '<Landmark / Junction Name>, <Sub-district / Sector>, <City / Region>') to resolve its exact point coordinate. DO NOT call `osm_boundary` or `osm_search` for a specific junction/chowk unless you want to search for adjacent amenities or the city boundary. To display the pinned point on the map, call `add_marker` at the resolved coordinate. When the user asks to route/cross through waypoints, ensure each waypoint is geocoded and explicitly passed in the routing tool's `waypoints` argument, and pass the corresponding color or label if customized.\n"
     "22. AUTOMATIC ARTIFACT & MULTI-FORMAT EXPORT PERSISTENCE: Whenever you generate ANY planning report, summary card, demographic profile, plot/histogram, or structured analysis, call `create_artifact` with a descriptive title and format ('pdf', 'docx', 'html', 'png', 'jpg', 'xlsx', 'txt', 'json', 'markdown', 'table', 'geojson'). You CAN create PNG, JPEG, PDF, Word (.docx), HTML, and Excel (.xlsx) artifacts directly using `create_artifact`. For charts and histograms, call `create_plot` to generate clean plot image artifacts.\n"
-    "22a. GIF CREATION: GIFs support any ordered number of image frames (PNG, JPEG, WebP, or data URIs). For a requested animated map GIF without supplied frames, create the frames yourself with separate `export_map_png` calls, collect each returned `file_path`, and pass them in order via `frames` or `meta.frames` to `create_artifact(format='gif')`. If the request names a place, resolve that place boundary first, fit the map to it, and use that resolved geography for every frame; never reuse an unrelated current-map extent. `prepare_scenario_plan` or a scenario/storyboard artifact is only an intermediate step: for a GIF request, continue autonomously to export the frames and compile the final GIF. A GIF request is not complete until the GIF artifact is saved and the automatic completion check passes.\n"
+    "22a. GIF CREATION: GIFs support any ordered number of image frames (PNG, JPEG, WebP, or data URIs). For a requested animated map GIF without supplied frames, create the frames yourself with separate `export_map_png` calls, collect each returned `file_path`, and pass them in order via `frames` or `meta.frames` to `create_artifact(format='gif')`. If the request names a place, resolve that place boundary first, fit the map to it, and use that resolved geography for every frame; never reuse an unrelated current-map extent. `prepare_scenario_plan` or a scenario/storyboard artifact is only an intermediate step: for a GIF request, continue autonomously to export the frames and compile the final GIF. A GIF request is not complete until the GIF artifact is saved and the automatic completion check passes. After the GIF succeeds, the final chat response MUST mention only the final `.gif` artifact; never list temporary frame paths, say 'Frames used', or expose PNG/JPEG frame artifacts.\n"
     "22b. MODIS FIRE LAYERS & COMPARISONS:\n"
     "  - Fetch ONLY the place(s) and year the user named. Pass `place_name` and `year` exactly; never widen to a viewport or other years. If no year is mentioned, OMIT `year` — the current year (year-to-date) is used.\n"
     "  - `get_modis_layer(product='active_fires' or 'burned_area', place_name=..., year=...)` automatically saves ONE comparison report of the asked year vs the present year for that place.\n"
@@ -1585,6 +1585,65 @@ def _scope_tool_to_selection(name: str, args: dict, map_context: dict | None) ->
         args["geojson"] = selected_geojson
 
 
+def _completed_gif_this_turn(messages: list[dict] | None) -> dict | None:
+    """Return the first completed GIF created after the latest user message.
+
+    Agent retries can otherwise submit the same create_artifact call several
+    times in one turn, leaving duplicate GIFs (and duplicate frame exports)
+    behind.  Only inspect the current turn so a later, intentional request can
+    still create a new GIF.
+    """
+    if not messages:
+        return None
+    turn_start = -1
+    for i in range(len(messages) - 1, -1, -1):
+        message = messages[i]
+        if message.get("role") != "user":
+            continue
+        content = str(message.get("content") or "")
+        if not content.startswith("[SYSTEM"):
+            turn_start = i
+            break
+    recent = messages[turn_start + 1 :]
+    gif_calls: dict[str, dict] = {}
+    for message in recent:
+        if message.get("role") == "assistant":
+            for call in message.get("tool_calls") or []:
+                function = call.get("function") or {}
+                call_name = function.get("name") or call.get("name")
+                if call_name != "create_artifact":
+                    continue
+                raw_args = function.get("arguments") or call.get("arguments") or {}
+                try:
+                    call_args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                except Exception:
+                    call_args = {}
+                if str(call_args.get("format", "markdown")).lower() == "gif":
+                    call_id = call.get("id")
+                    if call_id:
+                        gif_calls[call_id] = call_args
+        elif message.get("role") == "tool" and message.get("tool_call_id") in gif_calls:
+            try:
+                result = json.loads(message.get("content") or "{}")
+            except Exception:
+                result = {}
+            if result.get("status") == "created" and result.get("format") == "gif":
+                return result
+    return None
+
+
+def _gif_request_active(messages: list[dict] | None) -> bool:
+    """Detect the external GIF request across injected system-repair turns."""
+    if not messages:
+        return False
+    for message in reversed(messages):
+        if message.get("role") != "user":
+            continue
+        content = str(message.get("content") or "")
+        if content.startswith("[SYSTEM"):
+            continue
+        return bool(re.search(r"\bgif\b", content, re.IGNORECASE))
+    return False
 async def _execute_tool(
     name: str,
     args: dict,
@@ -1642,6 +1701,14 @@ async def _execute_tool(
 
     if name == "create_artifact":
         fmt = args.get("format", "markdown")
+        if str(fmt).lower() == "gif":
+            previous_gif = _completed_gif_this_turn(messages)
+            if previous_gif:
+                return json.dumps({
+                    **previous_gif,
+                    "deduplicated": True,
+                    "message": "A GIF was already created for this request; duplicate creation was suppressed.",
+                })
         content = args.get("content", "")
         if fmt in ("docx", "pdf", "html") and content:
             import re as _re
@@ -1786,6 +1853,16 @@ async def _execute_tool(
     # 3b. Map export tools with automatic artifact reservation
 
     if name in ("export_map_png", "export_map_jpeg", "export_map_pdf"):
+        if name in ("export_map_png", "export_map_jpeg", "export_map_pdf") and _gif_request_active(messages):
+            previous_gif = _completed_gif_this_turn(messages)
+            if previous_gif:
+                return json.dumps({
+                    "status": "success",
+                    "deduplicated": True,
+                    "format": "gif",
+                    "file_path": previous_gif.get("file_path"),
+                    "message": "GIF already completed; additional image/PDF export suppressed.",
+                })
         save_to_art = args.get("save_to_artifacts", True)
         title = args.get("title") or "Map Export"
         fmt = "jpg" if name == "export_map_jpeg" else ("png" if name == "export_map_png" else "pdf")
@@ -1948,11 +2025,17 @@ async def _execute_tool(
 
         if save_to_art:
             from tools.artifact_store import save_artifact as _save_artifact, get_artifacts_dir
+            # Animated GIF frame exports are staging assets. They are tagged so
+            # create_artifact can remove their rows/files after compiling the
+            # final GIF, leaving exactly one user-facing artifact.
+            is_gif_request = _gif_request_active(messages)
+            reservation_meta = {"temporary_gif_frame": True} if is_gif_request and fmt in ("png", "jpg") else None
             art_row = _save_artifact(
                 title=title,
                 artifact_type="sketch",
                 format=fmt,
                 content="",
+                meta=reservation_meta,
                 workspace=workspace,
             )
             art_id = art_row["id"]
@@ -1994,6 +2077,7 @@ async def _execute_tool(
                 "file_path": file_path_rel,
                 "title": title,
                 "format": fmt,
+                "temporary_gif_frame": bool(reservation_meta and reservation_meta.get("temporary_gif_frame")),
                 "message": f"Exported map figure '{title}' (Artifact ID: {art_id}, Path: {file_path_rel}). Reference in markdown documents using: ![{title}]({file_path_rel})",
             })
         else:
@@ -2446,6 +2530,23 @@ async def _run_agent(
                     "tool_call_id": tc["id"],
                     "content": result_str,
                 })
+                # Frame paths are required internally to assemble the GIF, but
+                # they are temporary implementation details. Force the final
+                # assistant response to expose only the persisted GIF.
+                if tool_name == "create_artifact":
+                    try:
+                        _gif_result = json.loads(result_str)
+                    except Exception:
+                        _gif_result = {}
+                    if _gif_result.get("status") == "created" and _gif_result.get("format") == "gif":
+                        messages.append({
+                            "role": "system",
+                            "content": (
+                                "GIF completed successfully. In your final response, mention only the final GIF artifact "
+                                "path and a short success statement. Do not mention temporary frame files, PNG/JPEG "
+                                "paths, 'Frames used', or frame-generation details."
+                            ),
+                        })
 
         except asyncio.CancelledError:
             # Handle task cancellation

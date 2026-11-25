@@ -46,7 +46,9 @@ async def list_artifacts(workspace: str | None = Query(None)):
         rows = conn.execute(
             "SELECT id, title, artifact_type, format, meta, "
             "SUBSTR(content, 1, 200) as preview, file_path, created_at, updated_at "
-            "FROM artifacts ORDER BY position ASC, updated_at DESC"
+            "FROM artifacts "
+            "WHERE COALESCE(meta, '') NOT LIKE '%temporary_gif_frame%' "
+            "ORDER BY position ASC, updated_at DESC"
         ).fetchall()
         return [dict(r) for r in rows]
     finally:

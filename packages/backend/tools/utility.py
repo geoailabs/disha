@@ -727,6 +727,7 @@ class UtilityServer:
 
             file_bytes = None
             file_ext = None
+            gif_frame_refs = list(meta.get("frames") or []) if fmt == "gif" else []
             if fmt in ("png", "jpg", "jpeg", "gif", "pdf", "docx", "html", "xlsx", "txt", "json"):
                 file_bytes, filename, mime = export_artifact_multi_format(
                     title=title,
@@ -738,6 +739,24 @@ class UtilityServer:
                 )
                 file_ext = fmt
 
+            # Frame paths are needed by the encoder, but are not part of the
+            # user-facing artifact metadata once the final GIF exists.
+            persisted_meta = dict(meta)
+            if fmt == "gif":
+                persisted_meta.pop("frames", None)
+
+            # A single GIF request can be retried by the agent's completion
+            # repair loop. Keep only the latest successful render for the same
+            # title instead of accumulating several valid-but-intermediate GIFs.
+            if fmt == "gif":
+                from tools.artifact_store import delete_artifact, list_artifacts
+                for prior in list_artifacts(workspace):
+                    if (
+                        str(prior.get("format", "")).lower() == "gif"
+                        and str(prior.get("title", "")).strip() == str(title).strip()
+                    ):
+                        delete_artifact(int(prior["id"]), workspace)
+
             result = save_artifact(
                 title=title,
                 artifact_type=artifact_type,
@@ -745,9 +764,12 @@ class UtilityServer:
                 content=content,
                 file_bytes=file_bytes,
                 file_ext=file_ext,
-                meta=meta,
+                meta=persisted_meta,
                 workspace=workspace,
             )
+            if fmt == "gif" and gif_frame_refs:
+                from tools.artifact_store import cleanup_temporary_gif_frames
+                cleanup_temporary_gif_frames(gif_frame_refs, workspace)
             return {
                 "status": "created",
                 "id": result["id"],
