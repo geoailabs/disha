@@ -412,8 +412,9 @@ def test_step_layer_endpoint_validation():
 
 
 @pytest.mark.asyncio
-async def test_gee_boundary_resolution_from_geojson(gee_server):
+async def test_gee_boundary_resolution_from_geojson(gee_server, monkeypatch):
     """Verify that _resolve_place_boundary handles explicit GeoJSON input correctly."""
+    monkeypatch.setattr("mcp_servers.gee_server._geojson_to_ee_geometry", lambda g: {"mock_ee_geom": g})
     sample_poly = {
         "type": "Polygon",
         "coordinates": [
@@ -425,6 +426,7 @@ async def test_gee_boundary_resolution_from_geojson(gee_server):
         "place_name": "Test Study Area",
     })
     assert b_geojson is not None
+    assert ee_geom is not None
     assert matched_name == "Test Study Area"
     assert bbox is not None
     assert bbox["west"] == 76.7
@@ -438,6 +440,8 @@ async def test_gee_boundary_resolution_from_osm_mock(gee_server, monkeypatch):
     """Verify that when place_name is provided, _resolve_place_boundary fetches and registers OSM boundary."""
     from mcp_servers.osm_server import OSMServer
     from tools.spatial_registry import spatial_registry
+
+    monkeypatch.setattr("mcp_servers.gee_server._geojson_to_ee_geometry", lambda g: {"mock_ee_geom": g})
 
     mock_geojson = {
         "type": "Polygon",
@@ -460,6 +464,7 @@ async def test_gee_boundary_resolution_from_osm_mock(gee_server, monkeypatch):
     })
 
     assert b_geojson == mock_geojson
+    assert ee_geom is not None
     assert matched_name == "Metropolis Alpha"
     assert bbox["west"] == 10.0
     assert bbox["north"] == 20.5

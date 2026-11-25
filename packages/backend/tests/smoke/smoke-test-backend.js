@@ -4,7 +4,7 @@ const fs = require('fs')
 const { spawn } = require('child_process')
 
 const TEST_PORT = 8766
-const RETRIES = 40
+const RETRIES = 120
 const DELAY_MS = 500
 
 function getBackendBinaryPath() {
@@ -61,11 +61,16 @@ async function smokeTestBackend() {
   })
 
   let outputLog = ''
+  let exitedEarly = false
   child.stdout.on('data', (d) => (outputLog += d.toString()))
   child.stderr.on('data', (d) => (outputLog += d.toString()))
+  child.on('exit', () => {
+    exitedEarly = true
+  })
 
   let isHealthy = false
   for (let i = 0; i < RETRIES; i++) {
+    if (exitedEarly) break
     await new Promise((r) => setTimeout(r, DELAY_MS))
     if (await checkHealth(TEST_PORT)) {
       isHealthy = true

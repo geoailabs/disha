@@ -36,7 +36,7 @@ const archMd = readFileSafe('ARCHITECTURE.md');
 const agentsMd = readFileSafe('AGENTS.md');
 const featureGuideMd = readFileSafe('FEATURE_IMPLEMENTATION_GUIDE.md');
 
-let version = 'v0.1.8';
+let version = 'v0.1.9';
 try {
   let pkgJson = {};
   if (fs.existsSync(path.join(rootDir, 'apps/desktop/package.json'))) {

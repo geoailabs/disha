@@ -28,7 +28,7 @@ hiddenimports = (
         'PIL.ImageFile',
     ]
     + collect_submodules('plotly.validators')
-    + collect_submodules('kaleido')
+    + collect_submodules('kaleido', filter=lambda name: not name.startswith('kaleido.mocker'))
     + collect_submodules('choreographer')
 )
 
@@ -41,7 +41,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['kaleido.mocker'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,

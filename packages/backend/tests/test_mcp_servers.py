@@ -227,7 +227,8 @@ async def test_gtfs_server_functional(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_gee_land_use_tools():
+async def test_gee_land_use_tools(monkeypatch):
+    import mcp_servers.gee_server as gs
     from mcp_servers.gee_server import GEEServer
 
     server = GEEServer()
@@ -236,14 +237,19 @@ async def test_gee_land_use_tools():
     assert "analyze_land_use_zonal_stats" in names
     assert "extract_land_use_polygons" in names
 
-    # Test zonal stats execution (fallback when GEE creds not set)
+    async def no_creds(_ws=None):
+        return False, "Google Earth Engine credentials not found."
+
+    monkeypatch.setattr(gs, "_ensure_gee", no_creds)
+
+    # Without GEE credentials, zonal stats returns upstream_unavailable instead of fabricated fallback data
     res_zonal = await server.execute("analyze_land_use_zonal_stats", {
         "lat": 30.7333,
         "lng": 76.7794,
         "year": 2023
     })
-    assert "status" in res_zonal
-    assert "error" not in res_zonal
+    assert res_zonal.get("code") == "upstream_unavailable"
+    assert "error" in res_zonal
 
 
 @pytest.mark.asyncio

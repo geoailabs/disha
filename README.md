@@ -1,7 +1,7 @@
 # Disha
 
-[![Release](https://img.shields.io/badge/release-v0.1.8-blue.svg)](https://github.com/geoailabs/disha/releases/tag/v0.1.8)
-[![Version](https://img.shields.io/badge/version-0.1.8-emerald.svg)](https://github.com/geoailabs/disha/releases)
+[![Release](https://img.shields.io/badge/release-v0.1.9-blue.svg)](https://github.com/geoailabs/disha/releases/tag/v0.1.9)
+[![Version](https://img.shields.io/badge/version-0.1.9-emerald.svg)](https://github.com/geoailabs/disha/releases)
 [![Electron](https://img.shields.io/badge/electron-41.0.3-47848F.svg)](https://www.electronjs.org/)
 [![React](https://img.shields.io/badge/react-19.2.4-61DAFB.svg)](https://react.dev/)
 [![MapLibre GL](https://img.shields.io/badge/maplibre--gl-5.20.2-blueviolet.svg)](https://maplibre.org/)
@@ -11,7 +11,7 @@
 
 Disha unifies an interactive spatial map canvas with a multi-domain AI reasoning engine. Planners can explore, analyze, model, and document complex urban environments through natural conversation and direct spatial interaction — bridging computational GIS, planning analytics, and cartography into a unified desktop workspace.
 
-> **Current Version:** `v0.1.8` (Developer Preview) · **Architecture:** Electron 41+ + React 19 + MapLibre GL 5+ desktop frontend connected to a Python FastAPI backend powered by **7 Core Urban Planning Domains + 1 Cross-Cutting Utility Engine**.
+> **Current Version:** `v0.1.9` (Developer Preview) · **Architecture:** Electron 41+ + React 19 + MapLibre GL 5+ desktop frontend connected to a Python FastAPI backend powered by **7 Core Urban Planning Domains + 1 Cross-Cutting Utility Engine**.
 
 <p align="center">
   <img src="assets/screenshots/02_main_workspace_clean.png" alt="Disha Desktop IDE - Main Map Canvas and Agentic Planning Workspace" width="100%" />

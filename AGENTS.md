@@ -1,9 +1,9 @@
 # AGENTS.md
 
-[![Release](https://img.shields.io/badge/release-v0.1.8-blue.svg)](https://github.com/geoailabs/disha/releases/tag/v0.1.8)
-[![Version](https://img.shields.io/badge/version-0.1.8-emerald.svg)](https://github.com/geoailabs/disha/releases)
+[![Release](https://img.shields.io/badge/release-v0.1.9-blue.svg)](https://github.com/geoailabs/disha/releases/tag/v0.1.9)
+[![Version](https://img.shields.io/badge/version-0.1.9-emerald.svg)](https://github.com/geoailabs/disha/releases)
 
-**Current Version:** `v0.1.8` (Developer Preview)
+**Current Version:** `v0.1.9` (Developer Preview)
 
 Orientation for AI coding assistants (Claude Code, Codex, Antigravity, Cursor, OpenCode) working in this repository. Read this first; then jump to the specific subsystem or domain hub file you need.
 
